@@ -12,6 +12,8 @@ describe("MoneyService", () => {
   it("confirms CNY with two fraction digits", () => {
     expect(service.confirmAmount({ amount: 3.625, currency: "CNY" })).toBe(3.63);
     expect(service.confirmAmount({ amount: 3.624, currency: "CNY" })).toBe(3.62);
+    expect(service.confirmAmount({ amount: 1.005, currency: "CNY" })).toBe(1.01);
+    expect(service.confirmAmount({ amount: 2.675, currency: "CNY" })).toBe(2.68);
   });
 
   it("rounds negative half values away from zero", () => {
@@ -21,6 +23,11 @@ describe("MoneyService", () => {
   it("keeps positive and negative offsets at zero when they cancel", () => {
     const amount = service.confirmAmount({ amount: 100.005 + -100.005, currency: "CNY" });
     expect(amount).toBe(0);
+  });
+
+  it("supports explicit ceil and floor modes for CNY cash requests", () => {
+    expect(service.confirmAmount({ amount: 123.451, currency: "CNY", roundingMode: "ceil" })).toBe(123.46);
+    expect(service.confirmAmount({ amount: 123.459, currency: "CNY", roundingMode: "floor" })).toBe(123.45);
   });
 
   it("converts JPY to CNY using backend rounding", () => {
@@ -37,5 +44,11 @@ describe("MoneyService", () => {
     expect(() => {
       service.assertConfirmedAmount({ expected: 3.625, submitted: 3.62, currency: "CNY" });
     }).toThrow("Money amount mismatch");
+  });
+
+  it("accepts submitted amounts only after backend confirmation", () => {
+    expect(() => {
+      service.assertConfirmedAmount({ expected: 3.625, submitted: 3.63, currency: "CNY" });
+    }).not.toThrow();
   });
 });

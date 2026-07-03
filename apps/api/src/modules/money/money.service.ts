@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import Decimal from "decimal.js";
 import type { ConfirmMoneyInput, CurrencyCode, RoundingMode } from "./money.types";
 
 @Injectable()
@@ -23,12 +24,11 @@ export class MoneyService {
     carryoverCny?: number;
     roundingMode?: RoundingMode;
   }): number {
-    const rawCny = params.jpyAmount * params.exchangeRate + (params.carryoverCny ?? 0);
-    return this.confirmAmount({
-      amount: rawCny,
-      currency: "CNY",
-      roundingMode: params.roundingMode,
-    });
+    const rawCny = new Decimal(params.jpyAmount)
+      .mul(params.exchangeRate)
+      .plus(params.carryoverCny ?? 0);
+
+    return this.roundTo(rawCny, this.getFractionDigits("CNY"), params.roundingMode ?? "half-up");
   }
 
   assertConfirmedAmount(params: { expected: number; submitted: number; currency: CurrencyCode }): void {
@@ -41,26 +41,17 @@ export class MoneyService {
     }
   }
 
-  private roundTo(amount: number, fractionDigits: number, mode: RoundingMode): number {
-    const scale = 10 ** fractionDigits;
-    const scaled = amount * scale;
+  private roundTo(amount: number | Decimal, fractionDigits: number, mode: RoundingMode): number {
+    const decimal = new Decimal(amount);
 
     if (mode === "ceil") {
-      return Math.ceil(scaled) / scale;
+      return decimal.toDecimalPlaces(fractionDigits, Decimal.ROUND_CEIL).toNumber();
     }
 
     if (mode === "floor") {
-      return Math.floor(scaled) / scale;
+      return decimal.toDecimalPlaces(fractionDigits, Decimal.ROUND_FLOOR).toNumber();
     }
 
-    return this.roundHalfUp(scaled) / scale;
-  }
-
-  private roundHalfUp(value: number): number {
-    if (value >= 0) {
-      return Math.floor(value + 0.5);
-    }
-
-    return Math.ceil(value - 0.5);
+    return decimal.toDecimalPlaces(fractionDigits, Decimal.ROUND_HALF_UP).toNumber();
   }
 }
