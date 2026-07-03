@@ -3,8 +3,11 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "packageManager": "pnpm@10.12.4",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
+    "dev:api": "pnpm --dir apps/api dev",
+    "build:api": "pnpm --dir apps/api build",
+    "test:api": "pnpm --dir apps/api test",
     "dev:web": "pnpm --dir apps/web dev",
     "build:web": "pnpm --dir apps/web build"
   }

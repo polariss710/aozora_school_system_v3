@@ -2,7 +2,7 @@
 
 记录日期：2026-06-25
 
-最近整理日期：2026-06-26
+最近整理日期：2026-07-04
 
 ## 1. 项目路径
 
@@ -12,42 +12,50 @@
 
 ## 2. Git 状态
 
-已执行：
-
-```bash
-git status --short
-```
-
-结果：
+当前目录已初始化为 Git 仓库，并已推送到 GitHub：
 
 ```text
-fatal: not a git repository (or any of the parent directories): .git
+https://github.com/polariss710/aozora_school_system_v3
 ```
 
-结论：
+主分支：
 
-- 当前目录尚未初始化为 Git 仓库。
-- 暂无可记录的 tracked / modified / untracked Git 状态。
-- 后续如进入正式开发，应先决定是否在当前目录执行 `git init`。
+```text
+main
+```
+
+初始提交：
+
+```text
+fddb61f Initialize v3 demo framework and planning docs
+```
+
+前端 demo preview 环境：
+
+```text
+https://aozora-school-system-v3-demo.onrender.com/
+```
 
 ## 3. 当前目录结构
 
-已读取项目目录结构，当前内容如下：
+当前项目已经从文档目录升级为 v3 monorepo 初始工程：
 
 ```text
 .
-├── .DS_Store
-└── docs
-    ├── aozora-school-v3-development-plan.md
-    ├── environment-strategy.md
-    ├── initial-state.md
-    └── project-rules.md
+├── apps
+│   ├── api
+│   └── web
+├── docs
+├── package.json
+├── pnpm-lock.yaml
+└── pnpm-workspace.yaml
 ```
 
 说明：
 
-- 当前项目主要由文档组成，尚未发现前端、后台、数据库 migration 或部署代码。
-- `.DS_Store` 是 macOS 本地系统文件，后续初始化 Git 时建议加入 `.gitignore`。
+- `apps/web` 是 React + TypeScript + Vite 前端 demo。
+- `apps/api` 是 NestJS + TypeScript 后端 skeleton。
+- `.gitignore` 已排除 `.DS_Store`、`node_modules`、`dist`、`.env` 等本地或敏感文件。
 
 ## 4. 已有文档
 
@@ -91,14 +99,15 @@ fatal: not a git repository (or any of the parent directories): .git
 
 ## 5. v3 当前定位摘要
 
-v3 是未来全面重构前端和后台程序的正式系统准备目录。
+v3 已进入正式工程准备阶段：前端 demo 主框架已确认，后端 skeleton 已开始建立。
 
 当前原则：
 
 - v2 继续作为稳定运营和数据补充来源。
 - v2 运营期预计继续覆盖 2-3 个月真实业务，用于沉淀 v3 需求证据。
-- v3 暂时以立项讨论、技术底座讨论、主链路边界整理、环境策略整理为主。
-- 未进入正式开发前，不急于创建前端或后台代码。
+- v3 已完成立项讨论、技术底座讨论、主链路边界整理和前端 demo 主框架确认。
+- 前端 demo 已部署到 Render preview 环境，用于 UI / 页面结构 / 流程确认。
+- 后端已建立 NestJS skeleton，但尚未接入真实数据库。
 - v3 初期数据库平台暂定 Supabase paid project；当前重点是快速搭建、快速迁移 v2 数据和验证主链路，而不是一开始采用更重的数据库托管平台。
 - v3 技术线暂定为轻量化现代 JS / TS 路线：前端 React + Vite，后端 NestJS，数据访问层 Prisma，部署优先 Render。
 - 任何涉及生产数据、Cash 联动、收入、支出、工资、账户流水的设计，都必须先明确环境、权限、审计和验证方式。
@@ -106,23 +115,31 @@ v3 是未来全面重构前端和后台程序的正式系统准备目录。
 
 ## 6. 当前未做事项
 
-本次初始化未执行以下动作：
+当前仍未执行以下动作：
 
-- 未初始化 Git。
-- 未创建前端项目。
-- 未创建后台项目。
+- 未创建 Supabase v3 dev project。
+- 未写入真实 `DATABASE_URL`。
 - 未创建数据库 migration。
-- 未连接 Supabase。
+- 未连接真实后端 API 到前端。
+- 未导入或迁移 v2 数据。
 - 未读取或修改 v2 项目。
 - 未执行任何生产数据操作。
+
+已完成：
+
+- Git 初始化和 GitHub 推送。
+- Render 前端 demo preview 部署。
+- `apps/web` 前端 demo 主框架。
+- `apps/api` NestJS 后端 skeleton。
+- `GET /api/health` 和 `GET /api/version`。
+- `MoneyService` 初版金额取舍测试骨架。
 
 ## 7. 建议下一步
 
 建议后续按以下顺序推进：
 
-1. 继续用 v2 真实运营记录 v3 需求证据。
-2. 先讨论 v3 技术底座：前端、后端、平台、数据库、认证权限。
-3. 明确 v3.0 主链路边界和核心数据模型。
-4. 梳理主链路状态机和锁定 / 只读 / 冲销规则。
-5. 决定数据迁移范围前，先完成 v2 数据和业务链路盘点。
-6. Git 初始化、`.gitignore`、项目脚手架等工程动作暂不着急，等进入实现阶段再处理。
+1. 完成后端底座：NestJS module skeleton、MoneyService、Prisma placeholder、health/version。
+2. 确认第一版数据模型草案，再决定何时创建 Supabase v3 dev project。
+3. 创建 Supabase v3 dev project 后，补充真实 `.env`，开始 Prisma migration。
+4. 优先实现金额层、认证权限骨架和主链路基础 API。
+5. 前端继续作为 demo preview，根据主链路 API 逐步接入真实 dev API。

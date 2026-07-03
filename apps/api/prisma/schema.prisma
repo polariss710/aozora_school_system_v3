@@ -1,0 +1,11 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Placeholder until the v3 dev PostgreSQL project is created.
+// The first real migration should be designed from the confirmed v3 data model.
