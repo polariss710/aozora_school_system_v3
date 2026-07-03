@@ -3380,7 +3380,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             </button>
 
             <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Demo 阶段仅展示登录流程，真实认证与权限校验将在后端接入后启用。
+              Demo 阶段仅展示登录流程，真实认证与权限校验将在后端接入后启用。Preview deploy test 2026-07-04。
             </div>
           </form>
         </div>
