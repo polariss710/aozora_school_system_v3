@@ -6,5 +6,228 @@ datasource db {
   provider = "postgresql"
 }
 
-// Placeholder until the first real v3 data model migration is designed.
-// The first real migration should be designed from the confirmed v3 data model.
+enum RecordStatus {
+  active
+  inactive
+  archived
+}
+
+enum UserStatus {
+  active
+  suspended
+  inactive
+}
+
+enum AccountType {
+  corporate
+  advance
+}
+
+enum CurrencyCode {
+  JPY
+  CNY
+}
+
+enum AuditRiskLevel {
+  low
+  medium
+  high
+  critical
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  displayName  String     @map("display_name")
+  status       UserStatus @default(active)
+  passwordHash String?    @map("password_hash")
+  lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  memo         String?
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  userRoles   UserRole[]
+  auditEvents AuditEvent[] @relation("AuditActor")
+
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique
+  name        String
+  description String?
+  status      RecordStatus @default(active)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@index([status])
+  @@map("roles")
+}
+
+model Permission {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique
+  name        String
+  description String?
+  status      RecordStatus @default(active)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+
+  @@index([status])
+  @@map("permissions")
+}
+
+model UserRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String   @id @default(uuid()) @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@unique([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model BusinessEntity {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique
+  name      String
+  status    RecordStatus @default(active)
+  memo      String?
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  students Student[]
+
+  @@index([status])
+  @@map("business_entities")
+}
+
+model Account {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique
+  name      String
+  type      AccountType
+  currency  CurrencyCode
+  status    RecordStatus @default(active)
+  memo      String?
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@index([type])
+  @@map("accounts")
+}
+
+model Student {
+  id                      String       @id @default(uuid()) @db.Uuid
+  code                    String?      @unique
+  name                    String
+  kanaName                String?      @map("kana_name")
+  status                  RecordStatus @default(active)
+  primaryBusinessEntityId String?      @map("primary_business_entity_id") @db.Uuid
+  memo                    String?
+  legacyTable             String?      @map("legacy_table")
+  legacyId                String?      @map("legacy_id")
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  primaryBusinessEntity BusinessEntity? @relation(fields: [primaryBusinessEntityId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@index([primaryBusinessEntityId])
+  @@map("students")
+}
+
+model Teacher {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String?      @unique
+  name        String
+  kanaName    String?      @map("kana_name")
+  status      RecordStatus @default(active)
+  memo        String?
+  legacyTable String?      @map("legacy_table")
+  legacyId    String?      @map("legacy_id")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("teachers")
+}
+
+model Subject {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique
+  name      String
+  category  String?
+  sortOrder Int          @default(0) @map("sort_order")
+  status    RecordStatus @default(active)
+  memo      String?
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@index([sortOrder])
+  @@map("subjects")
+}
+
+model ExternalWorkplace {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique
+  name      String
+  status    RecordStatus @default(active)
+  memo      String?
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("external_workplaces")
+}
+
+model AuditEvent {
+  id             String         @id @default(uuid()) @db.Uuid
+  actorUserId    String?        @map("actor_user_id") @db.Uuid
+  action         String
+  targetType     String         @map("target_type")
+  targetId       String?        @map("target_id")
+  riskLevel      AuditRiskLevel @default(low) @map("risk_level")
+  reason         String?
+  beforeSnapshot Json?          @map("before_snapshot")
+  afterSnapshot  Json?          @map("after_snapshot")
+  metadata       Json?
+  requestId      String?        @map("request_id")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actorUser User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([action])
+  @@index([targetType, targetId])
+  @@index([riskLevel])
+  @@index([createdAt])
+  @@map("audit_events")
+}
