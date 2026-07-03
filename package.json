@@ -1,0 +1,10 @@
+{
+  "name": "aozora-school-system-v3",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev:web": "pnpm --dir apps/web dev",
+    "build:web": "pnpm --dir apps/web build"
+  }
+}
