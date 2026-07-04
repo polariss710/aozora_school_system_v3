@@ -96,6 +96,24 @@ GET /api/lessons/actual/:id
 PATCH /api/lessons/actual/:id
 ```
 
+Tuition billing endpoints:
+
+```text
+GET /api/tuition-bills
+GET /api/tuition-bills/:id
+POST /api/tuition-bills/generate
+POST /api/tuition-bills/:id/generate-income
+```
+
+Income endpoints:
+
+```text
+GET /api/income
+GET /api/income/:id
+POST /api/income/manual
+POST /api/income/:id/void
+```
+
 Subject endpoints:
 
 ```text

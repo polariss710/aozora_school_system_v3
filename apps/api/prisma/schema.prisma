@@ -48,6 +48,27 @@ enum ActualLessonStatus {
   cancelled
 }
 
+enum TuitionBillStatus {
+  generated
+  income_created
+  voided
+}
+
+enum IncomeRecordStatus {
+  pending
+  voided
+  cash_confirmed
+}
+
+enum CashRequestStatus {
+  not_requested
+  cash_requested
+  cash_rejected
+  cash_confirmed
+  account_transaction_created
+  needs_manual_review
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -137,6 +158,7 @@ model BusinessEntity {
   students Student[]
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
+  incomeRecords  IncomeRecord[]
 
   @@index([status])
   @@map("business_entities")
@@ -174,6 +196,8 @@ model Student {
   primaryBusinessEntity BusinessEntity? @relation(fields: [primaryBusinessEntityId], references: [id], onDelete: Restrict)
   plannedLessons        StudentPlannedLesson[]
   actualLessons         StudentActualLesson[]
+  tuitionBills          StudentTuitionBill[]
+  incomeRecords         IncomeRecord[]
 
   @@index([status])
   @@index([primaryBusinessEntityId])
@@ -290,6 +314,59 @@ model StudentActualLesson {
   @@index([status])
   @@index([actualDate])
   @@map("student_actual_lessons")
+}
+
+model StudentTuitionBill {
+  id                      String            @id @default(uuid()) @db.Uuid
+  studentId               String            @map("student_id") @db.Uuid
+  yearMonth               String            @map("year_month") @db.VarChar(7)
+  plannedLessonCount      Int               @map("planned_lesson_count")
+  plannedAmountJpy        Int               @map("planned_amount_jpy")
+  carryoverAmountCny      Decimal           @default(0) @map("carryover_amount_cny") @db.Decimal(12, 2)
+  status                  TuitionBillStatus @default(generated)
+  calculationSnapshot     Json              @map("calculation_snapshot")
+  incomeRecordId          String?           @unique @map("income_record_id") @db.Uuid
+  generatedAt             DateTime          @default(now()) @map("generated_at") @db.Timestamptz(6)
+  createdAt               DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  incomeRecord IncomeRecord? @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, yearMonth])
+  @@index([yearMonth])
+  @@index([status])
+  @@map("student_tuition_bills")
+}
+
+model IncomeRecord {
+  id                       String             @id @default(uuid()) @db.Uuid
+  sourceType               String             @map("source_type")
+  sourceId                 String?            @map("source_id")
+  studentId                String?            @map("student_id") @db.Uuid
+  businessEntityId         String?            @map("business_entity_id") @db.Uuid
+  yearMonth                String?            @map("year_month") @db.VarChar(7)
+  title                    String
+  originalCurrency         CurrencyCode       @map("original_currency")
+  originalAmountJpy        Int?               @map("original_amount_jpy")
+  originalAmountCny        Decimal?           @map("original_amount_cny") @db.Decimal(12, 2)
+  carryoverAmountCny       Decimal?           @map("carryover_amount_cny") @db.Decimal(12, 2)
+  recordStatus             IncomeRecordStatus @default(pending) @map("record_status")
+  cashStatus               CashRequestStatus  @default(not_requested) @map("cash_status")
+  memo                     String?
+  createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student        Student?             @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  tuitionBill    StudentTuitionBill?
+
+  @@index([sourceType, sourceId])
+  @@index([studentId, yearMonth])
+  @@index([businessEntityId])
+  @@index([recordStatus])
+  @@index([cashStatus])
+  @@map("income_records")
 }
 
 model ExternalWorkplace {
