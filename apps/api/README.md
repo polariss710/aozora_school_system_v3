@@ -35,6 +35,17 @@ GET /api/settings/subjects
 GET /api/settings/external-workplaces
 ```
 
+Student endpoints:
+
+```text
+GET /api/students
+GET /api/students/:id
+POST /api/students
+PATCH /api/students/:id
+POST /api/students/:id/archive
+POST /api/students/:id/restore
+```
+
 Subject endpoints:
 
 ```text
