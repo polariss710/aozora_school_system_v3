@@ -46,6 +46,17 @@ POST /api/subjects/:id/archive
 POST /api/subjects/:id/restore
 ```
 
+Teacher endpoints:
+
+```text
+GET /api/teachers
+GET /api/teachers/:id
+POST /api/teachers
+PATCH /api/teachers/:id
+POST /api/teachers/:id/archive
+POST /api/teachers/:id/restore
+```
+
 Audit endpoints:
 
 ```text
