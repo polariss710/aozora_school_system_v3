@@ -35,6 +35,12 @@ GET /api/settings/subjects
 GET /api/settings/external-workplaces
 ```
 
+Audit endpoints:
+
+```text
+GET /api/audit/events
+```
+
 Optional seed admin:
 
 ```text
