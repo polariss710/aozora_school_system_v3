@@ -69,6 +69,11 @@ enum CashRequestStatus {
   needs_manual_review
 }
 
+enum CashRequestDirection {
+  income
+  expense
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -360,6 +365,7 @@ model IncomeRecord {
   student        Student?             @relation(fields: [studentId], references: [id], onDelete: Restrict)
   businessEntity BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   tuitionBill    StudentTuitionBill?
+  cashRequests   CashRequest[]
 
   @@index([sourceType, sourceId])
   @@index([studentId, yearMonth])
@@ -367,6 +373,40 @@ model IncomeRecord {
   @@index([recordStatus])
   @@index([cashStatus])
   @@map("income_records")
+}
+
+model CashRequest {
+  id                    String               @id @default(uuid()) @db.Uuid
+  direction             CashRequestDirection
+  sourceType            String               @map("source_type")
+  sourceId              String?              @map("source_id")
+  incomeRecordId        String?              @map("income_record_id") @db.Uuid
+  status                CashRequestStatus    @default(cash_requested)
+  expectedCurrency      CurrencyCode         @map("expected_currency")
+  expectedAmountJpy     Int?                 @map("expected_amount_jpy")
+  expectedAmountCny     Decimal?             @map("expected_amount_cny") @db.Decimal(12, 2)
+  carryoverAmountCny    Decimal?             @map("carryover_amount_cny") @db.Decimal(12, 2)
+  requestedCurrency     CurrencyCode         @map("requested_currency")
+  requestedAmountJpy    Int?                 @map("requested_amount_jpy")
+  requestedAmountCny    Decimal?             @map("requested_amount_cny") @db.Decimal(12, 2)
+  exchangeRate          Decimal?             @map("exchange_rate") @db.Decimal(18, 8)
+  exchangeRateSource    String?              @map("exchange_rate_source")
+  conversionMethod      String?              @map("conversion_method")
+  cashAccountCode       String?              @map("cash_account_code")
+  externalCashRequestId String?              @map("external_cash_request_id")
+  externalCashEventId   String?              @map("external_cash_event_id")
+  rejectionReason       String?              @map("rejection_reason")
+  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  incomeRecord IncomeRecord? @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+
+  @@index([direction])
+  @@index([sourceType, sourceId])
+  @@index([incomeRecordId])
+  @@index([status])
+  @@index([externalCashRequestId])
+  @@map("cash_requests")
 }
 
 model ExternalWorkplace {

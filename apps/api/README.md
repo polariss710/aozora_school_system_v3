@@ -114,6 +114,16 @@ POST /api/income/manual
 POST /api/income/:id/void
 ```
 
+Cash request endpoints:
+
+```text
+GET /api/cash/requests
+GET /api/cash/requests/:id
+POST /api/cash/requests/income/:incomeRecordId
+POST /api/cash/requests/:id/reject
+POST /api/cash/requests/:id/confirm
+```
+
 Subject endpoints:
 
 ```text
