@@ -24,6 +24,17 @@ POST /api/auth/login
 GET /api/auth/me
 ```
 
+Settings endpoints:
+
+```text
+GET /api/settings/business-entities
+GET /api/settings/accounts
+GET /api/settings/roles
+GET /api/settings/permissions
+GET /api/settings/subjects
+GET /api/settings/external-workplaces
+```
+
 Optional seed admin:
 
 ```text
