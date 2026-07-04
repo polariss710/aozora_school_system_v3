@@ -35,6 +35,28 @@ GET /api/settings/subjects
 GET /api/settings/external-workplaces
 ```
 
+Business entity endpoints:
+
+```text
+GET /api/business-entities
+GET /api/business-entities/:id
+POST /api/business-entities
+PATCH /api/business-entities/:id
+POST /api/business-entities/:id/archive
+POST /api/business-entities/:id/restore
+```
+
+Account endpoints:
+
+```text
+GET /api/accounts
+GET /api/accounts/:id
+POST /api/accounts
+PATCH /api/accounts/:id
+POST /api/accounts/:id/archive
+POST /api/accounts/:id/restore
+```
+
 Student endpoints:
 
 ```text
@@ -66,6 +88,17 @@ POST /api/teachers
 PATCH /api/teachers/:id
 POST /api/teachers/:id/archive
 POST /api/teachers/:id/restore
+```
+
+External workplace endpoints:
+
+```text
+GET /api/external-workplaces
+GET /api/external-workplaces/:id
+POST /api/external-workplaces
+PATCH /api/external-workplaces/:id
+POST /api/external-workplaces/:id/archive
+POST /api/external-workplaces/:id/restore
 ```
 
 Audit endpoints:

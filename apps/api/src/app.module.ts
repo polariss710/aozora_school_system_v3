@@ -2,9 +2,11 @@ import { Module } from "@nestjs/common";
 import { AccountsModule } from "./modules/accounts/accounts.module";
 import { AuditModule } from "./modules/audit/audit.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { BusinessEntitiesModule } from "./modules/business-entities/business-entities.module";
 import { CashModule } from "./modules/cash/cash.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { ExpensesModule } from "./modules/expenses/expenses.module";
+import { ExternalWorkplacesModule } from "./modules/external-workplaces/external-workplaces.module";
 import { HealthModule } from "./modules/health/health.module";
 import { IncomeModule } from "./modules/income/income.module";
 import { LessonsModule } from "./modules/lessons/lessons.module";
@@ -25,9 +27,11 @@ import { WagesModule } from "./modules/wages/wages.module";
     HealthModule,
     VersionModule,
     SettingsModule,
+    BusinessEntitiesModule,
     StudentsModule,
     SubjectsModule,
     TeachersModule,
+    ExternalWorkplacesModule,
     MoneyModule,
     AuthModule,
     UsersModule,
