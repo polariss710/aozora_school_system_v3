@@ -3,6 +3,7 @@ import { AccountsModule } from "./modules/accounts/accounts.module";
 import { AuditModule } from "./modules/audit/audit.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CashModule } from "./modules/cash/cash.module";
+import { DatabaseModule } from "./modules/database/database.module";
 import { ExpensesModule } from "./modules/expenses/expenses.module";
 import { HealthModule } from "./modules/health/health.module";
 import { IncomeModule } from "./modules/income/income.module";
@@ -16,6 +17,7 @@ import { WagesModule } from "./modules/wages/wages.module";
 
 @Module({
   imports: [
+    DatabaseModule,
     HealthModule,
     VersionModule,
     MoneyModule,

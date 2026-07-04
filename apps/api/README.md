@@ -6,8 +6,16 @@ Current stage:
 
 - API skeleton with the first Prisma/PostgreSQL foundation schema.
 - Supabase dev PostgreSQL is connected through local environment variables.
+- NestJS runtime uses `PrismaService` with the PostgreSQL driver adapter.
 - The initial migration creates users, roles, permissions, business entities, accounts, master data, and audit tables.
 - The seed script initializes the minimum v3 roles, permissions, business entities, and School-side accounts.
+
+Health endpoints:
+
+```text
+GET /api/health
+GET /api/health/db
+```
 
 Commands:
 
