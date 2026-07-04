@@ -35,6 +35,19 @@ enum AuditRiskLevel {
   critical
 }
 
+enum PlannedLessonStatus {
+  scheduled
+  actual_created
+  makeup_pending
+  makeup_completed
+  cancelled
+}
+
+enum ActualLessonStatus {
+  completed
+  cancelled
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -122,6 +135,8 @@ model BusinessEntity {
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   students Student[]
+  plannedLessons StudentPlannedLesson[]
+  actualLessons  StudentActualLesson[]
 
   @@index([status])
   @@map("business_entities")
@@ -157,6 +172,8 @@ model Student {
   updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   primaryBusinessEntity BusinessEntity? @relation(fields: [primaryBusinessEntityId], references: [id], onDelete: Restrict)
+  plannedLessons        StudentPlannedLesson[]
+  actualLessons         StudentActualLesson[]
 
   @@index([status])
   @@index([primaryBusinessEntityId])
@@ -175,6 +192,9 @@ model Teacher {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  plannedLessons StudentPlannedLesson[]
+  actualLessons  StudentActualLesson[]
+
   @@index([status])
   @@map("teachers")
 }
@@ -190,9 +210,86 @@ model Subject {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  plannedLessons StudentPlannedLesson[]
+  actualLessons  StudentActualLesson[]
+
   @@index([status])
   @@index([sortOrder])
   @@map("subjects")
+}
+
+model StudentPlannedLesson {
+  id               String              @id @default(uuid()) @db.Uuid
+  studentId        String              @map("student_id") @db.Uuid
+  teacherId        String              @map("teacher_id") @db.Uuid
+  subjectId        String              @map("subject_id") @db.Uuid
+  businessEntityId String              @map("business_entity_id") @db.Uuid
+  yearMonth        String              @map("year_month") @db.VarChar(7)
+  weekAnchorDate   DateTime            @map("week_anchor_date") @db.Date
+  lessonNo         Int?                @map("lesson_no")
+  plannedStartTime String?             @map("planned_start_time") @db.VarChar(5)
+  plannedEndTime   String?             @map("planned_end_time") @db.VarChar(5)
+  durationHours    Decimal             @map("duration_hours") @db.Decimal(6, 2)
+  plannedFeeJpy    Int                 @map("planned_fee_jpy")
+  content          String?
+  memo             String?
+  status           PlannedLessonStatus @default(scheduled)
+  sourceType       String              @default("manual") @map("source_type")
+  sourceId         String?             @map("source_id")
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student        Student        @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  teacher        Teacher        @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subject        Subject        @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  actualLesson   StudentActualLesson?
+
+  @@index([yearMonth])
+  @@index([studentId, yearMonth])
+  @@index([teacherId, yearMonth])
+  @@index([subjectId])
+  @@index([businessEntityId])
+  @@index([status])
+  @@index([weekAnchorDate])
+  @@map("student_planned_lessons")
+}
+
+model StudentActualLesson {
+  id                  String             @id @default(uuid()) @db.Uuid
+  plannedLessonId     String?            @unique @map("planned_lesson_id") @db.Uuid
+  studentId           String             @map("student_id") @db.Uuid
+  teacherId           String             @map("teacher_id") @db.Uuid
+  subjectId           String             @map("subject_id") @db.Uuid
+  businessEntityId    String             @map("business_entity_id") @db.Uuid
+  yearMonth           String             @map("year_month") @db.VarChar(7)
+  actualDate          DateTime           @map("actual_date") @db.Date
+  startTime           String?            @map("start_time") @db.VarChar(5)
+  endTime             String?            @map("end_time") @db.VarChar(5)
+  durationHours       Decimal            @map("duration_hours") @db.Decimal(6, 2)
+  content             String?
+  memo                String?
+  status              ActualLessonStatus @default(completed)
+  teacherWageEligible Boolean            @default(true) @map("teacher_wage_eligible")
+  sourceType          String             @default("planned_lesson") @map("source_type")
+  sourceId            String?            @map("source_id")
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  plannedLesson  StudentPlannedLesson? @relation(fields: [plannedLessonId], references: [id], onDelete: Restrict)
+  student        Student               @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  teacher        Teacher               @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subject        Subject               @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity        @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+
+  @@index([yearMonth])
+  @@index([studentId, yearMonth])
+  @@index([teacherId, yearMonth])
+  @@index([subjectId])
+  @@index([businessEntityId])
+  @@index([status])
+  @@index([actualDate])
+  @@map("student_actual_lessons")
 }
 
 model ExternalWorkplace {

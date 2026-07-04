@@ -80,6 +80,22 @@ POST /api/students/:id/archive
 POST /api/students/:id/restore
 ```
 
+Student lesson endpoints:
+
+```text
+GET /api/lessons/planned
+GET /api/lessons/planned/:id
+POST /api/lessons/planned
+PATCH /api/lessons/planned/:id
+POST /api/lessons/planned/:id/cancel
+POST /api/lessons/planned/:id/restore
+POST /api/lessons/planned/:id/mark-makeup-pending
+POST /api/lessons/planned/:id/generate-actual
+GET /api/lessons/actual
+GET /api/lessons/actual/:id
+PATCH /api/lessons/actual/:id
+```
+
 Subject endpoints:
 
 ```text
