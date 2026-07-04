@@ -74,6 +74,11 @@ enum CashRequestDirection {
   expense
 }
 
+enum StudentSettlementStatus {
+  locked
+  revoked
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -160,7 +165,7 @@ model BusinessEntity {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  students Student[]
+  students       Student[]
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
   incomeRecords  IncomeRecord[]
@@ -198,10 +203,11 @@ model Student {
   createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  primaryBusinessEntity BusinessEntity? @relation(fields: [primaryBusinessEntityId], references: [id], onDelete: Restrict)
+  primaryBusinessEntity BusinessEntity?            @relation(fields: [primaryBusinessEntityId], references: [id], onDelete: Restrict)
   plannedLessons        StudentPlannedLesson[]
   actualLessons         StudentActualLesson[]
   tuitionBills          StudentTuitionBill[]
+  monthlySettlements    StudentMonthlySettlement[]
   incomeRecords         IncomeRecord[]
 
   @@index([status])
@@ -268,10 +274,10 @@ model StudentPlannedLesson {
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  student        Student        @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  teacher        Teacher        @relation(fields: [teacherId], references: [id], onDelete: Restrict)
-  subject        Subject        @relation(fields: [subjectId], references: [id], onDelete: Restrict)
-  businessEntity BusinessEntity @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  student        Student              @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  teacher        Teacher              @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subject        Subject              @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity       @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   actualLesson   StudentActualLesson?
 
   @@index([yearMonth])
@@ -322,18 +328,18 @@ model StudentActualLesson {
 }
 
 model StudentTuitionBill {
-  id                      String            @id @default(uuid()) @db.Uuid
-  studentId               String            @map("student_id") @db.Uuid
-  yearMonth               String            @map("year_month") @db.VarChar(7)
-  plannedLessonCount      Int               @map("planned_lesson_count")
-  plannedAmountJpy        Int               @map("planned_amount_jpy")
-  carryoverAmountCny      Decimal           @default(0) @map("carryover_amount_cny") @db.Decimal(12, 2)
-  status                  TuitionBillStatus @default(generated)
-  calculationSnapshot     Json              @map("calculation_snapshot")
-  incomeRecordId          String?           @unique @map("income_record_id") @db.Uuid
-  generatedAt             DateTime          @default(now()) @map("generated_at") @db.Timestamptz(6)
-  createdAt               DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt               DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                  String            @id @default(uuid()) @db.Uuid
+  studentId           String            @map("student_id") @db.Uuid
+  yearMonth           String            @map("year_month") @db.VarChar(7)
+  plannedLessonCount  Int               @map("planned_lesson_count")
+  plannedAmountJpy    Int               @map("planned_amount_jpy")
+  carryoverAmountCny  Decimal           @default(0) @map("carryover_amount_cny") @db.Decimal(12, 2)
+  status              TuitionBillStatus @default(generated)
+  calculationSnapshot Json              @map("calculation_snapshot")
+  incomeRecordId      String?           @unique @map("income_record_id") @db.Uuid
+  generatedAt         DateTime          @default(now()) @map("generated_at") @db.Timestamptz(6)
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   student      Student       @relation(fields: [studentId], references: [id], onDelete: Restrict)
   incomeRecord IncomeRecord? @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
@@ -344,26 +350,58 @@ model StudentTuitionBill {
   @@map("student_tuition_bills")
 }
 
-model IncomeRecord {
-  id                       String             @id @default(uuid()) @db.Uuid
-  sourceType               String             @map("source_type")
-  sourceId                 String?            @map("source_id")
-  studentId                String?            @map("student_id") @db.Uuid
-  businessEntityId         String?            @map("business_entity_id") @db.Uuid
-  yearMonth                String?            @map("year_month") @db.VarChar(7)
-  title                    String
-  originalCurrency         CurrencyCode       @map("original_currency")
-  originalAmountJpy        Int?               @map("original_amount_jpy")
-  originalAmountCny        Decimal?           @map("original_amount_cny") @db.Decimal(12, 2)
-  carryoverAmountCny       Decimal?           @map("carryover_amount_cny") @db.Decimal(12, 2)
-  recordStatus             IncomeRecordStatus @default(pending) @map("record_status")
-  cashStatus               CashRequestStatus  @default(not_requested) @map("cash_status")
-  memo                     String?
-  createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+model StudentMonthlySettlement {
+  id                         String                  @id @default(uuid()) @db.Uuid
+  studentId                  String                  @map("student_id") @db.Uuid
+  yearMonth                  String                  @map("year_month") @db.VarChar(7)
+  plannedLessonCount         Int                     @map("planned_lesson_count")
+  billableLessonCount        Int                     @map("billable_lesson_count")
+  cancelledLessonCount       Int                     @map("cancelled_lesson_count")
+  actualLessonCount          Int                     @map("actual_lesson_count")
+  plannedAmountJpy           Int                     @map("planned_amount_jpy")
+  billableAmountJpy          Int                     @map("billable_amount_jpy")
+  receivedAmountJpy          Int                     @default(0) @map("received_amount_jpy")
+  receivedAmountCny          Decimal                 @default(0) @map("received_amount_cny") @db.Decimal(12, 2)
+  previousCarryoverAmountCny Decimal                 @default(0) @map("previous_carryover_amount_cny") @db.Decimal(12, 2)
+  settlementExchangeRate     Decimal?                @map("settlement_exchange_rate") @db.Decimal(18, 8)
+  adjustmentAmountCny        Decimal                 @default(0) @map("adjustment_amount_cny") @db.Decimal(12, 2)
+  carryoverAmountCny         Decimal                 @default(0) @map("carryover_amount_cny") @db.Decimal(12, 2)
+  status                     StudentSettlementStatus @default(locked)
+  calculationSnapshot        Json                    @map("calculation_snapshot")
+  lockedAt                   DateTime                @default(now()) @map("locked_at") @db.Timestamptz(6)
+  revokedAt                  DateTime?               @map("revoked_at") @db.Timestamptz(6)
+  memo                       String?
+  createdAt                  DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  student        Student?             @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  businessEntity BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, yearMonth])
+  @@index([yearMonth])
+  @@index([status])
+  @@map("student_monthly_settlements")
+}
+
+model IncomeRecord {
+  id                 String             @id @default(uuid()) @db.Uuid
+  sourceType         String             @map("source_type")
+  sourceId           String?            @map("source_id")
+  studentId          String?            @map("student_id") @db.Uuid
+  businessEntityId   String?            @map("business_entity_id") @db.Uuid
+  yearMonth          String?            @map("year_month") @db.VarChar(7)
+  title              String
+  originalCurrency   CurrencyCode       @map("original_currency")
+  originalAmountJpy  Int?               @map("original_amount_jpy")
+  originalAmountCny  Decimal?           @map("original_amount_cny") @db.Decimal(12, 2)
+  carryoverAmountCny Decimal?           @map("carryover_amount_cny") @db.Decimal(12, 2)
+  recordStatus       IncomeRecordStatus @default(pending) @map("record_status")
+  cashStatus         CashRequestStatus  @default(not_requested) @map("cash_status")
+  memo               String?
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student        Student?            @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity?     @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   tuitionBill    StudentTuitionBill?
   cashRequests   CashRequest[]
 

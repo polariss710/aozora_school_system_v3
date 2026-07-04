@@ -11,6 +11,7 @@ import {
   PlannedLessonStatus,
   Prisma,
   RecordStatus,
+  StudentSettlementStatus,
   TuitionBillStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
@@ -170,6 +171,26 @@ export class TuitionBillingService {
       (sum, lesson) => sum + lesson.plannedFeeJpy,
       0,
     );
+    const previousYearMonth = this.addMonths(yearMonth, -1);
+    const previousSettlement =
+      await this.prisma.studentMonthlySettlement.findUnique({
+        where: {
+          studentId_yearMonth: {
+            studentId,
+            yearMonth: previousYearMonth,
+          },
+        },
+        select: {
+          id: true,
+          status: true,
+          carryoverAmountCny: true,
+          lockedAt: true,
+        },
+      });
+    const carryoverAmountCny =
+      previousSettlement?.status === StudentSettlementStatus.locked
+        ? previousSettlement.carryoverAmountCny
+        : new Prisma.Decimal(0);
     const businessEntityIds = [
       ...new Set(plannedLessons.map((lesson) => lesson.businessEntityId)),
     ];
@@ -191,7 +212,18 @@ export class TuitionBillingService {
         plannedFeeJpy: lesson.plannedFeeJpy,
         status: lesson.status,
       })),
-      carryoverSource: "student_settlement_not_connected_yet",
+      carryoverSource: previousSettlement
+        ? {
+            type: "previous_locked_student_monthly_settlement",
+            yearMonth: previousYearMonth,
+            settlementId: previousSettlement.id,
+            settlementStatus: previousSettlement.status,
+            lockedAt: previousSettlement.lockedAt.toISOString(),
+          }
+        : {
+            type: "none",
+            yearMonth: previousYearMonth,
+          },
     };
 
     const tuitionBill = await this.prisma.$transaction(async (tx) => {
@@ -201,7 +233,7 @@ export class TuitionBillingService {
             data: {
               plannedLessonCount: plannedLessons.length,
               plannedAmountJpy,
-              carryoverAmountCny: new Prisma.Decimal(0),
+              carryoverAmountCny,
               status: TuitionBillStatus.generated,
               calculationSnapshot,
               generatedAt: new Date(),
@@ -214,7 +246,7 @@ export class TuitionBillingService {
               yearMonth,
               plannedLessonCount: plannedLessons.length,
               plannedAmountJpy,
-              carryoverAmountCny: new Prisma.Decimal(0),
+              carryoverAmountCny,
               status: TuitionBillStatus.generated,
               calculationSnapshot,
             },
@@ -432,5 +464,15 @@ export class TuitionBillingService {
     }
 
     return value.trim() || null;
+  }
+
+  private addMonths(yearMonth: string, months: number) {
+    const [year, month] = yearMonth.split("-").map((part) => Number(part));
+    const date = new Date(Date.UTC(year, month - 1 + months, 1));
+
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+      2,
+      "0",
+    )}`;
   }
 }
