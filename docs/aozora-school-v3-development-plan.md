@@ -248,9 +248,9 @@ Supabase / 后端边界：
 
 当前费用估算：
 
-- 现有 Cash project + School v1/v2 project 升级到 Supabase Pro：约 `$35/月`。
-- 再新增一个 `v3 dev` project：约 `$45/月`。
-- 测试 / 上线准备阶段如增加 `v3 staging` 和 `v3 prod`，并保留现有 Cash、School、v3 dev：约 `$65/月`。
+- 当前 3 个 project 合计约 `$35/月`。
+- 测试 / 上线准备阶段如增加 `v3 staging` 和 `v3 prod`，费用会继续上升；用户当前判断最终可接受约 `$55/月` 左右。
+- v3 开发完成后，计划合并或下线旧的 Cash / v1 / v2 相关 DB，长期争取保留 2-3 个 project。
 - 实际金额以 Supabase billing 页面为准。
 
 ### 2.5 认证与权限
