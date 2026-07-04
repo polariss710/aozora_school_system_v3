@@ -17,6 +17,7 @@ import { StudentsModule } from "./modules/students/students.module";
 import { SubjectsModule } from "./modules/subjects/subjects.module";
 import { TeachersModule } from "./modules/teachers/teachers.module";
 import { TuitionBillingModule } from "./modules/tuition-billing/tuition-billing.module";
+import { UserManagementModule } from "./modules/user-management/user-management.module";
 import { UsersModule } from "./modules/users/users.module";
 import { VersionModule } from "./modules/version/version.module";
 import { WagesModule } from "./modules/wages/wages.module";
@@ -34,6 +35,7 @@ import { WagesModule } from "./modules/wages/wages.module";
     ExternalWorkplacesModule,
     MoneyModule,
     AuthModule,
+    UserManagementModule,
     UsersModule,
     LessonsModule,
     TuitionBillingModule,

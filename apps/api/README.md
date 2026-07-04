@@ -24,6 +24,18 @@ POST /api/auth/login
 GET /api/auth/me
 ```
 
+User management endpoints:
+
+```text
+GET /api/users
+GET /api/users/:id
+POST /api/users
+PATCH /api/users/:id
+POST /api/users/:id/password
+POST /api/users/:id/suspend
+POST /api/users/:id/activate
+```
+
 Settings endpoints:
 
 ```text
