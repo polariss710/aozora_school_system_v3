@@ -35,6 +35,17 @@ GET /api/settings/subjects
 GET /api/settings/external-workplaces
 ```
 
+Subject endpoints:
+
+```text
+GET /api/subjects
+GET /api/subjects/:id
+POST /api/subjects
+PATCH /api/subjects/:id
+POST /api/subjects/:id/archive
+POST /api/subjects/:id/restore
+```
+
 Audit endpoints:
 
 ```text

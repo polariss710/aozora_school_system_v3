@@ -5,25 +5,18 @@ import { CreateAuditEventInput, ListAuditEventsQuery } from "./audit.types";
 
 const defaultLimit = 50;
 const maxLimit = 200;
+type AuditEventWriter = Pick<Prisma.TransactionClient, "auditEvent">;
 
 @Injectable()
 export class AuditService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async recordEvent(input: CreateAuditEventInput) {
-    return this.prisma.auditEvent.create({
-      data: {
-        actorUserId: input.actorUserId ?? null,
-        action: input.action,
-        targetType: input.targetType,
-        targetId: input.targetId ?? null,
-        riskLevel: input.riskLevel ?? AuditRiskLevel.low,
-        reason: input.reason ?? null,
-        beforeSnapshot: input.beforeSnapshot ?? Prisma.JsonNull,
-        afterSnapshot: input.afterSnapshot ?? Prisma.JsonNull,
-        metadata: input.metadata ?? Prisma.JsonNull,
-        requestId: input.requestId ?? null,
-      },
+  async recordEvent(
+    input: CreateAuditEventInput,
+    client: AuditEventWriter = this.prisma,
+  ) {
+    return client.auditEvent.create({
+      data: this.buildCreateData(input),
     });
   }
 
@@ -82,6 +75,21 @@ export class AuditService {
       ...(targetId ? { targetId } : {}),
       ...(actorUserId ? { actorUserId } : {}),
       ...(riskLevel ? { riskLevel } : {}),
+    };
+  }
+
+  private buildCreateData(input: CreateAuditEventInput) {
+    return {
+      actorUserId: input.actorUserId ?? null,
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId ?? null,
+      riskLevel: input.riskLevel ?? AuditRiskLevel.low,
+      reason: input.reason ?? null,
+      beforeSnapshot: input.beforeSnapshot ?? Prisma.JsonNull,
+      afterSnapshot: input.afterSnapshot ?? Prisma.JsonNull,
+      metadata: input.metadata ?? Prisma.JsonNull,
+      requestId: input.requestId ?? null,
     };
   }
 

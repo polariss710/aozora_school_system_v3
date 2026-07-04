@@ -11,6 +11,7 @@ import { LessonsModule } from "./modules/lessons/lessons.module";
 import { MoneyModule } from "./modules/money/money.module";
 import { SettlementsModule } from "./modules/settlements/settlements.module";
 import { SettingsModule } from "./modules/settings/settings.module";
+import { SubjectsModule } from "./modules/subjects/subjects.module";
 import { TuitionBillingModule } from "./modules/tuition-billing/tuition-billing.module";
 import { UsersModule } from "./modules/users/users.module";
 import { VersionModule } from "./modules/version/version.module";
@@ -22,6 +23,7 @@ import { WagesModule } from "./modules/wages/wages.module";
     HealthModule,
     VersionModule,
     SettingsModule,
+    SubjectsModule,
     MoneyModule,
     AuthModule,
     UsersModule,
