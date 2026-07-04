@@ -17,6 +17,21 @@ GET /api/health
 GET /api/health/db
 ```
 
+Auth endpoints:
+
+```text
+POST /api/auth/login
+GET /api/auth/me
+```
+
+Optional seed admin:
+
+```text
+V3_ADMIN_EMAIL
+V3_ADMIN_PASSWORD
+V3_ADMIN_DISPLAY_NAME
+```
+
 Commands:
 
 ```bash

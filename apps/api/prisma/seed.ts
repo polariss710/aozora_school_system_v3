@@ -3,9 +3,11 @@ import {
   CurrencyCode,
   PrismaClient,
   RecordStatus,
+  UserStatus,
 } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { config as loadEnv } from "dotenv";
+import { PasswordService } from "../src/modules/auth/password.service";
 
 loadEnv();
 
@@ -17,6 +19,7 @@ if (!databaseUrl) {
 
 const adapter = new PrismaPg(databaseUrl);
 const prisma = new PrismaClient({ adapter });
+const passwordService = new PasswordService();
 
 type SeedPermission = {
   code: string;
@@ -289,6 +292,57 @@ async function seedRoles() {
   }
 }
 
+async function seedAdminUser() {
+  const email = process.env.V3_ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.V3_ADMIN_PASSWORD;
+  const displayName = process.env.V3_ADMIN_DISPLAY_NAME?.trim() || "系统管理员";
+
+  if (!email && !password) {
+    return;
+  }
+
+  if (!email || !password) {
+    throw new Error(
+      "V3_ADMIN_EMAIL and V3_ADMIN_PASSWORD must be provided together.",
+    );
+  }
+
+  const passwordHash = await passwordService.hashPassword(password);
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: {
+      displayName,
+      passwordHash,
+      status: UserStatus.active,
+    },
+    create: {
+      email,
+      displayName,
+      passwordHash,
+      status: UserStatus.active,
+    },
+  });
+
+  const adminRole = await prisma.role.findUniqueOrThrow({
+    where: { code: "admin" },
+    select: { id: true },
+  });
+
+  await prisma.userRole.upsert({
+    where: {
+      userId_roleId: {
+        userId: user.id,
+        roleId: adminRole.id,
+      },
+    },
+    update: {},
+    create: {
+      userId: user.id,
+      roleId: adminRole.id,
+    },
+  });
+}
+
 async function seedBusinessEntities() {
   for (const businessEntity of businessEntities) {
     await prisma.businessEntity.upsert({
@@ -328,13 +382,15 @@ async function seedAccounts() {
 async function main() {
   await seedPermissions();
   await seedRoles();
+  await seedAdminUser();
   await seedBusinessEntities();
   await seedAccounts();
 
-  const [permissionCount, roleCount, businessEntityCount, accountCount] =
+  const [permissionCount, roleCount, userCount, businessEntityCount, accountCount] =
     await Promise.all([
       prisma.permission.count(),
       prisma.role.count(),
+      prisma.user.count(),
       prisma.businessEntity.count(),
       prisma.account.count(),
     ]);
@@ -343,6 +399,7 @@ async function main() {
   console.table({
     permissions: permissionCount,
     roles: roleCount,
+    users: userCount,
     businessEntities: businessEntityCount,
     accounts: accountCount,
   });
