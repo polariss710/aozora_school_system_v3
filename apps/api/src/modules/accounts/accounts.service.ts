@@ -9,6 +9,7 @@ import {
   AccountType,
   AccountTransactionDirection,
   AccountTransactionStatus,
+  AccountTransferStatus,
   AuditRiskLevel,
   CashRequestStatus,
   CurrencyCode,
@@ -17,19 +18,25 @@ import {
   Prisma,
   RecordStatus,
 } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import {
   AccountSnapshot,
+  CreateAccountTransferBody,
   AccountWriteBody,
   CreateAccountTransactionFromExpenseBody,
   CreateAccountTransactionFromIncomeBody,
   ListAccountsQuery,
   ListAccountTransactionsQuery,
+  ListAccountTransfersQuery,
   ManualAccountTransactionBody,
+  NormalizedAccountTransferInput,
   NormalizedAccountInput,
   NormalizedManualAccountTransactionInput,
+  ReverseAccountTransactionBody,
+  VoidAccountTransferBody,
 } from "./accounts.types";
 
 const accountSelect = {
@@ -61,6 +68,7 @@ const accountTransactionSelect = {
   memo: true,
   createdAt: true,
   updatedAt: true,
+  reversedAt: true,
   account: { select: { id: true, code: true, name: true, type: true, currency: true } },
   incomeRecord: {
     select: { id: true, sourceType: true, title: true, recordStatus: true, cashStatus: true },
@@ -69,6 +77,27 @@ const accountTransactionSelect = {
     select: { id: true, sourceType: true, title: true, recordStatus: true, cashStatus: true },
   },
 } satisfies Prisma.AccountTransactionSelect;
+
+const accountTransferSelect = {
+  id: true,
+  fromAccountId: true,
+  toAccountId: true,
+  fromTransactionId: true,
+  toTransactionId: true,
+  transferDate: true,
+  currency: true,
+  amountJpy: true,
+  amountCny: true,
+  status: true,
+  memo: true,
+  voidedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  fromAccount: { select: { id: true, code: true, name: true, type: true, currency: true } },
+  toAccount: { select: { id: true, code: true, name: true, type: true, currency: true } },
+  fromTransaction: { select: accountTransactionSelect },
+  toTransaction: { select: accountTransactionSelect },
+} satisfies Prisma.AccountTransferSelect;
 
 const incomeRecordForTransactionSelect = {
   id: true,
@@ -97,11 +126,17 @@ const expenseRecordForTransactionSelect = {
 const defaultLimit = 100;
 const maxLimit = 500;
 const manualAccountTransactionSourceType = "manual_account_transaction";
+const accountCorrectionSourceType = "account_correction";
+const accountTransferSourceType = "account_transfer";
 const manualIncomeSourceType = "manual_income";
 const manualExpenseSourceType = "manual_expense";
 
 type AccountTransactionSnapshot = Prisma.AccountTransactionGetPayload<{
   select: typeof accountTransactionSelect;
+}>;
+
+type AccountTransferSnapshot = Prisma.AccountTransferGetPayload<{
+  select: typeof accountTransferSelect;
 }>;
 
 type IncomeRecordForTransaction = Prisma.IncomeRecordGetPayload<{
@@ -166,6 +201,29 @@ export class AccountsService {
     return { accountTransaction };
   }
 
+  async listAccountTransfers(query: ListAccountTransfersQuery) {
+    const where = this.buildTransferWhere(query);
+    const limit = this.normalizeLimit(query.limit);
+
+    const [items, total] = await Promise.all([
+      this.prisma.accountTransfer.findMany({
+        where,
+        orderBy: [{ transferDate: "desc" }, { createdAt: "desc" }],
+        take: limit,
+        select: accountTransferSelect,
+      }),
+      this.prisma.accountTransfer.count({ where }),
+    ]);
+
+    return { items, total, limit };
+  }
+
+  async getAccountTransfer(id: string) {
+    const accountTransfer = await this.findAccountTransfer(id);
+
+    return { accountTransfer };
+  }
+
   async createManualAccountTransaction(
     body: ManualAccountTransactionBody,
     actorUserId: string,
@@ -198,6 +256,198 @@ export class AccountsService {
       );
 
       return created;
+    });
+
+    return { accountTransaction };
+  }
+
+  async createAccountTransfer(
+    body: CreateAccountTransferBody,
+    actorUserId: string,
+  ) {
+    const input = await this.normalizeAccountTransfer(body);
+    const existing = await this.findExistingTransferByIdempotencyKey(
+      input.idempotencyKey,
+    );
+
+    if (existing) {
+      return { accountTransfer: existing, idempotent: true };
+    }
+
+    const transferId = randomUUID();
+
+    const accountTransfer = await this.prisma.$transaction(async (tx) => {
+      const fromTransaction = await tx.accountTransaction.create({
+        data: {
+          accountId: input.fromAccountId,
+          direction: AccountTransactionDirection.out,
+          sourceType: accountTransferSourceType,
+          sourceId: transferId,
+          incomeRecordId: null,
+          expenseRecordId: null,
+          transactionDate: input.transferDate,
+          title: "账户内部调拨",
+          currency: input.currency,
+          amountJpy: input.amountJpy,
+          amountCny:
+            input.amountCny === null ? null : new Prisma.Decimal(input.amountCny),
+          status: AccountTransactionStatus.active,
+          idempotencyKey: input.idempotencyKey
+            ? `account-transfer:${input.idempotencyKey}:out`
+            : null,
+          memo: input.memo,
+        },
+        select: { id: true },
+      });
+
+      const toTransaction = await tx.accountTransaction.create({
+        data: {
+          accountId: input.toAccountId,
+          direction: AccountTransactionDirection.in,
+          sourceType: accountTransferSourceType,
+          sourceId: transferId,
+          incomeRecordId: null,
+          expenseRecordId: null,
+          transactionDate: input.transferDate,
+          title: "账户内部调拨",
+          currency: input.currency,
+          amountJpy: input.amountJpy,
+          amountCny:
+            input.amountCny === null ? null : new Prisma.Decimal(input.amountCny),
+          status: AccountTransactionStatus.active,
+          idempotencyKey: input.idempotencyKey
+            ? `account-transfer:${input.idempotencyKey}:in`
+            : null,
+          memo: input.memo,
+        },
+        select: { id: true },
+      });
+
+      const created = await tx.accountTransfer.create({
+        data: {
+          id: transferId,
+          fromAccountId: input.fromAccountId,
+          toAccountId: input.toAccountId,
+          fromTransactionId: fromTransaction.id,
+          toTransactionId: toTransaction.id,
+          transferDate: input.transferDate,
+          currency: input.currency,
+          amountJpy: input.amountJpy,
+          amountCny:
+            input.amountCny === null ? null : new Prisma.Decimal(input.amountCny),
+          status: AccountTransferStatus.completed,
+          memo: input.memo,
+        },
+        select: accountTransferSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "account_transfer.create",
+          targetType: "account_transfer",
+          targetId: created.id,
+          riskLevel: AuditRiskLevel.high,
+          afterSnapshot: created,
+        },
+        tx,
+      );
+
+      return created;
+    });
+
+    return { accountTransfer, idempotent: false };
+  }
+
+  async voidAccountTransfer(
+    id: string,
+    body: VoidAccountTransferBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findAccountTransfer(id);
+
+    if (before.status !== AccountTransferStatus.completed) {
+      throw new BadRequestException("Only completed transfer can be voided.");
+    }
+
+    const memo = this.normalizeOptionalString(body.memo) ?? before.memo;
+
+    const accountTransfer = await this.prisma.$transaction(async (tx) => {
+      await tx.accountTransaction.updateMany({
+        where: {
+          id: { in: [before.fromTransactionId, before.toTransactionId] },
+          status: AccountTransactionStatus.active,
+        },
+        data: {
+          status: AccountTransactionStatus.reversed,
+          reversedAt: new Date(),
+        },
+      });
+
+      const updated = await tx.accountTransfer.update({
+        where: { id },
+        data: {
+          status: AccountTransferStatus.voided,
+          voidedAt: new Date(),
+          memo,
+        },
+        select: accountTransferSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "account_transfer.void",
+          targetType: "account_transfer",
+          targetId: id,
+          riskLevel: AuditRiskLevel.critical,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return { accountTransfer };
+  }
+
+  async reverseAccountTransaction(
+    id: string,
+    body: ReverseAccountTransactionBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findAccountTransaction(id);
+    this.assertAccountTransactionCanReverse(before);
+
+    const memo = this.normalizeOptionalString(body.memo) ?? before.memo;
+
+    const accountTransaction = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.accountTransaction.update({
+        where: { id },
+        data: {
+          status: AccountTransactionStatus.reversed,
+          reversedAt: new Date(),
+          memo,
+        },
+        select: accountTransactionSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "account_transaction.reverse",
+          targetType: "account_transaction",
+          targetId: id,
+          riskLevel: AuditRiskLevel.critical,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+        },
+        tx,
+      );
+
+      return updated;
     });
 
     return { accountTransaction };
@@ -457,6 +707,41 @@ export class AccountsService {
     return accountTransaction;
   }
 
+  private async findAccountTransfer(id: string): Promise<AccountTransferSnapshot> {
+    const accountTransfer = await this.prisma.accountTransfer.findUnique({
+      where: { id },
+      select: accountTransferSelect,
+    });
+
+    if (!accountTransfer) {
+      throw new NotFoundException("Account transfer not found.");
+    }
+
+    return accountTransfer;
+  }
+
+  private async findExistingTransferByIdempotencyKey(
+    idempotencyKey: string | null,
+  ) {
+    if (!idempotencyKey) {
+      return null;
+    }
+
+    const transaction = await this.prisma.accountTransaction.findUnique({
+      where: { idempotencyKey: `account-transfer:${idempotencyKey}:out` },
+      select: { id: true },
+    });
+
+    if (!transaction) {
+      return null;
+    }
+
+    return this.prisma.accountTransfer.findUnique({
+      where: { fromTransactionId: transaction.id },
+      select: accountTransferSelect,
+    });
+  }
+
   private async findActiveAccountForTransaction(accountId: unknown) {
     const id = this.normalizeRequiredString(accountId, "accountId");
     const account = await this.prisma.account.findFirst({
@@ -564,6 +849,33 @@ export class AccountsService {
     }
   }
 
+  private assertAccountTransactionCanReverse(
+    transaction: AccountTransactionSnapshot,
+  ) {
+    if (transaction.status !== AccountTransactionStatus.active) {
+      throw new BadRequestException("Only active account transaction can be reversed.");
+    }
+
+    if (transaction.incomeRecordId || transaction.expenseRecordId) {
+      throw new BadRequestException(
+        "Income or expense account transaction must be reversed from its business chain.",
+      );
+    }
+
+    if (transaction.sourceType === accountTransferSourceType) {
+      throw new BadRequestException("Account transfer must be voided as a transfer.");
+    }
+
+    if (
+      transaction.sourceType !== manualAccountTransactionSourceType &&
+      transaction.sourceType !== accountCorrectionSourceType
+    ) {
+      throw new BadRequestException(
+        "Only manual or correction account transaction can be reversed directly.",
+      );
+    }
+  }
+
   private async assertCodeAvailable(code: string, currentId?: string) {
     const existing = await this.prisma.account.findUnique({
       where: { code },
@@ -647,6 +959,40 @@ export class AccountsService {
     };
   }
 
+  private async normalizeAccountTransfer(
+    body: CreateAccountTransferBody,
+  ): Promise<NormalizedAccountTransferInput> {
+    const fromAccount = await this.findActiveAccountForTransaction(body.fromAccountId);
+    const toAccount = await this.findActiveAccountForTransaction(body.toAccountId);
+
+    if (fromAccount.id === toAccount.id) {
+      throw new BadRequestException("fromAccountId and toAccountId must be different.");
+    }
+
+    const currency = this.normalizeCurrencyCode(body.currency);
+
+    if (fromAccount.currency !== currency || toAccount.currency !== currency) {
+      throw new BadRequestException("Both accounts must match transfer currency.");
+    }
+
+    return {
+      fromAccountId: fromAccount.id,
+      toAccountId: toAccount.id,
+      transferDate: this.normalizeDate(body.transferDate, "transferDate"),
+      currency,
+      amountJpy:
+        currency === CurrencyCode.JPY
+          ? this.normalizePositiveJpyAmount(body.amountJpy, "amountJpy")
+          : null,
+      amountCny:
+        currency === CurrencyCode.CNY
+          ? this.normalizePositiveCnyAmount(body.amountCny, "amountCny")
+          : null,
+      idempotencyKey: this.normalizeOptionalString(body.idempotencyKey),
+      memo: this.normalizeOptionalString(body.memo),
+    };
+  }
+
   private buildWhere(query: ListAccountsQuery): Prisma.AccountWhereInput {
     const status = this.normalizeStatus(query.status);
     const type = this.normalizeOptionalAccountType(query.type);
@@ -694,6 +1040,30 @@ export class AccountsService {
               { sourceType: { contains: keyword, mode: "insensitive" } },
               { memo: { contains: keyword, mode: "insensitive" } },
               { account: { name: { contains: keyword, mode: "insensitive" } } },
+            ],
+          }
+        : {}),
+    };
+  }
+
+  private buildTransferWhere(
+    query: ListAccountTransfersQuery,
+  ): Prisma.AccountTransferWhereInput {
+    const fromAccountId = this.normalizeOptionalString(query.fromAccountId);
+    const toAccountId = this.normalizeOptionalString(query.toAccountId);
+    const status = this.normalizeTransferStatus(query.status);
+    const keyword = this.normalizeOptionalString(query.keyword);
+
+    return {
+      ...(fromAccountId ? { fromAccountId } : {}),
+      ...(toAccountId ? { toAccountId } : {}),
+      ...(status ? { status } : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { memo: { contains: keyword, mode: "insensitive" } },
+              { fromAccount: { name: { contains: keyword, mode: "insensitive" } } },
+              { toAccount: { name: { contains: keyword, mode: "insensitive" } } },
             ],
           }
         : {}),
@@ -840,6 +1210,24 @@ export class AccountsService {
     return status as AccountTransactionStatus;
   }
 
+  private normalizeTransferStatus(value: unknown) {
+    const status = this.normalizeOptionalString(value);
+
+    if (!status) {
+      return undefined;
+    }
+
+    if (
+      !Object.values(AccountTransferStatus).includes(
+        status as AccountTransferStatus,
+      )
+    ) {
+      return undefined;
+    }
+
+    return status as AccountTransferStatus;
+  }
+
   private normalizeDate(value: unknown, field: string) {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       throw new BadRequestException(`${field} must be YYYY-MM-DD.`);
@@ -874,6 +1262,26 @@ export class AccountsService {
       amount: value,
       currency: CurrencyCode.CNY,
     });
+  }
+
+  private normalizePositiveJpyAmount(value: unknown, field: string) {
+    const amount = this.normalizeJpyAmount(value, field);
+
+    if (amount <= 0) {
+      throw new BadRequestException(`${field} must be greater than 0.`);
+    }
+
+    return amount;
+  }
+
+  private normalizePositiveCnyAmount(value: unknown, field: string) {
+    const amount = this.normalizeCnyAmount(value, field);
+
+    if (amount <= 0) {
+      throw new BadRequestException(`${field} must be greater than 0.`);
+    }
+
+    return amount;
   }
 
   private normalizeRequiredString(value: unknown, field: string) {

@@ -1,6 +1,7 @@
 import {
   AccountTransactionDirection,
   AccountTransactionStatus,
+  AccountTransferStatus,
   AccountType,
   CurrencyCode,
   RecordStatus,
@@ -33,6 +34,14 @@ export type ListAccountTransactionsQuery = {
   limit?: unknown;
 };
 
+export type ListAccountTransfersQuery = {
+  fromAccountId?: unknown;
+  toAccountId?: unknown;
+  status?: unknown;
+  keyword?: unknown;
+  limit?: unknown;
+};
+
 export type ManualAccountTransactionBody = {
   accountId?: unknown;
   direction?: unknown;
@@ -45,6 +54,25 @@ export type ManualAccountTransactionBody = {
   sourceId?: unknown;
   idempotencyKey?: unknown;
   externalEventId?: unknown;
+  memo?: unknown;
+};
+
+export type CreateAccountTransferBody = {
+  fromAccountId?: unknown;
+  toAccountId?: unknown;
+  transferDate?: unknown;
+  currency?: unknown;
+  amountJpy?: unknown;
+  amountCny?: unknown;
+  idempotencyKey?: unknown;
+  memo?: unknown;
+};
+
+export type VoidAccountTransferBody = {
+  memo?: unknown;
+};
+
+export type ReverseAccountTransactionBody = {
   memo?: unknown;
 };
 
@@ -90,6 +118,17 @@ export type NormalizedManualAccountTransactionInput = {
   memo: string | null;
 };
 
+export type NormalizedAccountTransferInput = {
+  fromAccountId: string;
+  toAccountId: string;
+  transferDate: Date;
+  currency: CurrencyCode;
+  amountJpy: number | null;
+  amountCny: number | null;
+  idempotencyKey: string | null;
+  memo: string | null;
+};
+
 export type AccountTransactionSnapshot = {
   id: string;
   accountId: string;
@@ -106,5 +145,19 @@ export type AccountTransactionSnapshot = {
   status: AccountTransactionStatus;
   idempotencyKey: string | null;
   externalEventId: string | null;
+  memo: string | null;
+};
+
+export type AccountTransferSnapshot = {
+  id: string;
+  fromAccountId: string;
+  toAccountId: string;
+  fromTransactionId: string;
+  toTransactionId: string;
+  transferDate: Date;
+  currency: CurrencyCode;
+  amountJpy: number | null;
+  amountCny: unknown;
+  status: AccountTransferStatus;
   memo: string | null;
 };

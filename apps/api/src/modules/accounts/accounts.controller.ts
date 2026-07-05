@@ -17,11 +17,15 @@ import { AuthenticatedUser } from "../users/users.types";
 import { AccountsService } from "./accounts.service";
 import {
   AccountWriteBody,
+  CreateAccountTransferBody,
   CreateAccountTransactionFromExpenseBody,
   CreateAccountTransactionFromIncomeBody,
   ListAccountsQuery,
   ListAccountTransactionsQuery,
+  ListAccountTransfersQuery,
   ManualAccountTransactionBody,
+  ReverseAccountTransactionBody,
+  VoidAccountTransferBody,
 } from "./accounts.types";
 
 @Controller("accounts")
@@ -43,6 +47,37 @@ export class AccountsController {
     return this.accountsService.listAccountTransactions(query);
   }
 
+  @Get("transfers")
+  @RequirePermissions("account_transactions.read")
+  listAccountTransfers(@Query() query: ListAccountTransfersQuery) {
+    return this.accountsService.listAccountTransfers(query);
+  }
+
+  @Get("transfers/:id")
+  @RequirePermissions("account_transactions.read")
+  getAccountTransfer(@Param("id") id: string) {
+    return this.accountsService.getAccountTransfer(id);
+  }
+
+  @Post("transfers")
+  @RequirePermissions("account_transactions.manage")
+  createAccountTransfer(
+    @Body() body: CreateAccountTransferBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.accountsService.createAccountTransfer(body, user.id);
+  }
+
+  @Post("transfers/:id/void")
+  @RequirePermissions("account_transactions.manage")
+  voidAccountTransfer(
+    @Param("id") id: string,
+    @Body() body: VoidAccountTransferBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.accountsService.voidAccountTransfer(id, body, user.id);
+  }
+
   @Get("transactions/:id")
   @RequirePermissions("account_transactions.read")
   getAccountTransaction(@Param("id") id: string) {
@@ -50,7 +85,7 @@ export class AccountsController {
   }
 
   @Post("transactions/manual")
-  @RequirePermissions("account_transactions.read")
+  @RequirePermissions("account_transactions.manage")
   createManualAccountTransaction(
     @Body() body: ManualAccountTransactionBody,
     @CurrentUser() user: AuthenticatedUser,
@@ -59,7 +94,7 @@ export class AccountsController {
   }
 
   @Post("transactions/from-income/:incomeRecordId")
-  @RequirePermissions("account_transactions.read")
+  @RequirePermissions("account_transactions.manage")
   createTransactionFromIncomeRecord(
     @Param("incomeRecordId") incomeRecordId: string,
     @Body() body: CreateAccountTransactionFromIncomeBody,
@@ -73,7 +108,7 @@ export class AccountsController {
   }
 
   @Post("transactions/from-expense/:expenseRecordId")
-  @RequirePermissions("account_transactions.read")
+  @RequirePermissions("account_transactions.manage")
   createTransactionFromExpenseRecord(
     @Param("expenseRecordId") expenseRecordId: string,
     @Body() body: CreateAccountTransactionFromExpenseBody,
@@ -84,6 +119,16 @@ export class AccountsController {
       body,
       user.id,
     );
+  }
+
+  @Post("transactions/:id/reverse")
+  @RequirePermissions("account_transactions.manage")
+  reverseAccountTransaction(
+    @Param("id") id: string,
+    @Body() body: ReverseAccountTransactionBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.accountsService.reverseAccountTransaction(id, body, user.id);
   }
 
   @Get(":id")

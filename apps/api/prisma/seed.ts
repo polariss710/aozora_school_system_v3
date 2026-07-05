@@ -126,6 +126,11 @@ const permissions: SeedPermission[] = [
     description: "查看 School 侧账户流水。",
   },
   {
+    code: "account_transactions.manage",
+    name: "账户流水管理",
+    description: "管理 School 侧账户调拨、修正和冲销。",
+  },
+  {
     code: "reimbursements.manage",
     name: "报销管理",
     description: "管理垫付支出后的法人账户报销链路。",
@@ -163,6 +168,7 @@ const roles: SeedRole[] = [
       "cash_inbound.manage",
       "accounts.read",
       "account_transactions.read",
+      "account_transactions.manage",
       "reimbursements.manage",
       "profit.read",
     ],

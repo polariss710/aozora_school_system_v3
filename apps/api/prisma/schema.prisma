@@ -90,6 +90,11 @@ enum AccountTransactionStatus {
   reversed
 }
 
+enum AccountTransferStatus {
+  completed
+  voided
+}
+
 enum ReimbursementStatus {
   completed
   voided
@@ -251,6 +256,8 @@ model Account {
   corporateReimbursementRecords ReimbursementRecord[] @relation("CorporateReimbursementAccount")
   advanceReimbursementRecords   ReimbursementRecord[] @relation("AdvanceReimbursementAccount")
   cashInboundEvents             CashInboundEvent[]    @relation("CashInboundCorporateAccount")
+  outgoingTransfers             AccountTransfer[]     @relation("AccountTransferFromAccount")
+  incomingTransfers             AccountTransfer[]     @relation("AccountTransferToAccount")
 
   @@index([status])
   @@index([type])
@@ -284,6 +291,8 @@ model AccountTransaction {
   reimbursementCorporate ReimbursementRecord? @relation("ReimbursementCorporateTransaction")
   reimbursementAdvance   ReimbursementRecord? @relation("ReimbursementAdvanceTransaction")
   cashInboundEvent       CashInboundEvent?    @relation("CashInboundAccountTransaction")
+  outgoingTransfer       AccountTransfer?     @relation("AccountTransferFromTransaction")
+  incomingTransfer       AccountTransfer?     @relation("AccountTransferToTransaction")
 
   @@index([accountId, transactionDate])
   @@index([direction])
@@ -292,6 +301,34 @@ model AccountTransaction {
   @@index([expenseRecordId])
   @@index([status])
   @@map("account_transactions")
+}
+
+model AccountTransfer {
+  id                String                @id @default(uuid()) @db.Uuid
+  fromAccountId     String                @map("from_account_id") @db.Uuid
+  toAccountId       String                @map("to_account_id") @db.Uuid
+  fromTransactionId String                @unique @map("from_transaction_id") @db.Uuid
+  toTransactionId   String                @unique @map("to_transaction_id") @db.Uuid
+  transferDate      DateTime              @map("transfer_date") @db.Date
+  currency          CurrencyCode
+  amountJpy         Int?                  @map("amount_jpy")
+  amountCny         Decimal?              @map("amount_cny") @db.Decimal(12, 2)
+  status            AccountTransferStatus @default(completed)
+  memo              String?
+  voidedAt          DateTime?             @map("voided_at") @db.Timestamptz(6)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  fromAccount     Account            @relation("AccountTransferFromAccount", fields: [fromAccountId], references: [id], onDelete: Restrict)
+  toAccount       Account            @relation("AccountTransferToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
+  fromTransaction AccountTransaction @relation("AccountTransferFromTransaction", fields: [fromTransactionId], references: [id], onDelete: Restrict)
+  toTransaction   AccountTransaction @relation("AccountTransferToTransaction", fields: [toTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([transferDate])
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([status])
+  @@map("account_transfers")
 }
 
 model ReimbursementRecord {
