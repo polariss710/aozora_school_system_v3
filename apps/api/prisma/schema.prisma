@@ -95,6 +95,11 @@ enum ReimbursementStatus {
   voided
 }
 
+enum CashInboundEventStatus {
+  account_transaction_created
+  rejected
+}
+
 enum ExternalWorkLessonType {
   planned
   actual
@@ -245,6 +250,7 @@ model Account {
   transactions                  AccountTransaction[]
   corporateReimbursementRecords ReimbursementRecord[] @relation("CorporateReimbursementAccount")
   advanceReimbursementRecords   ReimbursementRecord[] @relation("AdvanceReimbursementAccount")
+  cashInboundEvents             CashInboundEvent[]    @relation("CashInboundCorporateAccount")
 
   @@index([status])
   @@index([type])
@@ -277,6 +283,7 @@ model AccountTransaction {
   expenseRecord          ExpenseRecord?       @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
   reimbursementCorporate ReimbursementRecord? @relation("ReimbursementCorporateTransaction")
   reimbursementAdvance   ReimbursementRecord? @relation("ReimbursementAdvanceTransaction")
+  cashInboundEvent       CashInboundEvent?    @relation("CashInboundAccountTransaction")
 
   @@index([accountId, transactionDate])
   @@index([direction])
@@ -315,6 +322,39 @@ model ReimbursementRecord {
   @@index([advanceAccountId])
   @@index([status])
   @@map("reimbursement_records")
+}
+
+model CashInboundEvent {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  externalCashEventId   String                 @unique @map("external_cash_event_id")
+  eventType             String                 @default("cash_to_school_corporate_deposit") @map("event_type")
+  corporateAccountId    String                 @map("corporate_account_id") @db.Uuid
+  accountTransactionId  String                 @unique @map("account_transaction_id") @db.Uuid
+  eventDate             DateTime               @map("event_date") @db.Date
+  sourceCurrency        CurrencyCode?          @map("source_currency")
+  sourceAmountJpy       Int?                   @map("source_amount_jpy")
+  sourceAmountCny       Decimal?               @map("source_amount_cny") @db.Decimal(12, 2)
+  targetCurrency        CurrencyCode           @map("target_currency")
+  targetAmountJpy       Int?                   @map("target_amount_jpy")
+  targetAmountCny       Decimal?               @map("target_amount_cny") @db.Decimal(12, 2)
+  exchangeRate          Decimal?               @map("exchange_rate") @db.Decimal(18, 8)
+  feeCurrency           CurrencyCode?          @map("fee_currency")
+  feeAmountJpy          Int?                   @map("fee_amount_jpy")
+  feeAmountCny          Decimal?               @map("fee_amount_cny") @db.Decimal(12, 2)
+  linkedIncomeRecordIds String[]               @default([]) @map("linked_income_record_ids")
+  status                CashInboundEventStatus @default(account_transaction_created)
+  memo                  String?
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  corporateAccount   Account            @relation("CashInboundCorporateAccount", fields: [corporateAccountId], references: [id], onDelete: Restrict)
+  accountTransaction AccountTransaction @relation("CashInboundAccountTransaction", fields: [accountTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([eventDate])
+  @@index([eventType])
+  @@index([corporateAccountId])
+  @@index([status])
+  @@map("cash_inbound_events")
 }
 
 model Student {

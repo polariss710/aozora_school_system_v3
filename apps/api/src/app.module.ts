@@ -3,6 +3,7 @@ import { AccountsModule } from "./modules/accounts/accounts.module";
 import { AuditModule } from "./modules/audit/audit.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { BusinessEntitiesModule } from "./modules/business-entities/business-entities.module";
+import { CashInboundModule } from "./modules/cash-inbound/cash-inbound.module";
 import { CashModule } from "./modules/cash/cash.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { ExpensesModule } from "./modules/expenses/expenses.module";
@@ -47,6 +48,7 @@ import { WagesModule } from "./modules/wages/wages.module";
     IncomeModule,
     ExpensesModule,
     CashModule,
+    CashInboundModule,
     AccountsModule,
     ReimbursementsModule,
     AuditModule,
