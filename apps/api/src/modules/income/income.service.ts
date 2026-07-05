@@ -8,6 +8,7 @@ import {
   AuditRiskLevel,
   CashRequestStatus,
   CurrencyCode,
+  ExternalWorkSettlementStatus,
   IncomeRecordStatus,
   Prisma,
   RecordStatus,
@@ -22,6 +23,7 @@ const defaultLimit = 100;
 const maxLimit = 500;
 const manualIncomeSourceType = "manual_income";
 const tuitionBillSourceType = "student_tuition_bill";
+const externalWorkSourceType = "external_work";
 
 const incomeRecordSelect = {
   id: true,
@@ -160,6 +162,16 @@ export class IncomeService {
           where: { id: before.sourceId },
           data: {
             status: TuitionBillStatus.generated,
+            incomeRecordId: null,
+          },
+        });
+      }
+
+      if (before.sourceType === externalWorkSourceType && before.sourceId) {
+        await tx.externalWorkMonthlySettlement.update({
+          where: { id: before.sourceId },
+          data: {
+            status: ExternalWorkSettlementStatus.locked,
             incomeRecordId: null,
           },
         });

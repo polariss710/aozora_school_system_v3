@@ -6,6 +6,7 @@ import { BusinessEntitiesModule } from "./modules/business-entities/business-ent
 import { CashModule } from "./modules/cash/cash.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { ExpensesModule } from "./modules/expenses/expenses.module";
+import { ExternalWorkModule } from "./modules/external-work/external-work.module";
 import { ExternalWorkplacesModule } from "./modules/external-workplaces/external-workplaces.module";
 import { HealthModule } from "./modules/health/health.module";
 import { IncomeModule } from "./modules/income/income.module";
@@ -33,6 +34,7 @@ import { WagesModule } from "./modules/wages/wages.module";
     SubjectsModule,
     TeachersModule,
     ExternalWorkplacesModule,
+    ExternalWorkModule,
     MoneyModule,
     AuthModule,
     UserManagementModule,

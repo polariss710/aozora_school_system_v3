@@ -80,6 +80,24 @@ enum CashRequestDirection {
   expense
 }
 
+enum ExternalWorkLessonType {
+  planned
+  actual
+}
+
+enum ExternalWorkLessonStatus {
+  scheduled
+  actual_created
+  completed
+  cancelled
+}
+
+enum ExternalWorkSettlementStatus {
+  locked
+  income_created
+  revoked
+}
+
 enum StudentSettlementStatus {
   locked
   revoked
@@ -508,10 +526,11 @@ model IncomeRecord {
   createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  student        Student?            @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  businessEntity BusinessEntity?     @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
-  tuitionBill    StudentTuitionBill?
-  cashRequests   CashRequest[]
+  student                Student?                       @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  businessEntity         BusinessEntity?                @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  tuitionBill            StudentTuitionBill?
+  externalWorkSettlement ExternalWorkMonthlySettlement?
+  cashRequests           CashRequest[]
 
   @@index([sourceType, sourceId])
   @@index([studentId, yearMonth])
@@ -597,8 +616,101 @@ model ExternalWorkplace {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  lessons     ExternalWorkLesson[]
+  settlements ExternalWorkMonthlySettlement[]
+
   @@index([status])
   @@map("external_workplaces")
+}
+
+model ExternalWorkLesson {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  workplaceId          String                   @map("workplace_id") @db.Uuid
+  yearMonth            String                   @map("year_month") @db.VarChar(7)
+  lessonType           ExternalWorkLessonType   @map("lesson_type")
+  plannedLessonId      String?                  @unique @map("planned_lesson_id") @db.Uuid
+  lessonDate           DateTime                 @map("lesson_date") @db.Date
+  startTime            String                   @map("start_time") @db.VarChar(5)
+  endTime              String                   @map("end_time") @db.VarChar(5)
+  durationHours        Decimal                  @map("duration_hours") @db.Decimal(6, 2)
+  instructorName       String                   @map("instructor_name")
+  lessonTitle          String?                  @map("lesson_title")
+  hourlyRateJpy        Int                      @map("hourly_rate_jpy")
+  transportationFeeJpy Int                      @default(0) @map("transportation_fee_jpy")
+  lessonWageJpy        Int                      @map("lesson_wage_jpy")
+  status               ExternalWorkLessonStatus @default(scheduled)
+  content              String?
+  memo                 String?
+  sourceType           String                   @default("manual") @map("source_type")
+  sourceId             String?                  @map("source_id")
+  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workplace         ExternalWorkplace              @relation(fields: [workplaceId], references: [id], onDelete: Restrict)
+  plannedLesson     ExternalWorkLesson?            @relation("ExternalWorkPlannedActual", fields: [plannedLessonId], references: [id], onDelete: Restrict)
+  actualLesson      ExternalWorkLesson?            @relation("ExternalWorkPlannedActual")
+  settlementDetails ExternalWorkSettlementDetail[]
+
+  @@index([workplaceId, yearMonth])
+  @@index([yearMonth])
+  @@index([lessonType])
+  @@index([status])
+  @@index([lessonDate])
+  @@map("external_work_lessons")
+}
+
+model ExternalWorkMonthlySettlement {
+  id                   String                       @id @default(uuid()) @db.Uuid
+  workplaceId          String                       @map("workplace_id") @db.Uuid
+  yearMonth            String                       @map("year_month") @db.VarChar(7)
+  lessonCount          Int                          @map("lesson_count")
+  totalLessonHours     Decimal                      @map("total_lesson_hours") @db.Decimal(8, 2)
+  lessonWageJpy        Int                          @map("lesson_wage_jpy")
+  transportationFeeJpy Int                          @default(0) @map("transportation_fee_jpy")
+  adjustmentAmountJpy  Int                          @default(0) @map("adjustment_amount_jpy")
+  totalAmountJpy       Int                          @map("total_amount_jpy")
+  status               ExternalWorkSettlementStatus @default(locked)
+  calculationSnapshot  Json                         @map("calculation_snapshot")
+  incomeRecordId       String?                      @unique @map("income_record_id") @db.Uuid
+  lockedAt             DateTime                     @default(now()) @map("locked_at") @db.Timestamptz(6)
+  revokedAt            DateTime?                    @map("revoked_at") @db.Timestamptz(6)
+  memo                 String?
+  createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workplace    ExternalWorkplace              @relation(fields: [workplaceId], references: [id], onDelete: Restrict)
+  incomeRecord IncomeRecord?                  @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  details      ExternalWorkSettlementDetail[]
+
+  @@unique([workplaceId, yearMonth])
+  @@index([yearMonth])
+  @@index([status])
+  @@map("external_work_monthly_settlements")
+}
+
+model ExternalWorkSettlementDetail {
+  id                     String   @id @default(uuid()) @db.Uuid
+  settlementId           String   @map("settlement_id") @db.Uuid
+  actualLessonId         String   @map("actual_lesson_id") @db.Uuid
+  lessonDate             DateTime @map("lesson_date") @db.Date
+  startTime              String   @map("start_time") @db.VarChar(5)
+  endTime                String   @map("end_time") @db.VarChar(5)
+  durationHours          Decimal  @map("duration_hours") @db.Decimal(6, 2)
+  instructorNameSnapshot String   @map("instructor_name_snapshot")
+  lessonTitleSnapshot    String?  @map("lesson_title_snapshot")
+  hourlyRateJpy          Int      @map("hourly_rate_jpy")
+  lessonWageJpy          Int      @map("lesson_wage_jpy")
+  transportationFeeJpy   Int      @map("transportation_fee_jpy")
+  contentSnapshot        String?  @map("content_snapshot")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  settlement   ExternalWorkMonthlySettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  actualLesson ExternalWorkLesson            @relation(fields: [actualLessonId], references: [id], onDelete: Restrict)
+
+  @@unique([settlementId, actualLessonId])
+  @@index([actualLessonId])
+  @@map("external_work_settlement_details")
 }
 
 model AuditEvent {
