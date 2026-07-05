@@ -79,6 +79,21 @@ enum StudentSettlementStatus {
   revoked
 }
 
+enum TeacherWageSnapshotStatus {
+  locked
+  adjustment_confirmed
+  expense_created
+  revoked
+}
+
+enum TeacherWageAdjustmentStatus {
+  none
+  exported
+  imported
+  manual_adjusted
+  confirmed
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -169,6 +184,8 @@ model BusinessEntity {
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
   incomeRecords  IncomeRecord[]
+  wageRules      TeacherWageRule[]
+  wageSnapshots  TeacherWageSnapshot[]
 
   @@index([status])
   @@map("business_entities")
@@ -229,6 +246,8 @@ model Teacher {
 
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
+  wageRules      TeacherWageRule[]
+  wageSnapshots  TeacherWageSnapshot[]
 
   @@index([status])
   @@map("teachers")
@@ -311,11 +330,12 @@ model StudentActualLesson {
   createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  plannedLesson  StudentPlannedLesson? @relation(fields: [plannedLessonId], references: [id], onDelete: Restrict)
-  student        Student               @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  teacher        Teacher               @relation(fields: [teacherId], references: [id], onDelete: Restrict)
-  subject        Subject               @relation(fields: [subjectId], references: [id], onDelete: Restrict)
-  businessEntity BusinessEntity        @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  plannedLesson  StudentPlannedLesson?       @relation(fields: [plannedLessonId], references: [id], onDelete: Restrict)
+  student        Student                     @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  teacher        Teacher                     @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subject        Subject                     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity              @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  wageDetails    TeacherWageSnapshotDetail[]
 
   @@index([yearMonth])
   @@index([studentId, yearMonth])
@@ -380,6 +400,85 @@ model StudentMonthlySettlement {
   @@index([yearMonth])
   @@index([status])
   @@map("student_monthly_settlements")
+}
+
+model TeacherWageRule {
+  id               String       @id @default(uuid()) @db.Uuid
+  teacherId        String       @map("teacher_id") @db.Uuid
+  businessEntityId String       @map("business_entity_id") @db.Uuid
+  hourlyRateJpy    Int          @map("hourly_rate_jpy")
+  status           RecordStatus @default(active)
+  memo             String?
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  teacher        Teacher        @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+
+  @@unique([teacherId, businessEntityId])
+  @@index([teacherId])
+  @@index([businessEntityId])
+  @@index([status])
+  @@map("teacher_wage_rules")
+}
+
+model TeacherWageSnapshot {
+  id                   String                      @id @default(uuid()) @db.Uuid
+  teacherId            String                      @map("teacher_id") @db.Uuid
+  yearMonth            String                      @map("year_month") @db.VarChar(7)
+  businessEntityId     String                      @map("business_entity_id") @db.Uuid
+  lessonCount          Int                         @map("lesson_count")
+  totalLessonHours     Decimal                     @map("total_lesson_hours") @db.Decimal(8, 2)
+  baseWageJpy          Int                         @map("base_wage_jpy")
+  transportationFeeJpy Int                         @default(0) @map("transportation_fee_jpy")
+  classroomFeeJpy      Int                         @default(0) @map("classroom_fee_jpy")
+  manualAdjustmentJpy  Int                         @default(0) @map("manual_adjustment_jpy")
+  totalWageJpy         Int                         @map("total_wage_jpy")
+  status               TeacherWageSnapshotStatus   @default(locked)
+  adjustmentStatus     TeacherWageAdjustmentStatus @default(none) @map("adjustment_status")
+  calculationSnapshot  Json                        @map("calculation_snapshot")
+  expenseRecordId      String?                     @unique @map("expense_record_id") @db.Uuid
+  lockedAt             DateTime                    @default(now()) @map("locked_at") @db.Timestamptz(6)
+  revokedAt            DateTime?                   @map("revoked_at") @db.Timestamptz(6)
+  memo                 String?
+  createdAt            DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  teacher        Teacher                     @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity              @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  details        TeacherWageSnapshotDetail[]
+
+  @@unique([teacherId, yearMonth, businessEntityId])
+  @@index([yearMonth])
+  @@index([teacherId, yearMonth])
+  @@index([businessEntityId])
+  @@index([status])
+  @@index([adjustmentStatus])
+  @@map("teacher_wage_snapshots")
+}
+
+model TeacherWageSnapshotDetail {
+  id                  String   @id @default(uuid()) @db.Uuid
+  snapshotId          String   @map("snapshot_id") @db.Uuid
+  actualLessonId      String   @map("actual_lesson_id") @db.Uuid
+  actualDate          DateTime @map("actual_date") @db.Date
+  durationHours       Decimal  @map("duration_hours") @db.Decimal(6, 2)
+  hourlyRateJpy       Int      @map("hourly_rate_jpy")
+  lessonWageJpy       Int      @map("lesson_wage_jpy")
+  teacherWageEligible Boolean  @map("teacher_wage_eligible")
+  includedInWage      Boolean  @default(true) @map("included_in_wage")
+  studentNameSnapshot String?  @map("student_name_snapshot")
+  subjectNameSnapshot String?  @map("subject_name_snapshot")
+  contentSnapshot     String?  @map("content_snapshot")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  snapshot     TeacherWageSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  actualLesson StudentActualLesson @relation(fields: [actualLessonId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, actualLessonId])
+  @@index([actualLessonId])
+  @@map("teacher_wage_snapshot_details")
 }
 
 model IncomeRecord {

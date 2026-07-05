@@ -10,6 +10,7 @@ import {
   PlannedLessonStatus,
   Prisma,
   RecordStatus,
+  TeacherWageSnapshotStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
@@ -270,6 +271,11 @@ export class LessonsService {
 
     const input = this.normalizeActualInputFromPlanned(body, plannedBefore);
     await this.assertActiveTeacher(input.teacherId);
+    await this.assertTeacherWageSnapshotOpen(
+      input.teacherId,
+      input.yearMonth,
+      plannedBefore.businessEntityId,
+    );
 
     const result = await this.prisma.$transaction(async (tx) => {
       const actualLesson = await tx.studentActualLesson.create({
@@ -359,6 +365,16 @@ export class LessonsService {
     const before = await this.findActualLesson(id);
     const input = this.normalizeUpdateActualInput(body, before);
     await this.assertActiveTeacher(input.teacherId);
+    await this.assertTeacherWageSnapshotOpen(
+      before.teacherId,
+      before.yearMonth,
+      before.businessEntityId,
+    );
+    await this.assertTeacherWageSnapshotOpen(
+      input.teacherId,
+      input.yearMonth,
+      before.businessEntityId,
+    );
 
     const actualLesson = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.studentActualLesson.update({
@@ -516,6 +532,34 @@ export class LessonsService {
 
     if (!teacher) {
       throw new BadRequestException("Active teacher is required.");
+    }
+  }
+
+  private async assertTeacherWageSnapshotOpen(
+    teacherId: string,
+    yearMonth: string,
+    businessEntityId: string,
+  ) {
+    const lockedSnapshot = await this.prisma.teacherWageSnapshot.findFirst({
+      where: {
+        teacherId,
+        yearMonth,
+        businessEntityId,
+        status: {
+          in: [
+            TeacherWageSnapshotStatus.locked,
+            TeacherWageSnapshotStatus.adjustment_confirmed,
+            TeacherWageSnapshotStatus.expense_created,
+          ],
+        },
+      },
+      select: { id: true },
+    });
+
+    if (lockedSnapshot) {
+      throw new BadRequestException(
+        "Actual lesson belongs to locked teacher wage snapshot.",
+      );
     }
   }
 
