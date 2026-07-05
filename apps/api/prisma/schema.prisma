@@ -69,6 +69,7 @@ enum ExpenseRecordStatus {
 enum CashRequestStatus {
   not_requested
   cash_requested
+  cash_withdrawn
   cash_rejected
   cash_confirmed
   account_transaction_created

@@ -23,6 +23,7 @@ import {
   RejectCashRequestBody,
   SubmitExpenseCashRequestBody,
   SubmitIncomeCashRequestBody,
+  WithdrawCashRequestBody,
 } from "./cash.types";
 
 const defaultLimit = 100;
@@ -314,6 +315,66 @@ export class CashService {
           targetType: "cash_request",
           targetId: id,
           riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: before,
+          afterSnapshot: { cashRequest, incomeRecord, expenseRecord },
+        },
+        tx,
+      );
+
+      return { cashRequest, incomeRecord, expenseRecord };
+    });
+
+    return result;
+  }
+
+  async withdrawCashRequest(
+    id: string,
+    body: WithdrawCashRequestBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findCashRequest(id);
+
+    if (before.status !== CashRequestStatus.cash_requested) {
+      throw new BadRequestException("Only requested Cash request can be withdrawn.");
+    }
+
+    const reason = this.normalizeOptionalString(body.reason);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const cashRequest = await tx.cashRequest.update({
+        where: { id },
+        data: {
+          status: CashRequestStatus.cash_withdrawn,
+          rejectionReason: reason,
+        },
+        select: cashRequestSelect,
+      });
+
+      let incomeRecord: IncomeRecordSnapshot | null = null;
+      let expenseRecord: ExpenseRecordSnapshot | null = null;
+      if (before.incomeRecordId) {
+        incomeRecord = await tx.incomeRecord.update({
+          where: { id: before.incomeRecordId },
+          data: { cashStatus: CashRequestStatus.not_requested },
+          select: incomeRecordSelect,
+        });
+      }
+      if (before.expenseRecordId) {
+        expenseRecord = await tx.expenseRecord.update({
+          where: { id: before.expenseRecordId },
+          data: { cashStatus: CashRequestStatus.not_requested },
+          select: expenseRecordSelect,
+        });
+      }
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "cash_request.withdraw",
+          targetType: "cash_request",
+          targetId: id,
+          riskLevel: AuditRiskLevel.high,
+          reason,
           beforeSnapshot: before,
           afterSnapshot: { cashRequest, incomeRecord, expenseRecord },
         },

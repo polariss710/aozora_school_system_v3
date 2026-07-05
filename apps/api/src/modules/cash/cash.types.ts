@@ -23,6 +23,10 @@ export type RejectCashRequestBody = {
   externalCashEventId?: unknown;
 };
 
+export type WithdrawCashRequestBody = {
+  reason?: unknown;
+};
+
 export type ConfirmCashRequestBody = {
   externalCashRequestId?: unknown;
   externalCashEventId?: unknown;

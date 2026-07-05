@@ -20,6 +20,7 @@ import {
   RejectCashRequestBody,
   SubmitExpenseCashRequestBody,
   SubmitIncomeCashRequestBody,
+  WithdrawCashRequestBody,
 } from "./cash.types";
 
 @Controller("cash")
@@ -75,6 +76,16 @@ export class CashController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.cashService.rejectCashRequest(id, body, user.id);
+  }
+
+  @Post("requests/:id/withdraw")
+  @RequirePermissions("cash_requests.manage")
+  withdrawCashRequest(
+    @Param("id") id: string,
+    @Body() body: WithdrawCashRequestBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cashService.withdrawCashRequest(id, body, user.id);
   }
 
   @Post("requests/:id/confirm")
