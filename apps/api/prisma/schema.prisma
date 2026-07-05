@@ -90,6 +90,11 @@ enum AccountTransactionStatus {
   reversed
 }
 
+enum ReimbursementStatus {
+  completed
+  voided
+}
+
 enum ExternalWorkLessonType {
   planned
   actual
@@ -237,7 +242,9 @@ model Account {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  transactions AccountTransaction[]
+  transactions                  AccountTransaction[]
+  corporateReimbursementRecords ReimbursementRecord[] @relation("CorporateReimbursementAccount")
+  advanceReimbursementRecords   ReimbursementRecord[] @relation("AdvanceReimbursementAccount")
 
   @@index([status])
   @@index([type])
@@ -265,9 +272,11 @@ model AccountTransaction {
   createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  account       Account        @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  incomeRecord  IncomeRecord?  @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
-  expenseRecord ExpenseRecord? @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+  account                Account              @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  incomeRecord           IncomeRecord?        @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  expenseRecord          ExpenseRecord?       @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+  reimbursementCorporate ReimbursementRecord? @relation("ReimbursementCorporateTransaction")
+  reimbursementAdvance   ReimbursementRecord? @relation("ReimbursementAdvanceTransaction")
 
   @@index([accountId, transactionDate])
   @@index([direction])
@@ -276,6 +285,36 @@ model AccountTransaction {
   @@index([expenseRecordId])
   @@index([status])
   @@map("account_transactions")
+}
+
+model ReimbursementRecord {
+  id                     String              @id @default(uuid()) @db.Uuid
+  expenseRecordId        String              @unique @map("expense_record_id") @db.Uuid
+  corporateAccountId     String              @map("corporate_account_id") @db.Uuid
+  advanceAccountId       String              @map("advance_account_id") @db.Uuid
+  corporateTransactionId String              @unique @map("corporate_transaction_id") @db.Uuid
+  advanceTransactionId   String              @unique @map("advance_transaction_id") @db.Uuid
+  reimbursementDate      DateTime            @map("reimbursement_date") @db.Date
+  currency               CurrencyCode
+  amountJpy              Int?                @map("amount_jpy")
+  amountCny              Decimal?            @map("amount_cny") @db.Decimal(12, 2)
+  status                 ReimbursementStatus @default(completed)
+  memo                   String?
+  voidedAt               DateTime?           @map("voided_at") @db.Timestamptz(6)
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  expenseRecord        ExpenseRecord      @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+  corporateAccount     Account            @relation("CorporateReimbursementAccount", fields: [corporateAccountId], references: [id], onDelete: Restrict)
+  advanceAccount       Account            @relation("AdvanceReimbursementAccount", fields: [advanceAccountId], references: [id], onDelete: Restrict)
+  corporateTransaction AccountTransaction @relation("ReimbursementCorporateTransaction", fields: [corporateTransactionId], references: [id], onDelete: Restrict)
+  advanceTransaction   AccountTransaction @relation("ReimbursementAdvanceTransaction", fields: [advanceTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([reimbursementDate])
+  @@index([corporateAccountId])
+  @@index([advanceAccountId])
+  @@index([status])
+  @@map("reimbursement_records")
 }
 
 model Student {
@@ -609,6 +648,7 @@ model ExpenseRecord {
   wageSnapshot        TeacherWageSnapshot? @relation("TeacherWageExpense")
   cashRequests        CashRequest[]
   accountTransactions AccountTransaction[]
+  reimbursementRecord ReimbursementRecord?
 
   @@index([sourceType, sourceId])
   @@index([teacherId, yearMonth])

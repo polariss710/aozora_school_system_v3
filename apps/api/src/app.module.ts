@@ -12,6 +12,7 @@ import { HealthModule } from "./modules/health/health.module";
 import { IncomeModule } from "./modules/income/income.module";
 import { LessonsModule } from "./modules/lessons/lessons.module";
 import { MoneyModule } from "./modules/money/money.module";
+import { ReimbursementsModule } from "./modules/reimbursements/reimbursements.module";
 import { SettlementsModule } from "./modules/settlements/settlements.module";
 import { SettingsModule } from "./modules/settings/settings.module";
 import { StudentsModule } from "./modules/students/students.module";
@@ -47,6 +48,7 @@ import { WagesModule } from "./modules/wages/wages.module";
     ExpensesModule,
     CashModule,
     AccountsModule,
+    ReimbursementsModule,
     AuditModule,
   ],
 })
