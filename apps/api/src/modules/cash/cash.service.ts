@@ -9,6 +9,7 @@ import {
   CashRequestDirection,
   CashRequestStatus,
   CurrencyCode,
+  ExpenseRecordStatus,
   IncomeRecordStatus,
   Prisma,
 } from "@prisma/client";
@@ -20,6 +21,7 @@ import {
   ConfirmCashRequestBody,
   ListCashRequestsQuery,
   RejectCashRequestBody,
+  SubmitExpenseCashRequestBody,
   SubmitIncomeCashRequestBody,
 } from "./cash.types";
 
@@ -32,6 +34,7 @@ const cashRequestSelect = {
   sourceType: true,
   sourceId: true,
   incomeRecordId: true,
+  expenseRecordId: true,
   status: true,
   expectedCurrency: true,
   expectedAmountJpy: true,
@@ -61,6 +64,17 @@ const cashRequestSelect = {
       carryoverAmountCny: true,
     },
   },
+  expenseRecord: {
+    select: {
+      id: true,
+      title: true,
+      recordStatus: true,
+      cashStatus: true,
+      originalCurrency: true,
+      originalAmountJpy: true,
+      originalAmountCny: true,
+    },
+  },
 } satisfies Prisma.CashRequestSelect;
 
 const incomeRecordSelect = {
@@ -76,12 +90,28 @@ const incomeRecordSelect = {
   cashStatus: true,
 } satisfies Prisma.IncomeRecordSelect;
 
+const expenseRecordSelect = {
+  id: true,
+  sourceType: true,
+  sourceId: true,
+  title: true,
+  originalCurrency: true,
+  originalAmountJpy: true,
+  originalAmountCny: true,
+  recordStatus: true,
+  cashStatus: true,
+} satisfies Prisma.ExpenseRecordSelect;
+
 type CashRequestSnapshot = Prisma.CashRequestGetPayload<{
   select: typeof cashRequestSelect;
 }>;
 
 type IncomeRecordSnapshot = Prisma.IncomeRecordGetPayload<{
   select: typeof incomeRecordSelect;
+}>;
+
+type ExpenseRecordSnapshot = Prisma.ExpenseRecordGetPayload<{
+  select: typeof expenseRecordSelect;
 }>;
 
 @Injectable()
@@ -175,6 +205,66 @@ export class CashService {
     return result;
   }
 
+  async submitExpenseCashRequest(
+    expenseRecordId: string,
+    body: SubmitExpenseCashRequestBody,
+    actorUserId: string,
+  ) {
+    const expenseRecord = await this.findExpenseRecord(expenseRecordId);
+    this.assertExpenseCanRequestCash(expenseRecord);
+    const input = this.normalizeSubmitInput(body);
+    const amounts = this.calculateExpenseRequestAmounts(expenseRecord, input);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const cashRequest = await tx.cashRequest.create({
+        data: {
+          direction: CashRequestDirection.expense,
+          sourceType: expenseRecord.sourceType,
+          sourceId: expenseRecord.sourceId,
+          expenseRecordId: expenseRecord.id,
+          status: CashRequestStatus.cash_requested,
+          expectedCurrency: expenseRecord.originalCurrency,
+          expectedAmountJpy: expenseRecord.originalAmountJpy,
+          expectedAmountCny: expenseRecord.originalAmountCny,
+          carryoverAmountCny: null,
+          requestedCurrency: input.requestedCurrency,
+          requestedAmountJpy: amounts.requestedAmountJpy,
+          requestedAmountCny: amounts.requestedAmountCny,
+          exchangeRate: input.exchangeRate
+            ? new Prisma.Decimal(input.exchangeRate)
+            : null,
+          exchangeRateSource: input.exchangeRateSource,
+          conversionMethod: input.conversionMethod,
+          cashAccountCode: input.cashAccountCode,
+        },
+        select: cashRequestSelect,
+      });
+
+      const updatedExpense = await tx.expenseRecord.update({
+        where: { id: expenseRecord.id },
+        data: { cashStatus: CashRequestStatus.cash_requested },
+        select: expenseRecordSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "cash_request.submit_expense",
+          targetType: "cash_request",
+          targetId: cashRequest.id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: expenseRecord,
+          afterSnapshot: { cashRequest, expenseRecord: updatedExpense },
+        },
+        tx,
+      );
+
+      return { cashRequest, expenseRecord: updatedExpense };
+    });
+
+    return result;
+  }
+
   async rejectCashRequest(
     id: string,
     body: RejectCashRequestBody,
@@ -201,11 +291,19 @@ export class CashService {
       });
 
       let incomeRecord: IncomeRecordSnapshot | null = null;
+      let expenseRecord: ExpenseRecordSnapshot | null = null;
       if (before.incomeRecordId) {
         incomeRecord = await tx.incomeRecord.update({
           where: { id: before.incomeRecordId },
           data: { cashStatus: CashRequestStatus.cash_rejected },
           select: incomeRecordSelect,
+        });
+      }
+      if (before.expenseRecordId) {
+        expenseRecord = await tx.expenseRecord.update({
+          where: { id: before.expenseRecordId },
+          data: { cashStatus: CashRequestStatus.cash_rejected },
+          select: expenseRecordSelect,
         });
       }
 
@@ -217,12 +315,12 @@ export class CashService {
           targetId: id,
           riskLevel: AuditRiskLevel.high,
           beforeSnapshot: before,
-          afterSnapshot: { cashRequest, incomeRecord },
+          afterSnapshot: { cashRequest, incomeRecord, expenseRecord },
         },
         tx,
       );
 
-      return { cashRequest, incomeRecord };
+      return { cashRequest, incomeRecord, expenseRecord };
     });
 
     return result;
@@ -256,6 +354,7 @@ export class CashService {
       });
 
       let incomeRecord: IncomeRecordSnapshot | null = null;
+      let expenseRecord: ExpenseRecordSnapshot | null = null;
       if (before.incomeRecordId) {
         incomeRecord = await tx.incomeRecord.update({
           where: { id: before.incomeRecordId },
@@ -264,6 +363,16 @@ export class CashService {
             cashStatus: CashRequestStatus.cash_confirmed,
           },
           select: incomeRecordSelect,
+        });
+      }
+      if (before.expenseRecordId) {
+        expenseRecord = await tx.expenseRecord.update({
+          where: { id: before.expenseRecordId },
+          data: {
+            recordStatus: ExpenseRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.cash_confirmed,
+          },
+          select: expenseRecordSelect,
         });
       }
 
@@ -275,12 +384,12 @@ export class CashService {
           targetId: id,
           riskLevel: AuditRiskLevel.critical,
           beforeSnapshot: before,
-          afterSnapshot: { cashRequest, incomeRecord },
+          afterSnapshot: { cashRequest, incomeRecord, expenseRecord },
         },
         tx,
       );
 
-      return { cashRequest, incomeRecord };
+      return { cashRequest, incomeRecord, expenseRecord };
     });
 
     return result;
@@ -296,6 +405,19 @@ export class CashService {
       incomeRecord.cashStatus !== CashRequestStatus.cash_rejected
     ) {
       throw new BadRequestException("Income Cash status does not allow request.");
+    }
+  }
+
+  private assertExpenseCanRequestCash(expenseRecord: ExpenseRecordSnapshot) {
+    if (expenseRecord.recordStatus !== ExpenseRecordStatus.pending) {
+      throw new BadRequestException("Only pending expense can submit Cash request.");
+    }
+
+    if (
+      expenseRecord.cashStatus !== CashRequestStatus.not_requested &&
+      expenseRecord.cashStatus !== CashRequestStatus.cash_rejected
+    ) {
+      throw new BadRequestException("Expense Cash status does not allow request.");
     }
   }
 
@@ -363,6 +485,63 @@ export class CashService {
     };
   }
 
+  private calculateExpenseRequestAmounts(
+    expenseRecord: ExpenseRecordSnapshot,
+    input: ReturnType<CashService["normalizeSubmitInput"]>,
+  ) {
+    if (input.requestedCurrency === CurrencyCode.JPY) {
+      if (
+        expenseRecord.originalCurrency !== CurrencyCode.JPY ||
+        expenseRecord.originalAmountJpy === null
+      ) {
+        throw new BadRequestException("Expense cannot request JPY.");
+      }
+
+      return {
+        requestedAmountJpy: this.moneyService.confirmAmount({
+          amount: expenseRecord.originalAmountJpy,
+          currency: "JPY",
+        }),
+        requestedAmountCny: null,
+      };
+    }
+
+    if (expenseRecord.originalCurrency === CurrencyCode.CNY) {
+      if (!expenseRecord.originalAmountCny) {
+        throw new BadRequestException("CNY expense amount is missing.");
+      }
+
+      return {
+        requestedAmountJpy: null,
+        requestedAmountCny: new Prisma.Decimal(
+          this.moneyService.confirmAmount({
+            amount: expenseRecord.originalAmountCny.toNumber(),
+            currency: "CNY",
+          }),
+        ),
+      };
+    }
+
+    if (!expenseRecord.originalAmountJpy) {
+      throw new BadRequestException("JPY expense amount is missing.");
+    }
+
+    if (!input.exchangeRate) {
+      throw new BadRequestException("exchangeRate is required for CNY request.");
+    }
+
+    return {
+      requestedAmountJpy: null,
+      requestedAmountCny: new Prisma.Decimal(
+        this.moneyService.convertJpyToCny({
+          jpyAmount: expenseRecord.originalAmountJpy,
+          exchangeRate: input.exchangeRate,
+          roundingMode: input.conversionMethod,
+        }),
+      ),
+    };
+  }
+
   private async findCashRequest(id: string): Promise<CashRequestSnapshot> {
     const cashRequest = await this.prisma.cashRequest.findUnique({
       where: { id },
@@ -389,10 +568,24 @@ export class CashService {
     return incomeRecord;
   }
 
+  private async findExpenseRecord(id: string): Promise<ExpenseRecordSnapshot> {
+    const expenseRecord = await this.prisma.expenseRecord.findUnique({
+      where: { id },
+      select: expenseRecordSelect,
+    });
+
+    if (!expenseRecord) {
+      throw new NotFoundException("Expense record not found.");
+    }
+
+    return expenseRecord;
+  }
+
   private buildWhere(query: ListCashRequestsQuery): Prisma.CashRequestWhereInput {
     const status = this.normalizeCashStatus(query.status);
     const direction = this.normalizeDirection(query.direction);
     const incomeRecordId = this.normalizeOptionalString(query.incomeRecordId);
+    const expenseRecordId = this.normalizeOptionalString(query.expenseRecordId);
     const sourceType = this.normalizeOptionalString(query.sourceType);
     const keyword = this.normalizeOptionalString(query.keyword);
 
@@ -400,12 +593,14 @@ export class CashService {
       ...(status ? { status } : {}),
       ...(direction ? { direction } : {}),
       ...(incomeRecordId ? { incomeRecordId } : {}),
+      ...(expenseRecordId ? { expenseRecordId } : {}),
       ...(sourceType ? { sourceType } : {}),
       ...(keyword
         ? {
             OR: [
               { cashAccountCode: { contains: keyword, mode: "insensitive" } },
               { incomeRecord: { title: { contains: keyword, mode: "insensitive" } } },
+              { expenseRecord: { title: { contains: keyword, mode: "insensitive" } } },
             ],
           }
         : {}),

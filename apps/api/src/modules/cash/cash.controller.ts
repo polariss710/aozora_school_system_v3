@@ -18,6 +18,7 @@ import {
   ConfirmCashRequestBody,
   ListCashRequestsQuery,
   RejectCashRequestBody,
+  SubmitExpenseCashRequestBody,
   SubmitIncomeCashRequestBody,
 } from "./cash.types";
 
@@ -47,6 +48,20 @@ export class CashController {
   ) {
     return this.cashService.submitIncomeCashRequest(
       incomeRecordId,
+      body,
+      user.id,
+    );
+  }
+
+  @Post("requests/expense/:expenseRecordId")
+  @RequirePermissions("cash_requests.manage")
+  submitExpenseCashRequest(
+    @Param("expenseRecordId") expenseRecordId: string,
+    @Body() body: SubmitExpenseCashRequestBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cashService.submitExpenseCashRequest(
+      expenseRecordId,
       body,
       user.id,
     );

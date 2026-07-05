@@ -60,6 +60,12 @@ enum IncomeRecordStatus {
   cash_confirmed
 }
 
+enum ExpenseRecordStatus {
+  pending
+  voided
+  cash_confirmed
+}
+
 enum CashRequestStatus {
   not_requested
   cash_requested
@@ -184,6 +190,7 @@ model BusinessEntity {
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
   incomeRecords  IncomeRecord[]
+  expenseRecords ExpenseRecord[]
   wageRules      TeacherWageRule[]
   wageSnapshots  TeacherWageSnapshot[]
 
@@ -248,6 +255,7 @@ model Teacher {
   actualLessons  StudentActualLesson[]
   wageRules      TeacherWageRule[]
   wageSnapshots  TeacherWageSnapshot[]
+  expenseRecords ExpenseRecord[]
 
   @@index([status])
   @@map("teachers")
@@ -446,6 +454,7 @@ model TeacherWageSnapshot {
 
   teacher        Teacher                     @relation(fields: [teacherId], references: [id], onDelete: Restrict)
   businessEntity BusinessEntity              @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  expenseRecord  ExpenseRecord?              @relation("TeacherWageExpense", fields: [expenseRecordId], references: [id], onDelete: Restrict)
   details        TeacherWageSnapshotDetail[]
 
   @@unique([teacherId, yearMonth, businessEntityId])
@@ -512,12 +521,43 @@ model IncomeRecord {
   @@map("income_records")
 }
 
+model ExpenseRecord {
+  id                String              @id @default(uuid()) @db.Uuid
+  sourceType        String              @map("source_type")
+  sourceId          String?             @map("source_id")
+  teacherId         String?             @map("teacher_id") @db.Uuid
+  businessEntityId  String?             @map("business_entity_id") @db.Uuid
+  yearMonth         String?             @map("year_month") @db.VarChar(7)
+  title             String
+  originalCurrency  CurrencyCode        @map("original_currency")
+  originalAmountJpy Int?                @map("original_amount_jpy")
+  originalAmountCny Decimal?            @map("original_amount_cny") @db.Decimal(12, 2)
+  recordStatus      ExpenseRecordStatus @default(pending) @map("record_status")
+  cashStatus        CashRequestStatus   @default(not_requested) @map("cash_status")
+  memo              String?
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  teacher        Teacher?             @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  businessEntity BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  wageSnapshot   TeacherWageSnapshot? @relation("TeacherWageExpense")
+  cashRequests   CashRequest[]
+
+  @@index([sourceType, sourceId])
+  @@index([teacherId, yearMonth])
+  @@index([businessEntityId])
+  @@index([recordStatus])
+  @@index([cashStatus])
+  @@map("expense_records")
+}
+
 model CashRequest {
   id                    String               @id @default(uuid()) @db.Uuid
   direction             CashRequestDirection
   sourceType            String               @map("source_type")
   sourceId              String?              @map("source_id")
   incomeRecordId        String?              @map("income_record_id") @db.Uuid
+  expenseRecordId       String?              @map("expense_record_id") @db.Uuid
   status                CashRequestStatus    @default(cash_requested)
   expectedCurrency      CurrencyCode         @map("expected_currency")
   expectedAmountJpy     Int?                 @map("expected_amount_jpy")
@@ -536,11 +576,13 @@ model CashRequest {
   createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  incomeRecord IncomeRecord? @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  incomeRecord  IncomeRecord?  @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  expenseRecord ExpenseRecord? @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
 
   @@index([direction])
   @@index([sourceType, sourceId])
   @@index([incomeRecordId])
+  @@index([expenseRecordId])
   @@index([status])
   @@index([externalCashRequestId])
   @@map("cash_requests")
