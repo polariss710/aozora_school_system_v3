@@ -17,6 +17,7 @@ import { ExpensesService } from "./expenses.service";
 import {
   CreateExpenseFromWageBody,
   ListExpenseRecordsQuery,
+  ManualExpenseBody,
   VoidExpenseRecordBody,
 } from "./expenses.types";
 
@@ -38,6 +39,15 @@ export class ExpensesController {
   @RequirePermissions("expenses.manage")
   getExpenseRecord(@Param("id") id: string) {
     return this.expensesService.getExpenseRecord(id);
+  }
+
+  @Post("manual")
+  @RequirePermissions("expenses.manage")
+  createManualExpense(
+    @Body() body: ManualExpenseBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.expensesService.createManualExpense(body, user.id);
   }
 
   @Post("from-wage/:snapshotId")

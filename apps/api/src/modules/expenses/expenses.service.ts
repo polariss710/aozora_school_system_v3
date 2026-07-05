@@ -10,6 +10,7 @@ import {
   CurrencyCode,
   ExpenseRecordStatus,
   Prisma,
+  RecordStatus,
   TeacherWageAdjustmentStatus,
   TeacherWageSnapshotStatus,
 } from "@prisma/client";
@@ -19,12 +20,14 @@ import { MoneyService } from "../money/money.service";
 import {
   CreateExpenseFromWageBody,
   ListExpenseRecordsQuery,
+  ManualExpenseBody,
   VoidExpenseRecordBody,
 } from "./expenses.types";
 
 const defaultLimit = 100;
 const maxLimit = 500;
 const teacherWageSourceType = "teacher_wage_snapshot";
+const manualExpenseSourceType = "manual_expense";
 
 const expenseRecordSelect = {
   id: true,
@@ -103,6 +106,40 @@ export class ExpensesService {
 
   async getExpenseRecord(id: string) {
     const expenseRecord = await this.findExpenseRecord(id);
+
+    return { expenseRecord };
+  }
+
+  async createManualExpense(body: ManualExpenseBody, actorUserId: string) {
+    const input = await this.normalizeManualExpense(body);
+
+    const expenseRecord = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.expenseRecord.create({
+        data: {
+          ...input,
+          sourceType: manualExpenseSourceType,
+          sourceId: null,
+          teacherId: null,
+          recordStatus: ExpenseRecordStatus.pending,
+          cashStatus: CashRequestStatus.not_requested,
+        },
+        select: expenseRecordSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "expense_record.create_manual",
+          targetType: "expense_record",
+          targetId: created.id,
+          riskLevel: AuditRiskLevel.high,
+          afterSnapshot: created,
+        },
+        tx,
+      );
+
+      return created;
+    });
 
     return { expenseRecord };
   }
@@ -271,6 +308,44 @@ export class ExpensesService {
     return wageSnapshot;
   }
 
+  private async normalizeManualExpense(body: ManualExpenseBody) {
+    const originalCurrency = this.normalizeCurrency(body.originalCurrency);
+    const businessEntityId = this.normalizeOptionalString(body.businessEntityId);
+
+    if (businessEntityId) {
+      await this.assertActiveBusinessEntity(businessEntityId);
+    }
+
+    return {
+      businessEntityId,
+      yearMonth: this.normalizeOptionalYearMonth(body.yearMonth),
+      title: this.normalizeRequiredString(body.title, "title"),
+      originalCurrency,
+      originalAmountJpy:
+        originalCurrency === CurrencyCode.JPY
+          ? this.normalizeJpyAmount(body.originalAmountJpy, "originalAmountJpy")
+          : null,
+      originalAmountCny:
+        originalCurrency === CurrencyCode.CNY
+          ? new Prisma.Decimal(
+              this.normalizeCnyAmount(body.originalAmountCny, "originalAmountCny"),
+            )
+          : null,
+      memo: this.normalizeOptionalString(body.memo),
+    };
+  }
+
+  private async assertActiveBusinessEntity(businessEntityId: string) {
+    const businessEntity = await this.prisma.businessEntity.findFirst({
+      where: { id: businessEntityId, status: RecordStatus.active },
+      select: { id: true },
+    });
+
+    if (!businessEntity) {
+      throw new BadRequestException("Active business entity is required.");
+    }
+  }
+
   private buildWhere(
     query: ListExpenseRecordsQuery,
   ): Prisma.ExpenseRecordWhereInput {
@@ -345,6 +420,48 @@ export class ExpensesService {
     }
 
     return Math.min(parsed, maxLimit);
+  }
+
+  private normalizeCurrency(value: unknown) {
+    if (typeof value !== "string") {
+      throw new BadRequestException("originalCurrency is required.");
+    }
+
+    if (!Object.values(CurrencyCode).includes(value as CurrencyCode)) {
+      throw new BadRequestException("Invalid originalCurrency.");
+    }
+
+    return value as CurrencyCode;
+  }
+
+  private normalizeJpyAmount(value: unknown, field: string) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new BadRequestException(`${field} must be a non-negative number.`);
+    }
+
+    return this.moneyService.confirmAmount({
+      amount: value,
+      currency: CurrencyCode.JPY,
+    });
+  }
+
+  private normalizeCnyAmount(value: unknown, field: string) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new BadRequestException(`${field} must be a non-negative number.`);
+    }
+
+    return this.moneyService.confirmAmount({
+      amount: value,
+      currency: CurrencyCode.CNY,
+    });
+  }
+
+  private normalizeRequiredString(value: unknown, field: string) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new BadRequestException(`${field} is required.`);
+    }
+
+    return value.trim();
   }
 
   private normalizeOptionalString(value: unknown) {

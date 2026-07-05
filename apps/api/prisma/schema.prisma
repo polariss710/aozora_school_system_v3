@@ -80,6 +80,16 @@ enum CashRequestDirection {
   expense
 }
 
+enum AccountTransactionDirection {
+  in
+  out
+}
+
+enum AccountTransactionStatus {
+  active
+  reversed
+}
+
 enum ExternalWorkLessonType {
   planned
   actual
@@ -227,9 +237,45 @@ model Account {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  transactions AccountTransaction[]
+
   @@index([status])
   @@index([type])
   @@map("accounts")
+}
+
+model AccountTransaction {
+  id              String                      @id @default(uuid()) @db.Uuid
+  accountId       String                      @map("account_id") @db.Uuid
+  direction       AccountTransactionDirection
+  sourceType      String                      @map("source_type")
+  sourceId        String?                     @map("source_id")
+  incomeRecordId  String?                     @map("income_record_id") @db.Uuid
+  expenseRecordId String?                     @map("expense_record_id") @db.Uuid
+  transactionDate DateTime                    @map("transaction_date") @db.Date
+  title           String
+  currency        CurrencyCode
+  amountJpy       Int?                        @map("amount_jpy")
+  amountCny       Decimal?                    @map("amount_cny") @db.Decimal(12, 2)
+  status          AccountTransactionStatus    @default(active)
+  idempotencyKey  String?                     @unique @map("idempotency_key")
+  externalEventId String?                     @map("external_event_id")
+  memo            String?
+  reversedAt      DateTime?                   @map("reversed_at") @db.Timestamptz(6)
+  createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  incomeRecord  IncomeRecord?  @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  expenseRecord ExpenseRecord? @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, transactionDate])
+  @@index([direction])
+  @@index([sourceType, sourceId])
+  @@index([incomeRecordId])
+  @@index([expenseRecordId])
+  @@index([status])
+  @@map("account_transactions")
 }
 
 model Student {
@@ -531,6 +577,7 @@ model IncomeRecord {
   tuitionBill            StudentTuitionBill?
   externalWorkSettlement ExternalWorkMonthlySettlement?
   cashRequests           CashRequest[]
+  accountTransactions    AccountTransaction[]
 
   @@index([sourceType, sourceId])
   @@index([studentId, yearMonth])
@@ -557,10 +604,11 @@ model ExpenseRecord {
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  teacher        Teacher?             @relation(fields: [teacherId], references: [id], onDelete: Restrict)
-  businessEntity BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
-  wageSnapshot   TeacherWageSnapshot? @relation("TeacherWageExpense")
-  cashRequests   CashRequest[]
+  teacher             Teacher?             @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  businessEntity      BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  wageSnapshot        TeacherWageSnapshot? @relation("TeacherWageExpense")
+  cashRequests        CashRequest[]
+  accountTransactions AccountTransaction[]
 
   @@index([sourceType, sourceId])
   @@index([teacherId, yearMonth])

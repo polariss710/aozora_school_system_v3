@@ -7,18 +7,29 @@ import {
 } from "@nestjs/common";
 import {
   AccountType,
+  AccountTransactionDirection,
+  AccountTransactionStatus,
   AuditRiskLevel,
+  CashRequestStatus,
   CurrencyCode,
+  ExpenseRecordStatus,
+  IncomeRecordStatus,
   Prisma,
   RecordStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
+import { MoneyService } from "../money/money.service";
 import {
   AccountSnapshot,
   AccountWriteBody,
+  CreateAccountTransactionFromExpenseBody,
+  CreateAccountTransactionFromIncomeBody,
   ListAccountsQuery,
+  ListAccountTransactionsQuery,
+  ManualAccountTransactionBody,
   NormalizedAccountInput,
+  NormalizedManualAccountTransactionInput,
 } from "./accounts.types";
 
 const accountSelect = {
@@ -31,13 +42,81 @@ const accountSelect = {
   memo: true,
 } satisfies Prisma.AccountSelect;
 
+const accountTransactionSelect = {
+  id: true,
+  accountId: true,
+  direction: true,
+  sourceType: true,
+  sourceId: true,
+  incomeRecordId: true,
+  expenseRecordId: true,
+  transactionDate: true,
+  title: true,
+  currency: true,
+  amountJpy: true,
+  amountCny: true,
+  status: true,
+  idempotencyKey: true,
+  externalEventId: true,
+  memo: true,
+  createdAt: true,
+  updatedAt: true,
+  account: { select: { id: true, code: true, name: true, type: true, currency: true } },
+  incomeRecord: {
+    select: { id: true, sourceType: true, title: true, recordStatus: true, cashStatus: true },
+  },
+  expenseRecord: {
+    select: { id: true, sourceType: true, title: true, recordStatus: true, cashStatus: true },
+  },
+} satisfies Prisma.AccountTransactionSelect;
+
+const incomeRecordForTransactionSelect = {
+  id: true,
+  sourceType: true,
+  title: true,
+  originalCurrency: true,
+  originalAmountJpy: true,
+  originalAmountCny: true,
+  recordStatus: true,
+  cashStatus: true,
+  memo: true,
+} satisfies Prisma.IncomeRecordSelect;
+
+const expenseRecordForTransactionSelect = {
+  id: true,
+  sourceType: true,
+  title: true,
+  originalCurrency: true,
+  originalAmountJpy: true,
+  originalAmountCny: true,
+  recordStatus: true,
+  cashStatus: true,
+  memo: true,
+} satisfies Prisma.ExpenseRecordSelect;
+
 const defaultLimit = 100;
 const maxLimit = 500;
+const manualAccountTransactionSourceType = "manual_account_transaction";
+const manualIncomeSourceType = "manual_income";
+const manualExpenseSourceType = "manual_expense";
+
+type AccountTransactionSnapshot = Prisma.AccountTransactionGetPayload<{
+  select: typeof accountTransactionSelect;
+}>;
+
+type IncomeRecordForTransaction = Prisma.IncomeRecordGetPayload<{
+  select: typeof incomeRecordForTransactionSelect;
+}>;
+
+type ExpenseRecordForTransaction = Prisma.ExpenseRecordGetPayload<{
+  select: typeof expenseRecordForTransactionSelect;
+}>;
 
 @Injectable()
 export class AccountsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(MoneyService) private readonly moneyService: MoneyService,
     @Inject(AuditService) private readonly auditService: AuditService,
   ) {}
 
@@ -62,6 +141,182 @@ export class AccountsService {
     const account = await this.findAccountSnapshot(id);
 
     return { account };
+  }
+
+  async listAccountTransactions(query: ListAccountTransactionsQuery) {
+    const where = this.buildTransactionWhere(query);
+    const limit = this.normalizeLimit(query.limit);
+
+    const [items, total] = await Promise.all([
+      this.prisma.accountTransaction.findMany({
+        where,
+        orderBy: [{ transactionDate: "desc" }, { createdAt: "desc" }],
+        take: limit,
+        select: accountTransactionSelect,
+      }),
+      this.prisma.accountTransaction.count({ where }),
+    ]);
+
+    return { items, total, limit };
+  }
+
+  async getAccountTransaction(id: string) {
+    const accountTransaction = await this.findAccountTransaction(id);
+
+    return { accountTransaction };
+  }
+
+  async createManualAccountTransaction(
+    body: ManualAccountTransactionBody,
+    actorUserId: string,
+  ) {
+    const input = await this.normalizeManualAccountTransaction(body);
+
+    const accountTransaction = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.accountTransaction.create({
+        data: {
+          ...input,
+          amountCny:
+            input.amountCny === null ? null : new Prisma.Decimal(input.amountCny),
+          incomeRecordId: null,
+          expenseRecordId: null,
+          status: AccountTransactionStatus.active,
+        },
+        select: accountTransactionSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "account_transaction.create_manual",
+          targetType: "account_transaction",
+          targetId: created.id,
+          riskLevel: AuditRiskLevel.high,
+          afterSnapshot: created,
+        },
+        tx,
+      );
+
+      return created;
+    });
+
+    return { accountTransaction };
+  }
+
+  async createTransactionFromIncomeRecord(
+    incomeRecordId: string,
+    body: CreateAccountTransactionFromIncomeBody,
+    actorUserId: string,
+  ) {
+    const incomeRecord = await this.findIncomeRecordForTransaction(incomeRecordId);
+    this.assertIncomeCanCreateAccountTransaction(incomeRecord);
+    const account = await this.findActiveAccountForTransaction(body.accountId);
+    const transactionDate = this.normalizeDate(body.transactionDate, "transactionDate");
+    const memo = this.normalizeOptionalString(body.memo);
+    this.assertAccountCurrencyMatchesRecord(account, incomeRecord.originalCurrency);
+    await this.assertNoAccountTransactionForRecord({ incomeRecordId });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const accountTransaction = await tx.accountTransaction.create({
+        data: {
+          accountId: account.id,
+          direction: AccountTransactionDirection.in,
+          sourceType: incomeRecord.sourceType,
+          sourceId: incomeRecord.id,
+          incomeRecordId: incomeRecord.id,
+          expenseRecordId: null,
+          transactionDate,
+          title: incomeRecord.title,
+          currency: incomeRecord.originalCurrency,
+          amountJpy: incomeRecord.originalAmountJpy,
+          amountCny: incomeRecord.originalAmountCny,
+          status: AccountTransactionStatus.active,
+          memo: memo ?? incomeRecord.memo,
+        },
+        select: accountTransactionSelect,
+      });
+
+      const updatedIncomeRecord = await tx.incomeRecord.update({
+        where: { id: incomeRecord.id },
+        data: { cashStatus: CashRequestStatus.account_transaction_created },
+        select: incomeRecordForTransactionSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "account_transaction.create_from_income",
+          targetType: "account_transaction",
+          targetId: accountTransaction.id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: incomeRecord,
+          afterSnapshot: { accountTransaction, incomeRecord: updatedIncomeRecord },
+        },
+        tx,
+      );
+
+      return { accountTransaction, incomeRecord: updatedIncomeRecord };
+    });
+
+    return result;
+  }
+
+  async createTransactionFromExpenseRecord(
+    expenseRecordId: string,
+    body: CreateAccountTransactionFromExpenseBody,
+    actorUserId: string,
+  ) {
+    const expenseRecord = await this.findExpenseRecordForTransaction(expenseRecordId);
+    this.assertExpenseCanCreateAccountTransaction(expenseRecord);
+    const account = await this.findActiveAccountForTransaction(body.accountId);
+    const transactionDate = this.normalizeDate(body.transactionDate, "transactionDate");
+    const memo = this.normalizeOptionalString(body.memo);
+    this.assertAccountCurrencyMatchesRecord(account, expenseRecord.originalCurrency);
+    await this.assertNoAccountTransactionForRecord({ expenseRecordId });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const accountTransaction = await tx.accountTransaction.create({
+        data: {
+          accountId: account.id,
+          direction: AccountTransactionDirection.out,
+          sourceType: expenseRecord.sourceType,
+          sourceId: expenseRecord.id,
+          incomeRecordId: null,
+          expenseRecordId: expenseRecord.id,
+          transactionDate,
+          title: expenseRecord.title,
+          currency: expenseRecord.originalCurrency,
+          amountJpy: expenseRecord.originalAmountJpy,
+          amountCny: expenseRecord.originalAmountCny,
+          status: AccountTransactionStatus.active,
+          memo: memo ?? expenseRecord.memo,
+        },
+        select: accountTransactionSelect,
+      });
+
+      const updatedExpenseRecord = await tx.expenseRecord.update({
+        where: { id: expenseRecord.id },
+        data: { cashStatus: CashRequestStatus.account_transaction_created },
+        select: expenseRecordForTransactionSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "account_transaction.create_from_expense",
+          targetType: "account_transaction",
+          targetId: accountTransaction.id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: expenseRecord,
+          afterSnapshot: { accountTransaction, expenseRecord: updatedExpenseRecord },
+        },
+        tx,
+      );
+
+      return { accountTransaction, expenseRecord: updatedExpenseRecord };
+    });
+
+    return result;
   }
 
   async createAccount(body: AccountWriteBody, actorUserId: string) {
@@ -187,6 +442,128 @@ export class AccountsService {
     return account;
   }
 
+  private async findAccountTransaction(
+    id: string,
+  ): Promise<AccountTransactionSnapshot> {
+    const accountTransaction = await this.prisma.accountTransaction.findUnique({
+      where: { id },
+      select: accountTransactionSelect,
+    });
+
+    if (!accountTransaction) {
+      throw new NotFoundException("Account transaction not found.");
+    }
+
+    return accountTransaction;
+  }
+
+  private async findActiveAccountForTransaction(accountId: unknown) {
+    const id = this.normalizeRequiredString(accountId, "accountId");
+    const account = await this.prisma.account.findFirst({
+      where: { id, status: RecordStatus.active },
+      select: accountSelect,
+    });
+
+    if (!account) {
+      throw new BadRequestException("Active account is required.");
+    }
+
+    return account;
+  }
+
+  private async findIncomeRecordForTransaction(
+    id: string,
+  ): Promise<IncomeRecordForTransaction> {
+    const incomeRecord = await this.prisma.incomeRecord.findUnique({
+      where: { id },
+      select: incomeRecordForTransactionSelect,
+    });
+
+    if (!incomeRecord) {
+      throw new NotFoundException("Income record not found.");
+    }
+
+    return incomeRecord;
+  }
+
+  private async findExpenseRecordForTransaction(
+    id: string,
+  ): Promise<ExpenseRecordForTransaction> {
+    const expenseRecord = await this.prisma.expenseRecord.findUnique({
+      where: { id },
+      select: expenseRecordForTransactionSelect,
+    });
+
+    if (!expenseRecord) {
+      throw new NotFoundException("Expense record not found.");
+    }
+
+    return expenseRecord;
+  }
+
+  private assertIncomeCanCreateAccountTransaction(record: IncomeRecordForTransaction) {
+    if (record.sourceType !== manualIncomeSourceType) {
+      throw new BadRequestException(
+        "Only manual income can create a direct account transaction.",
+      );
+    }
+
+    if (record.recordStatus !== IncomeRecordStatus.pending) {
+      throw new BadRequestException("Only pending income can create transaction.");
+    }
+
+    if (record.cashStatus !== CashRequestStatus.not_requested) {
+      throw new BadRequestException(
+        "Income with downstream status cannot create direct transaction.",
+      );
+    }
+  }
+
+  private assertExpenseCanCreateAccountTransaction(record: ExpenseRecordForTransaction) {
+    if (record.sourceType !== manualExpenseSourceType) {
+      throw new BadRequestException(
+        "Only manual expense can create a direct account transaction.",
+      );
+    }
+
+    if (record.recordStatus !== ExpenseRecordStatus.pending) {
+      throw new BadRequestException("Only pending expense can create transaction.");
+    }
+
+    if (record.cashStatus !== CashRequestStatus.not_requested) {
+      throw new BadRequestException(
+        "Expense with downstream status cannot create direct transaction.",
+      );
+    }
+  }
+
+  private assertAccountCurrencyMatchesRecord(
+    account: AccountSnapshot,
+    currency: CurrencyCode,
+  ) {
+    if (account.currency !== currency) {
+      throw new BadRequestException("Account currency must match record currency.");
+    }
+  }
+
+  private async assertNoAccountTransactionForRecord(params: {
+    incomeRecordId?: string;
+    expenseRecordId?: string;
+  }) {
+    const existing = await this.prisma.accountTransaction.findFirst({
+      where: {
+        ...(params.incomeRecordId ? { incomeRecordId: params.incomeRecordId } : {}),
+        ...(params.expenseRecordId ? { expenseRecordId: params.expenseRecordId } : {}),
+        status: AccountTransactionStatus.active,
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new BadRequestException("Account transaction already exists.");
+    }
+  }
+
   private async assertCodeAvailable(code: string, currentId?: string) {
     const existing = await this.prisma.account.findUnique({
       where: { code },
@@ -234,6 +611,42 @@ export class AccountsService {
     };
   }
 
+  private async normalizeManualAccountTransaction(
+    body: ManualAccountTransactionBody,
+  ): Promise<NormalizedManualAccountTransactionInput> {
+    const account = await this.findActiveAccountForTransaction(body.accountId);
+    const currency = this.normalizeCurrencyCode(body.currency);
+
+    if (account.currency !== currency) {
+      throw new BadRequestException("Account currency must match transaction currency.");
+    }
+
+    const sourceType =
+      this.normalizeOptionalString(body.sourceType) ??
+      manualAccountTransactionSourceType;
+
+    return {
+      accountId: account.id,
+      direction: this.normalizeTransactionDirectionRequired(body.direction),
+      transactionDate: this.normalizeDate(body.transactionDate, "transactionDate"),
+      title: this.normalizeRequiredString(body.title, "title"),
+      currency,
+      amountJpy:
+        currency === CurrencyCode.JPY
+          ? this.normalizeJpyAmount(body.amountJpy, "amountJpy")
+          : null,
+      amountCny:
+        currency === CurrencyCode.CNY
+          ? this.normalizeCnyAmount(body.amountCny, "amountCny")
+          : null,
+      sourceType,
+      sourceId: this.normalizeOptionalString(body.sourceId),
+      idempotencyKey: this.normalizeOptionalString(body.idempotencyKey),
+      externalEventId: this.normalizeOptionalString(body.externalEventId),
+      memo: this.normalizeOptionalString(body.memo),
+    };
+  }
+
   private buildWhere(query: ListAccountsQuery): Prisma.AccountWhereInput {
     const status = this.normalizeStatus(query.status);
     const type = this.normalizeOptionalAccountType(query.type);
@@ -250,6 +663,37 @@ export class AccountsService {
               { code: { contains: keyword, mode: "insensitive" } },
               { name: { contains: keyword, mode: "insensitive" } },
               { memo: { contains: keyword, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    };
+  }
+
+  private buildTransactionWhere(
+    query: ListAccountTransactionsQuery,
+  ): Prisma.AccountTransactionWhereInput {
+    const accountId = this.normalizeOptionalString(query.accountId);
+    const direction = this.normalizeTransactionDirection(query.direction);
+    const status = this.normalizeTransactionStatus(query.status);
+    const sourceType = this.normalizeOptionalString(query.sourceType);
+    const incomeRecordId = this.normalizeOptionalString(query.incomeRecordId);
+    const expenseRecordId = this.normalizeOptionalString(query.expenseRecordId);
+    const keyword = this.normalizeOptionalString(query.keyword);
+
+    return {
+      ...(accountId ? { accountId } : {}),
+      ...(direction ? { direction } : {}),
+      ...(status ? { status } : {}),
+      ...(sourceType ? { sourceType } : {}),
+      ...(incomeRecordId ? { incomeRecordId } : {}),
+      ...(expenseRecordId ? { expenseRecordId } : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { title: { contains: keyword, mode: "insensitive" } },
+              { sourceType: { contains: keyword, mode: "insensitive" } },
+              { memo: { contains: keyword, mode: "insensitive" } },
+              { account: { name: { contains: keyword, mode: "insensitive" } } },
             ],
           }
         : {}),
@@ -342,6 +786,94 @@ export class AccountsService {
     }
 
     return currency as CurrencyCode;
+  }
+
+  private normalizeTransactionDirectionRequired(value: unknown) {
+    if (typeof value !== "string") {
+      throw new BadRequestException("direction is required.");
+    }
+
+    if (
+      !Object.values(AccountTransactionDirection).includes(
+        value as AccountTransactionDirection,
+      )
+    ) {
+      throw new BadRequestException("Invalid transaction direction.");
+    }
+
+    return value as AccountTransactionDirection;
+  }
+
+  private normalizeTransactionDirection(value: unknown) {
+    const direction = this.normalizeOptionalString(value);
+
+    if (!direction) {
+      return undefined;
+    }
+
+    if (
+      !Object.values(AccountTransactionDirection).includes(
+        direction as AccountTransactionDirection,
+      )
+    ) {
+      return undefined;
+    }
+
+    return direction as AccountTransactionDirection;
+  }
+
+  private normalizeTransactionStatus(value: unknown) {
+    const status = this.normalizeOptionalString(value);
+
+    if (!status) {
+      return undefined;
+    }
+
+    if (
+      !Object.values(AccountTransactionStatus).includes(
+        status as AccountTransactionStatus,
+      )
+    ) {
+      return undefined;
+    }
+
+    return status as AccountTransactionStatus;
+  }
+
+  private normalizeDate(value: unknown, field: string) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${field} must be YYYY-MM-DD.`);
+    }
+
+    const date = new Date(`${value}T00:00:00.000Z`);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${field} is invalid.`);
+    }
+
+    return date;
+  }
+
+  private normalizeJpyAmount(value: unknown, field: string) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new BadRequestException(`${field} must be a non-negative number.`);
+    }
+
+    return this.moneyService.confirmAmount({
+      amount: value,
+      currency: CurrencyCode.JPY,
+    });
+  }
+
+  private normalizeCnyAmount(value: unknown, field: string) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new BadRequestException(`${field} must be a non-negative number.`);
+    }
+
+    return this.moneyService.confirmAmount({
+      amount: value,
+      currency: CurrencyCode.CNY,
+    });
   }
 
   private normalizeRequiredString(value: unknown, field: string) {
