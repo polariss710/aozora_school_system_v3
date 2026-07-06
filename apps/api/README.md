@@ -311,7 +311,7 @@ Required Render environment variables:
 
 ```text
 NODE_ENV=production
-CORS_ORIGIN=https://aozora-school-system-v3-demo.onrender.com
+CORS_ORIGIN=http://localhost:5173,https://aozora-school-system-v3-demo.onrender.com
 DATABASE_URL=<Supabase v3 dev pooler URL>
 DIRECT_DATABASE_URL=<Supabase v3 dev direct URL>
 JWT_SECRET=<long random secret>

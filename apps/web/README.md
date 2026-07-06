@@ -3,11 +3,24 @@
 
 This is the first V3 frontend demo based on the Figma static mockup style.
 
-It uses mock data only. It does not connect to V2, Supabase, Cash, or any production database.
+It keeps the original demo data as a fallback, and now probes the V3 dev API for health, auth, and the first live Students page integration.
+After real API login, the Students page can list, create, update, archive, and restore student records through the backend API.
 
 ## Run
 
 ```bash
 pnpm install
 pnpm --dir apps/web dev
+```
+
+## API
+
+```bash
+cp apps/web/.env.example apps/web/.env
+```
+
+`VITE_API_BASE_URL` should include the Nest global prefix, for example:
+
+```text
+https://aozora-school-system-v3-api-dev.onrender.com/api
 ```

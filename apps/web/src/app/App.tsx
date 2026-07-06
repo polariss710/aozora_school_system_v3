@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ElementType, FormEvent, ReactNode } from "react";
 import {
   ArrowRight,
@@ -41,6 +41,18 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
+import {
+  archiveStudent,
+  apiBaseUrl,
+  createStudent,
+  fetchApiHealthSnapshot,
+  isApiRequestError,
+  listStudents,
+  loginWithPassword,
+  restoreStudent,
+  updateStudent,
+} from "./api";
+import type { ApiHealthSnapshot, AuthSession, StudentRecord, StudentWriteInput } from "./api";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
 
@@ -91,15 +103,22 @@ interface DataRow {
   cells: Record<string, ReactNode>;
   detail: DetailSection[];
   cashPreview?: CashPreview;
+  apiRef?: {
+    resource: "student";
+    id: string;
+  };
+  studentRecord?: StudentRecord;
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
+type DrawerActionKey = "student.edit" | "student.archive" | "student.restore";
 
 interface DrawerAction {
   label: string;
   icon: ElementType;
   variant: DrawerActionVariant;
   hint?: string;
+  key?: DrawerActionKey;
 }
 
 interface DrawerActionGroup {
@@ -132,6 +151,17 @@ interface MenuGroup {
   icon: ElementType;
   items: MenuItem[];
 }
+
+type AuthMode = "api" | "demo";
+
+type StudentApiState =
+  | { status: "idle" | "loading"; rows: DataRow[]; total: number; message?: string }
+  | { status: "ready"; rows: DataRow[]; total: number; message?: string }
+  | { status: "error"; rows: DataRow[]; total: number; message: string };
+
+type StudentDialogState =
+  | { mode: "create" }
+  | { mode: "edit"; row: DataRow };
 
 const toneClasses: Record<
   Tone,
@@ -301,6 +331,61 @@ function StatusPill({ label, tone }: { label: string; tone: Tone }) {
   );
 }
 
+function createInitialApiHealth(): ApiHealthSnapshot {
+  return {
+    apiBaseUrl,
+    status: "checking",
+    database: "checking",
+    message: "Checking API health",
+  };
+}
+
+function ApiStatusBadge({
+  apiHealth,
+  onRefresh,
+}: {
+  apiHealth: ApiHealthSnapshot;
+  onRefresh: () => void;
+}) {
+  const isOnline = apiHealth.status === "online";
+  const databaseOnline = apiHealth.database === "online";
+  const label =
+    apiHealth.status === "checking"
+      ? "API 检查中"
+      : isOnline && databaseOnline
+        ? "API 在线"
+        : isOnline
+          ? "DB 异常"
+          : "API 未连接";
+  const className =
+    isOnline && databaseOnline
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : apiHealth.status === "checking"
+        ? "border-sky-200 bg-sky-50 text-sky-700"
+        : "border-amber-200 bg-amber-50 text-amber-700";
+
+  return (
+    <button
+      type="button"
+      onClick={onRefresh}
+      title={`${apiHealth.apiBaseUrl}${apiHealth.message ? ` · ${apiHealth.message}` : ""}`}
+      className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition hover:bg-white ${className}`}
+    >
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          isOnline && databaseOnline
+            ? "bg-emerald-500"
+            : apiHealth.status === "checking"
+              ? "bg-sky-500"
+              : "bg-amber-500"
+        }`}
+      />
+      {label}
+      <RefreshCw className={`h-3 w-3 ${apiHealth.status === "checking" ? "animate-spin" : ""}`} />
+    </button>
+  );
+}
+
 function MetricCard({ metric }: { metric: Metric }) {
   const Icon = metric.icon;
   const tone = toneClasses[metric.tone];
@@ -360,6 +445,7 @@ function ActionButton({
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition ${className}`}
     >
@@ -372,9 +458,11 @@ function ActionButton({
 function Sidebar({
   activeKey,
   onNavigate,
+  user,
 }: {
   activeKey: string;
   onNavigate: (key: string) => void;
+  user: Pick<AuthSession["user"], "displayName" | "email">;
 }) {
   const activeGroup = menuGroups.find((group) => group.items.some((item) => item.key === activeKey));
   const [openGroups, setOpenGroups] = useState<Set<string>>(
@@ -462,11 +550,11 @@ function Sidebar({
       <div className="border-t border-border px-3 py-3">
         <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-100 text-xs font-semibold text-sky-700">
-            管
+            {user.displayName.slice(0, 1) || "管"}
           </span>
           <span className="min-w-0">
-            <span className="block truncate text-xs font-medium text-foreground">系统管理员</span>
-            <span className="block truncate text-[10px] text-muted-foreground">admin@aozora.jp</span>
+            <span className="block truncate text-xs font-medium text-foreground">{user.displayName}</span>
+            <span className="block truncate text-[10px] text-muted-foreground">{user.email}</span>
           </span>
         </div>
       </div>
@@ -474,7 +562,19 @@ function Sidebar({
   );
 }
 
-function TopBar({ page, onLogout }: { page: Pick<PageConfig, "group" | "title">; onLogout: () => void }) {
+function TopBar({
+  page,
+  apiHealth,
+  authMode,
+  onRefreshApi,
+  onLogout,
+}: {
+  page: Pick<PageConfig, "group" | "title">;
+  apiHealth: ApiHealthSnapshot;
+  authMode: AuthMode;
+  onRefreshApi: () => void;
+  onLogout: () => void;
+}) {
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-white">
       <div className="flex h-12 items-center justify-between px-6">
@@ -484,6 +584,10 @@ function TopBar({ page, onLogout }: { page: Pick<PageConfig, "group" | "title">;
           <span className="font-medium text-foreground">{page.title}</span>
         </nav>
         <div className="flex items-center gap-3">
+          <ApiStatusBadge apiHealth={apiHealth} onRefresh={onRefreshApi} />
+          <span className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+            {authMode === "api" ? "API 登录" : "Demo 登录"}
+          </span>
           <span className="text-xs text-muted-foreground">2026年07月</span>
           <button className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground">
             <Bell className="h-4 w-4" />
@@ -688,7 +792,13 @@ function DataTable({
   );
 }
 
-function DrawerActionButton({ action }: { action: DrawerAction }) {
+function DrawerActionButton({
+  action,
+  onSelect,
+}: {
+  action: DrawerAction;
+  onSelect?: (action: DrawerAction) => void;
+}) {
   const Icon = action.icon;
   const className =
     action.variant === "primary"
@@ -703,6 +813,7 @@ function DrawerActionButton({ action }: { action: DrawerAction }) {
 
   return (
     <button
+      onClick={action.key ? () => onSelect?.(action) : undefined}
       className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs font-medium transition ${className}`}
       title={action.hint}
     >
@@ -717,13 +828,19 @@ function DrawerActionButton({ action }: { action: DrawerAction }) {
 
 function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   if (row.id.startsWith("student-")) {
+    const statusAction: DrawerAction =
+      row.status === "归档"
+        ? { label: "恢复学生", icon: RotateCcw, variant: "secondary", key: "student.restore" }
+        : { label: "归档学生", icon: X, variant: "warning", key: "student.archive" };
+
     return [
       {
         title: "学生操作",
         actions: [
-          { label: "编辑基础信息", icon: PencilLine, variant: "primary" },
+          { label: "编辑基础信息", icon: PencilLine, variant: "primary", key: "student.edit" },
           { label: "查看该学生课时", icon: CalendarDays, variant: "secondary" },
           { label: "查看该学生账单", icon: ReceiptText, variant: "secondary" },
+          statusAction,
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ],
       },
@@ -931,7 +1048,15 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   ];
 }
 
-function DetailDrawer({ row, onClose }: { row: DataRow | null; onClose: () => void }) {
+function DetailDrawer({
+  row,
+  onClose,
+  onAction,
+}: {
+  row: DataRow | null;
+  onClose: () => void;
+  onAction?: (actionKey: DrawerActionKey, row: DataRow) => void;
+}) {
   if (!row) {
     return null;
   }
@@ -960,7 +1085,15 @@ function DetailDrawer({ row, onClose }: { row: DataRow | null; onClose: () => vo
               </div>
               <div className="grid gap-2 p-3">
                 {group.actions.map((action) => (
-                  <DrawerActionButton action={action} key={action.label} />
+                  <DrawerActionButton
+                    action={action}
+                    key={action.label}
+                    onSelect={(selectedAction) => {
+                      if (selectedAction.key) {
+                        onAction?.(selectedAction.key, row);
+                      }
+                    }}
+                  />
                 ))}
               </div>
             </section>
@@ -1271,6 +1404,167 @@ function SettlementBatchModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function StudentFormModal({
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: StudentDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: StudentWriteInput) => void;
+}) {
+  const record = state.mode === "edit" ? state.row.studentRecord : undefined;
+  const [name, setName] = useState(record?.name ?? "");
+  const [code, setCode] = useState(record?.code ?? "");
+  const [kanaName, setKanaName] = useState(record?.kanaName ?? "");
+  const [memo, setMemo] = useState(record?.memo ?? "");
+  const title = state.mode === "edit" ? "编辑学生基础信息" : "新增学生";
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    onSubmit({
+      name: name.trim(),
+      code: normalizeOptionalFormValue(code),
+      kanaName: normalizeOptionalFormValue(kanaName),
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(560px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{title}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">保存后刷新学生管理列表</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">学生姓名</span>
+            <input
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="例如：王小明"
+            />
+          </label>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">学生编号</span>
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="student-001"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">假名</span>
+              <input
+                value={kanaName}
+                onChange={(event) => setKanaName(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="任意备注用假名"
+              />
+            </label>
+          </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea
+              value={memo}
+              onChange={(event) => setMemo(event.target.value)}
+              className="min-h-[92px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="选填"
+            />
+          </label>
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !name.trim()}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "保存中" : "保存"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ActionNotice({
+  notice,
+  onClose,
+}: {
+  notice: { tone: "emerald" | "rose" | "amber"; text: string } | null;
+  onClose: () => void;
+}) {
+  if (!notice) {
+    return null;
+  }
+
+  const className =
+    notice.tone === "emerald"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : notice.tone === "amber"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-rose-200 bg-rose-50 text-rose-700";
+
+  return (
+    <div className={`fixed bottom-5 right-5 z-[60] flex max-w-[360px] items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg ${className}`}>
+      <span className="leading-relaxed">{notice.text}</span>
+      <button type="button" onClick={onClose} className="rounded p-0.5 opacity-70 transition hover:bg-white/70 hover:opacity-100">
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function normalizeOptionalFormValue(value: string) {
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function formatApiError(error: unknown) {
+  if (isApiRequestError(error)) {
+    return error.responseText || `HTTP ${error.status}`;
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "请求失败";
+}
+
 function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
   const flows = [
     {
@@ -1477,6 +1771,73 @@ const commonFilters = {
   status: { label: "状态", options: ["预览", "已锁定", "已生成记录", "Cash 待确认", "已确认", "需要复核"] },
   entity: { label: "业务归属", options: ["青空塾", "青空塾外部", "短期课程"] },
 };
+
+function getRecordStatusView(status: StudentRecord["status"]): { label: string; tone: Tone } {
+  if (status === "active") {
+    return { label: "在读", tone: "emerald" };
+  }
+
+  if (status === "inactive") {
+    return { label: "停用", tone: "amber" };
+  }
+
+  return { label: "归档", tone: "slate" };
+}
+
+function mapStudentRecordToRow(student: StudentRecord): DataRow {
+  const status = getRecordStatusView(student.status);
+  const entityName = student.primaryBusinessEntity?.name ?? "未设置";
+
+  return {
+    id: `student-${student.id}`,
+    title: student.name,
+    subtitle: student.code ? `编号 ${student.code}` : "未设置学生编号",
+    status: status.label,
+    tone: status.tone,
+    apiRef: {
+      resource: "student",
+      id: student.id,
+    },
+    studentRecord: student,
+    cells: {
+      entity: entityName,
+      grade: "-",
+      subjects: "-",
+      billing: "-",
+    },
+    detail: [
+      {
+        title: "学生资料",
+        lines: [
+          { label: "业务归属", value: entityName },
+          { label: "假名", value: student.kanaName ?? "-" },
+          { label: "备注", value: student.memo ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function buildStudentsPage(basePage: PageConfig, studentApi: StudentApiState): PageConfig {
+  if (studentApi.status !== "ready") {
+    return basePage;
+  }
+
+  const activeCount = studentApi.rows.filter((row) => row.status === "在读").length;
+  const archivedCount = studentApi.rows.filter((row) => row.status === "归档").length;
+
+  return {
+    ...basePage,
+    description: "学生基础资料、业务归属和运营状态入口",
+    metrics: [
+      { label: "在读学生", value: `${activeCount} 人`, sub: "来自 dev API", tone: "sky", icon: Users },
+      { label: "学生总数", value: `${studentApi.total} 人`, sub: "当前接口返回总数", tone: "emerald", icon: BadgeCheck },
+      { label: "待补资料", value: "-", sub: "等待字段级契约补充", tone: "amber", icon: FileText },
+      { label: "归档学生", value: `${archivedCount} 人`, sub: "保留历史结算", tone: "slate", icon: LockKeyhole },
+    ],
+    rows: studentApi.rows,
+  };
+}
 
 interface LessonCardData {
   date: string;
@@ -3287,11 +3648,52 @@ const pages: Record<string, PageConfig> = {
   },
 };
 
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const submitLogin = (event: FormEvent<HTMLFormElement>) => {
+function LoginScreen({
+  apiHealth,
+  onLogin,
+  onRefreshApi,
+}: {
+  apiHealth: ApiHealthSnapshot;
+  onLogin: (session: AuthSession | null, mode: AuthMode) => void;
+  onRefreshApi: () => void;
+}) {
+  const [email, setEmail] = useState("admin@aozora.jp");
+  const [password, setPassword] = useState("aozora-demo");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onLogin();
+    setLoginError(null);
+    setIsSubmitting(true);
+
+    try {
+      const session = await loginWithPassword({ email, password });
+      onLogin(session, "api");
+    } catch (error) {
+      if (isApiRequestError(error)) {
+        setLoginError("账号或密码不正确，或账号尚未启用。");
+        return;
+      }
+
+      onLogin(null, "demo");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const apiStatusClass =
+    apiHealth.status === "online" && apiHealth.database === "online"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : apiHealth.status === "checking"
+        ? "border-sky-200 bg-sky-50 text-sky-800"
+      : "border-amber-200 bg-amber-50 text-amber-800";
+  const apiStatusLabel =
+    apiHealth.status === "online" && apiHealth.database === "online"
+      ? "真实 API 已连接"
+      : apiHealth.status === "checking"
+        ? "正在检查 API"
+        : "API 未连接，登录将进入 demo 模式";
 
   return (
     <main
@@ -3336,7 +3738,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
                 <span className="text-xs font-medium text-muted-foreground">账号</span>
                 <input
                   className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
-                  defaultValue="admin@aozora.jp"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
                   type="email"
                 />
               </label>
@@ -3345,7 +3748,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
                 <span className="text-xs font-medium text-muted-foreground">密码</span>
                 <input
                   className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
-                  defaultValue="aozora-demo"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
                   type="password"
                 />
               </label>
@@ -3373,14 +3777,27 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
             <button
               type="submit"
-              className="mt-7 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#1687D9] px-4 text-sm font-medium text-white transition hover:bg-[#0f74bd]"
+              disabled={isSubmitting}
+              className="mt-7 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#1687D9] px-4 text-sm font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-wait disabled:bg-[#8cbfe3]"
             >
-              登录
-              <ArrowRight className="h-4 w-4" />
+              {isSubmitting ? "登录中" : "登录"}
+              {isSubmitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
             </button>
 
-            <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Demo 阶段仅展示登录流程，真实认证与权限校验将在后端接入后启用。Preview deploy test 2026-07-04。
+            {loginError && (
+              <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {loginError}
+              </div>
+            )}
+
+            <div className={`mt-5 rounded-md border px-3 py-2 text-xs ${apiStatusClass}`}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">{apiStatusLabel}</span>
+                <button type="button" onClick={onRefreshApi} className="font-medium hover:underline">
+                  重试
+                </button>
+              </div>
+              <div className="mt-1 truncate font-mono text-[11px] opacity-75">{apiHealth.apiBaseUrl}</div>
             </div>
           </form>
         </div>
@@ -3391,13 +3808,29 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("demo");
+  const [apiHealth, setApiHealth] = useState<ApiHealthSnapshot>(createInitialApiHealth);
+  const [studentApi, setStudentApi] = useState<StudentApiState>({ status: "idle", rows: [], total: 0 });
+  const [studentReloadKey, setStudentReloadKey] = useState(0);
+  const [studentDialog, setStudentDialog] = useState<StudentDialogState | null>(null);
+  const [isStudentSubmitting, setIsStudentSubmitting] = useState(false);
+  const [studentMutationError, setStudentMutationError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
   const [selectedByPage, setSelectedByPage] = useState<Record<string, Set<string>>>({});
   const [detailRow, setDetailRow] = useState<DataRow | null>(null);
   const [showCashModal, setShowCashModal] = useState(false);
   const [showSettlementBatchModal, setShowSettlementBatchModal] = useState(false);
 
-  const activePage = pages[activeKey];
+  const baseActivePage = pages[activeKey];
+  const activePage = useMemo(() => {
+    if (activeKey === "students" && baseActivePage) {
+      return buildStudentsPage(baseActivePage, studentApi);
+    }
+
+    return baseActivePage;
+  }, [activeKey, baseActivePage, studentApi]);
   const selected = selectedByPage[activeKey] ?? new Set<string>();
   const selectedRows = useMemo(() => {
     if (!activePage) {
@@ -3405,6 +3838,168 @@ export default function App() {
     }
     return activePage.rows.filter((row) => selected.has(row.id));
   }, [activePage, selected]);
+
+  const refreshApiHealth = () => {
+    setApiHealth((current) => ({ ...current, status: "checking", database: "checking" }));
+    void fetchApiHealthSnapshot().then(setApiHealth);
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkApiHealth = async () => {
+      setApiHealth((current) => ({ ...current, status: "checking", database: "checking" }));
+      const next = await fetchApiHealthSnapshot();
+      if (isMounted) {
+        setApiHealth(next);
+      }
+    };
+
+    void checkApiHealth();
+    const timer = window.setInterval(checkApiHealth, 60_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!actionNotice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setActionNotice(null), 4000);
+
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
+
+  useEffect(() => {
+    if (!authSession) {
+      setStudentApi({ status: "idle", rows: [], total: 0 });
+      return;
+    }
+
+    let isMounted = true;
+
+    setStudentApi((current) => ({
+      status: "loading",
+      rows: current.rows,
+      total: current.total,
+    }));
+
+    void listStudents(authSession.accessToken)
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setStudentApi({
+          status: "ready",
+          rows: response.items.map(mapStudentRecordToRow),
+          total: response.total,
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setStudentApi({
+          status: "error",
+          rows: [],
+          total: 0,
+          message: error instanceof Error ? error.message : "Students API request failed",
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession, studentReloadKey]);
+
+  const handleLogin = (session: AuthSession | null, mode: AuthMode) => {
+    setAuthSession(session);
+    setAuthMode(mode);
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    setAuthSession(null);
+    setAuthMode("demo");
+    setIsAuthenticated(false);
+  };
+
+  const openStudentCreate = () => {
+    setStudentMutationError(null);
+    setStudentDialog({ mode: "create" });
+  };
+
+  const submitStudentForm = async (input: StudentWriteInput) => {
+    if (!authSession) {
+      setStudentMutationError("请先使用真实 API 登录后再保存。");
+      return;
+    }
+
+    if (studentDialog?.mode === "edit" && !studentDialog.row.apiRef) {
+      setStudentMutationError("这条 demo 数据没有后端记录，不能提交保存。");
+      return;
+    }
+
+    setIsStudentSubmitting(true);
+    setStudentMutationError(null);
+
+    try {
+      if (studentDialog?.mode === "edit") {
+        await updateStudent(authSession.accessToken, studentDialog.row.apiRef!.id, input);
+        setActionNotice({ tone: "emerald", text: "学生基础信息已保存。" });
+      } else {
+        await createStudent(authSession.accessToken, input);
+        setActionNotice({ tone: "emerald", text: "学生已创建。" });
+      }
+
+      setStudentDialog(null);
+      setDetailRow(null);
+      setStudentReloadKey((current) => current + 1);
+    } catch (error) {
+      setStudentMutationError(formatApiError(error));
+    } finally {
+      setIsStudentSubmitting(false);
+    }
+  };
+
+  const handleDrawerAction = async (actionKey: DrawerActionKey, row: DataRow) => {
+    if (actionKey === "student.edit") {
+      setStudentMutationError(null);
+      setStudentDialog({ mode: "edit", row });
+      return;
+    }
+
+    if (!authSession || !row.apiRef) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
+      return;
+    }
+
+    const isRestore = actionKey === "student.restore";
+    const confirmed = window.confirm(`确认${isRestore ? "恢复" : "归档"}学生「${row.title}」？`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      if (isRestore) {
+        await restoreStudent(authSession.accessToken, row.apiRef.id);
+      } else {
+        await archiveStudent(authSession.accessToken, row.apiRef.id);
+      }
+
+      setDetailRow(null);
+      setStudentReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: isRestore ? "学生已恢复。" : "学生已归档。" });
+    } catch (error) {
+      setActionNotice({ tone: "rose", text: formatApiError(error) });
+    }
+  };
 
   const setSelected = (next: Set<string>) => {
     setSelectedByPage((current) => ({ ...current, [activeKey]: next }));
@@ -3436,6 +4031,7 @@ export default function App() {
     setDetailRow(null);
     setShowCashModal(false);
     setShowSettlementBatchModal(false);
+    setStudentDialog(null);
   };
 
   const pageForTopBar =
@@ -3445,9 +4041,13 @@ export default function App() {
           group: "工作台",
           title: "首页",
         };
+  const currentUser = authSession?.user ?? {
+    displayName: "系统管理员",
+    email: "admin@aozora.jp",
+  };
 
   if (!isAuthenticated) {
-    return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
+    return <LoginScreen apiHealth={apiHealth} onLogin={handleLogin} onRefreshApi={refreshApiHealth} />;
   }
 
   return (
@@ -3455,9 +4055,15 @@ export default function App() {
       className="flex min-h-screen bg-background text-foreground"
       style={{ fontFamily: "'Noto Sans SC', sans-serif", fontSize: 14 }}
     >
-      <Sidebar activeKey={activeKey} onNavigate={navigate} />
+      <Sidebar activeKey={activeKey} onNavigate={navigate} user={currentUser} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar page={pageForTopBar} onLogout={() => setIsAuthenticated(false)} />
+        <TopBar
+          page={pageForTopBar}
+          apiHealth={apiHealth}
+          authMode={authMode}
+          onRefreshApi={refreshApiHealth}
+          onLogout={handleLogout}
+        />
         {activeKey === "dashboard" ? (
           <Dashboard onNavigate={navigate} />
         ) : activeKey === "lesson-management" ? (
@@ -3471,7 +4077,13 @@ export default function App() {
             onToggleAll={toggleAll}
             onToggleRow={toggleRow}
             onOpenDetail={setDetailRow}
-            onPrimary={activeKey === "student-settlements" ? () => setShowSettlementBatchModal(true) : undefined}
+            onPrimary={
+              activeKey === "student-settlements"
+                ? () => setShowSettlementBatchModal(true)
+                : activeKey === "students"
+                  ? openStudentCreate
+                  : undefined
+            }
           />
         ) : (
           <Dashboard onNavigate={navigate} />
@@ -3487,9 +4099,19 @@ export default function App() {
           onLock={activeKey === "student-settlements" ? () => setShowSettlementBatchModal(true) : undefined}
         />
       )}
-      <DetailDrawer row={detailRow} onClose={() => setDetailRow(null)} />
+      <DetailDrawer row={detailRow} onClose={() => setDetailRow(null)} onAction={handleDrawerAction} />
       {showCashModal && <CashModal rows={selectedRows} onClose={() => setShowCashModal(false)} />}
       {showSettlementBatchModal && <SettlementBatchModal onClose={() => setShowSettlementBatchModal(false)} />}
+      {studentDialog && (
+        <StudentFormModal
+          state={studentDialog}
+          isSubmitting={isStudentSubmitting}
+          error={studentMutationError}
+          onClose={() => setStudentDialog(null)}
+          onSubmit={submitStudentForm}
+        />
+      )}
+      <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />
     </div>
   );
 }

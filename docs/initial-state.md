@@ -110,7 +110,9 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 - 后端已建立 NestJS + Prisma API 工程，并已接入 Supabase v3 dev PostgreSQL。
 - Prisma 已建立第一版 foundation schema 和 migration。
 - dev DB 已执行基础 seed，包含角色、权限、业务归属和 School 侧账户。
-- dev API 已补充 Render Web Service 蓝图 `render.yaml`，默认服务名为 `aozora-school-system-v3-api-dev`，并通过 `CORS_ORIGIN` 允许前端 demo 域名访问。
+- dev API 已补充 Render Web Service 蓝图 `render.yaml`，默认服务名为 `aozora-school-system-v3-api-dev`，并通过 `CORS_ORIGIN` 允许前端 demo 域名和本地 Vite 联调访问。
+- 2026-07-06 已确认默认 dev API URL `https://aozora-school-system-v3-api-dev.onrender.com/api/health` 当前返回 Render `no-server`，说明 Render Web Service 尚未创建或实际服务 URL 不同。
+- 前端 demo 已开始接真实 dev API：登录页会检查 API health，优先调用 `/api/auth/login`；登录成功后学生管理页可用 token 拉取 `/api/students`，并可调用学生新增、基础信息编辑、归档和恢复动作。API 不可达时保留 demo fallback。
 - 后端 Controller 路由数为 `145`，已覆盖认证、用户、权限、主数据、学生课时、学生月度结算、学费账单、老师工资、勤务表导入、收入、支出、Cash 请求、Cash 入站、账户流水、报销、外部授课、审计、健康检查和版本信息。
 - 已在 `apps/api/README.md` 建立第一版 API 契约索引，记录模块 endpoint、金额权威原则、状态机写入原则、Cash 入站联动和全新预定课时删除保护。
 - 当前 API 仍以 dev 联调为目标，前端正式接入前还需要继续整理字段级 request / response、错误提示口径和列表 / 详情 / 抽屉展示字段。
@@ -123,7 +125,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 
 当前仍未执行以下动作：
 
-- 未连接真实后端 API 到前端。
+- 未全面连接真实后端 API 到前端；当前仅完成 health / auth / students 第一轮接入。
 - 未导入或迁移 v2 数据。
 - 未读取或修改 v2 项目。
 - 未执行任何生产数据操作。
@@ -143,6 +145,12 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
   - `render.yaml`
   - `apps/api/README.md`
   - `CORS_ORIGIN` 环境变量支持。
+- 前端 demo 第一轮真实 API 接入：
+  - `apps/web/src/app/api.ts`
+  - API health / DB health / version 探针。
+  - 登录页调用 `/api/auth/login`，API 不可达时进入 demo fallback。
+  - 学生管理页登录真实 API 后调用 `/api/students`。
+  - 学生管理页已接 `POST /api/students`、`PATCH /api/students/:id`、`POST /api/students/:id/archive`、`POST /api/students/:id/restore`。
 - `MoneyService` 初版金额取舍测试骨架。
 - Supabase `aozora-school-v3-dev` project。
 - Prisma foundation migration。
@@ -171,8 +179,8 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 
 建议后续按以下顺序推进：
 
-1. 继续补充稳定测试：Cash 请求、收入 / 支出 / 账户流水一致性、学生课时删除 guard、工资快照生成支出。
-2. 细化字段级 API 契约：request / response、错误信息、权限要求、列表 / 详情 / 抽屉展示字段。
-3. 在 Render Dashboard 按 `render.yaml` 创建 dev API Web Service，并确认 `/api/health` 与 `/api/health/db`。
-4. 前端从 demo preview 逐步接入真实 dev API。
+1. 在 Render Dashboard 按 `render.yaml` 创建 dev API Web Service，并确认 `/api/health` 与 `/api/health/db`；确认实际 API URL 后同步 `VITE_API_BASE_URL`。
+2. 继续补充稳定测试：Cash 请求、收入 / 支出 / 账户流水一致性、学生课时删除 guard、工资快照生成支出。
+3. 细化字段级 API 契约：request / response、错误信息、权限要求、列表 / 详情 / 抽屉展示字段。
+4. 前端以 students 为样板，继续把老师、基础设置、收入 / 支出、Cash 请求等页面逐步接入真实 dev API 和业务动作按钮。
 5. 设计 v2 数据迁移脚本和校验报告；真实数据只进入未来 prod，不进入 dev / staging。
