@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { AuditRiskLevel, Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service";
 import { CreateAuditEventInput, ListAuditEventsQuery } from "./audit.types";
@@ -6,6 +6,27 @@ import { CreateAuditEventInput, ListAuditEventsQuery } from "./audit.types";
 const defaultLimit = 50;
 const maxLimit = 200;
 type AuditEventWriter = Pick<Prisma.TransactionClient, "auditEvent">;
+
+const auditEventSelect = {
+  id: true,
+  action: true,
+  targetType: true,
+  targetId: true,
+  riskLevel: true,
+  reason: true,
+  beforeSnapshot: true,
+  afterSnapshot: true,
+  metadata: true,
+  requestId: true,
+  createdAt: true,
+  actorUser: {
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+    },
+  },
+} satisfies Prisma.AuditEventSelect;
 
 @Injectable()
 export class AuditService {
@@ -31,26 +52,7 @@ export class AuditService {
           createdAt: "desc",
         },
         take: limit,
-        select: {
-          id: true,
-          action: true,
-          targetType: true,
-          targetId: true,
-          riskLevel: true,
-          reason: true,
-          beforeSnapshot: true,
-          afterSnapshot: true,
-          metadata: true,
-          requestId: true,
-          createdAt: true,
-          actorUser: {
-            select: {
-              id: true,
-              email: true,
-              displayName: true,
-            },
-          },
-        },
+        select: auditEventSelect,
       }),
       this.prisma.auditEvent.count({ where }),
     ]);
@@ -60,6 +62,19 @@ export class AuditService {
       total,
       limit,
     };
+  }
+
+  async getEvent(id: string) {
+    const event = await this.prisma.auditEvent.findUnique({
+      where: { id },
+      select: auditEventSelect,
+    });
+
+    if (!event) {
+      throw new NotFoundException("Audit event not found.");
+    }
+
+    return { event };
   }
 
   private buildWhere(query: ListAuditEventsQuery): Prisma.AuditEventWhereInput {

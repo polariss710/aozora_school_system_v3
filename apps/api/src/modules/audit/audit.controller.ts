@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, Param, Query, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PermissionGuard } from "../auth/permission.guard";
 import { RequirePermissions } from "../auth/permissions.decorator";
@@ -14,5 +14,11 @@ export class AuditController {
   @RequirePermissions("audit.read")
   listEvents(@Query() query: ListAuditEventsQuery) {
     return this.auditService.listEvents(query);
+  }
+
+  @Get("events/:id")
+  @RequirePermissions("audit.read")
+  getEvent(@Param("id") id: string) {
+    return this.auditService.getEvent(id);
   }
 }
