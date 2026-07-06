@@ -1,6 +1,6 @@
 # Aozora School System v3 立项阶段开发讨论框架
 
-最后整理日期：2026-07-03
+最后整理日期：2026-07-06
 
 ## 1. 立项共识
 
@@ -119,66 +119,171 @@ API / Use Case 设计原则：
 - 避免用通用 CRUD 承担主链路写入，例如让前端自行组合 `POST /income`、`PATCH /income/:id`、`DELETE /income/:id`。
 - 主链路 API 应由后端 use case 负责校验权限、读取 snapshot、调用 MoneyService、写审计、处理幂等和事务。
 
-v3.0 第一批 API 草案：
+v3.0 后端 API 当前实现快照：
 
-课时：
+截至 2026-07-06，后端 `apps/api` 已进入主链路第一轮闭环收口阶段，Controller 路由数约 `141`。当前 API 仍以 dev 环境联调为目标，前端接入前还需要继续整理字段级契约、错误提示口径和列表 / 详情 / 抽屉展示字段。
 
-```text
-POST /planned-lessons
-POST /planned-lessons/batch-generate
-POST /actual-lessons/log
-POST /actual-lessons/:id/cancel
-POST /makeup-lessons/:id/complete
-```
-
-学生学费 / 收入：
+认证 / 用户 / 权限：
 
 ```text
-POST /tuition-bills/generate
-POST /tuition-bills/:id/generate-income
-POST /income/:id/submit-cash
-POST /income/:id/void
-POST /income/:id/regenerate
+POST /api/auth/login
+GET  /api/auth/me
+GET  /api/users
+GET  /api/users/:id
+POST /api/users
+PATCH /api/users/:id
+POST /api/users/:id/password
+POST /api/users/:id/suspend
+POST /api/users/:id/activate
 ```
 
-学生月度结算：
+基础设置 / 主数据：
 
 ```text
-POST /student-settlements/preview
-POST /student-settlements/lock
-POST /student-settlements/:id/revoke
-POST /student-settlements/:id/relock
-POST /student-settlements/:id/export-pdf
+GET  /api/settings/business-entities
+GET  /api/settings/accounts
+GET  /api/settings/roles
+GET  /api/settings/permissions
+GET  /api/settings/subjects
+GET  /api/settings/external-workplaces
+
+GET/POST/PATCH business-entities, students, subjects, teachers, external-workplaces, accounts
+POST :id/archive
+POST :id/restore
 ```
 
-老师工资 / 支出：
+学生课时：
 
 ```text
-POST /wage-snapshots/generate
-POST /wage-snapshots/:id/export-adjustment-excel
-POST /wage-snapshots/:id/import-adjustment-excel
-POST /wage-snapshots/:id/generate-expense
-POST /expenses/:id/submit-cash
-POST /expenses/:id/void
+GET  /api/lessons/planned
+GET  /api/lessons/planned/:id
+POST /api/lessons/planned
+POST /api/lessons/planned/batch-preview
+POST /api/lessons/planned/batch-create
+PATCH /api/lessons/planned/:id
+POST /api/lessons/planned/:id/cancel
+POST /api/lessons/planned/:id/restore
+POST /api/lessons/planned/:id/mark-makeup-pending
+POST /api/lessons/planned/:id/generate-actual
+GET  /api/lessons/actual
+GET  /api/lessons/actual/:id
+PATCH /api/lessons/actual/:id
+POST /api/lessons/actual/:id/cancel
 ```
 
-Cash：
+学生月度结算 / 学费账单：
 
 ```text
-POST /cash-requests/:id/retry
-POST /cash-requests/:id/cancel
-POST /cash-events/receive
+GET  /api/settlements/student
+GET  /api/settlements/student/:id
+GET  /api/settlements/student/:id/export-payload
+POST /api/settlements/student/preview
+POST /api/settlements/student/lock
+POST /api/settlements/student/:id/revoke
+
+GET  /api/tuition-bills
+GET  /api/tuition-bills/:id
+GET  /api/tuition-bills/:id/export-payload
+POST /api/tuition-bills/generate
+POST /api/tuition-bills/:id/generate-income
+POST /api/tuition-bills/:id/void
 ```
 
-账户：
+老师工资 / 勤务表 / 支出：
 
 ```text
-POST /account-transactions/manual
-POST /account-transfers/internal
-POST /account-transfers/fx-from-cash-event
+GET  /api/wages/rules
+POST /api/wages/rules
+PATCH /api/wages/rules/:id
+GET  /api/wages/teacher
+GET  /api/wages/teacher/:id
+POST /api/wages/teacher/preview
+POST /api/wages/teacher/lock
+PATCH /api/wages/teacher/:id/adjustments
+POST /api/wages/teacher/:id/attendance-export
+POST /api/wages/teacher/:id/attendance-import-preview
+POST /api/wages/teacher/:id/attendance-import-confirm
+POST /api/wages/teacher/:id/confirm-adjustments
+POST /api/wages/teacher/:id/revoke
+
+GET  /api/expenses
+GET  /api/expenses/:id
+POST /api/expenses/manual
+POST /api/expenses/from-wage/:snapshotId
+POST /api/expenses/:id/void
 ```
 
-说明：以上是业务动作粒度草案，不是最终 URL 规范。最终命名可随后端框架和路由规范调整，但前端不得绕过 use case 直接操作业务表。
+外部授课：
+
+```text
+GET    /api/external-work/lessons
+GET    /api/external-work/lessons/:id
+POST   /api/external-work/lessons/planned
+PATCH  /api/external-work/lessons/:id
+DELETE /api/external-work/lessons/:id
+POST   /api/external-work/lessons/:id/generate-actual
+GET    /api/external-work/settlements
+GET    /api/external-work/settlements/:id
+GET    /api/external-work/settlements/:id/export-payload
+POST   /api/external-work/settlements/preview
+POST   /api/external-work/settlements/lock
+POST   /api/external-work/settlements/:id/revoke
+POST   /api/external-work/settlements/:id/generate-income
+```
+
+收入 / Cash / 账户 / 报销：
+
+```text
+GET  /api/income
+GET  /api/income/:id
+POST /api/income/manual
+POST /api/income/:id/void
+
+GET  /api/cash/requests
+GET  /api/cash/requests/:id
+POST /api/cash/requests/income/:incomeRecordId
+POST /api/cash/requests/expense/:expenseRecordId
+POST /api/cash/requests/:id/reject
+POST /api/cash/requests/:id/withdraw
+POST /api/cash/requests/:id/confirm
+
+GET  /api/cash-inbound/events
+GET  /api/cash-inbound/events/:id
+POST /api/cash-inbound/events
+POST /api/cash-inbound/events/:id/reject
+
+GET  /api/accounts/transactions
+GET  /api/accounts/transactions/:id
+POST /api/accounts/transactions/manual
+POST /api/accounts/transactions/from-income/:incomeRecordId
+POST /api/accounts/transactions/from-expense/:expenseRecordId
+POST /api/accounts/transactions/:id/reverse
+GET  /api/accounts/transfers
+GET  /api/accounts/transfers/:id
+POST /api/accounts/transfers
+POST /api/accounts/transfers/:id/void
+
+GET  /api/reimbursements
+GET  /api/reimbursements/:id
+POST /api/reimbursements/from-expense/:expenseRecordId
+POST /api/reimbursements/:id/void
+```
+
+审计 / 健康检查：
+
+```text
+GET /api/audit/events
+GET /api/health
+GET /api/health/db
+GET /api/version
+```
+
+当前 API 收口重点：
+
+- 继续补状态机小缺口，而不是扩展新业务模块。
+- 将字段级 request / response contract 固化给前端。
+- 将主链路端到端验证沉淀为可重复测试。
+- 前端接入时不得绕过这些业务动作 API 直接操作业务表。
 
 ### 2.3 平台方案
 
