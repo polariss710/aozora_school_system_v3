@@ -4049,8 +4049,8 @@ function LoginScreen({
   onLogin: (session: AuthSession | null, mode: AuthMode) => void;
   onRefreshApi: () => void;
 }) {
-  const [email, setEmail] = useState("admin@aozora.jp");
-  const [password, setPassword] = useState("aozora-demo");
+  const [email, setEmail] = useState("polariss710@gmail.com");
+  const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -4611,7 +4611,7 @@ export default function App() {
         };
   const currentUser = authSession?.user ?? {
     displayName: "系统管理员",
-    email: "admin@aozora.jp",
+    email: "polariss710@gmail.com",
   };
 
   if (!isAuthenticated) {
