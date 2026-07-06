@@ -133,4 +133,13 @@ export class LessonsController {
   ) {
     return this.lessonsService.updateActualLesson(id, body, user.id);
   }
+
+  @Post("actual/:id/cancel")
+  @RequirePermissions("lessons.manage")
+  cancelActualLesson(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.lessonsService.cancelActualLesson(id, user.id);
+  }
 }

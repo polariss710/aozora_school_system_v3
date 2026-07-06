@@ -89,6 +89,7 @@ const actualLessonSelect = {
   plannedLesson: {
     select: {
       id: true,
+      yearMonth: true,
       weekAnchorDate: true,
       lessonNo: true,
       status: true,
@@ -478,6 +479,7 @@ export class LessonsService {
     actorUserId: string,
   ) {
     const before = await this.findActualLesson(id);
+    this.assertActualLessonEditable(before);
     const input = this.normalizeUpdateActualInput(body, before);
     await this.assertActiveTeacher(input.teacherId);
     await this.assertTeacherWageSnapshotOpen(
@@ -525,6 +527,65 @@ export class LessonsService {
     });
 
     return { actualLesson };
+  }
+
+  async cancelActualLesson(id: string, actorUserId: string) {
+    const before = await this.findActualLesson(id);
+    this.assertActualLessonEditable(before);
+
+    if (!before.plannedLessonId || !before.plannedLesson) {
+      throw new BadRequestException("Actual lesson has no planned lesson binding.");
+    }
+
+    await this.assertStudentSettlementOpen(
+      before.studentId,
+      before.plannedLesson.yearMonth,
+    );
+    await this.assertTeacherWageSnapshotOpen(
+      before.teacherId,
+      before.yearMonth,
+      before.businessEntityId,
+    );
+
+    const restoredPlannedStatus =
+      before.plannedLesson.status === PlannedLessonStatus.makeup_completed
+        ? PlannedLessonStatus.makeup_pending
+        : PlannedLessonStatus.scheduled;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const actualLesson = await tx.studentActualLesson.update({
+        where: { id },
+        data: {
+          status: ActualLessonStatus.cancelled,
+          plannedLessonId: null,
+          memo: before.memo,
+        },
+        select: actualLessonSelect,
+      });
+
+      const plannedLesson = await tx.studentPlannedLesson.update({
+        where: { id: before.plannedLessonId! },
+        data: { status: restoredPlannedStatus },
+        select: plannedLessonSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "student_actual_lesson.cancel",
+          targetType: "student_actual_lesson",
+          targetId: id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: before,
+          afterSnapshot: { plannedLesson, actualLesson },
+        },
+        tx,
+      );
+
+      return { plannedLesson, actualLesson };
+    });
+
+    return result;
   }
 
   private async changePlannedStatus(
@@ -602,6 +663,12 @@ export class LessonsService {
       plannedLesson.status === PlannedLessonStatus.makeup_completed
     ) {
       throw new BadRequestException("Planned lesson is already completed.");
+    }
+  }
+
+  private assertActualLessonEditable(actualLesson: ActualLessonSnapshot) {
+    if (actualLesson.status !== ActualLessonStatus.completed) {
+      throw new BadRequestException("Only completed actual lesson can be edited.");
     }
   }
 
