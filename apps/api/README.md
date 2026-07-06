@@ -289,3 +289,36 @@ pnpm --dir apps/api dev:watch
 pnpm --dir apps/api build
 pnpm --dir apps/api test
 ```
+
+## Render dev API deployment
+
+The repository includes `render.yaml` for the dev API Web Service:
+
+```text
+Service name: aozora-school-system-v3-api-dev
+Runtime: Node
+Build command:
+corepack enable && corepack prepare pnpm@11.7.0 --activate && pnpm install --frozen-lockfile && pnpm --dir apps/api exec prisma generate && pnpm build:api
+Start command:
+pnpm --dir apps/api start
+Health check:
+GET /api/health
+DB check:
+GET /api/health/db
+```
+
+Required Render environment variables:
+
+```text
+NODE_ENV=production
+CORS_ORIGIN=https://aozora-school-system-v3-demo.onrender.com
+DATABASE_URL=<Supabase v3 dev pooler URL>
+DIRECT_DATABASE_URL=<Supabase v3 dev direct URL>
+JWT_SECRET=<long random secret>
+```
+
+Notes:
+
+- `DATABASE_URL`, `DIRECT_DATABASE_URL`, and `JWT_SECRET` must be set in Render, not committed to git.
+- `CORS_ORIGIN` is comma-separated when multiple frontend origins are needed.
+- The dev API uses the Supabase v3 dev project only. Do not point it at v2, staging, or future prod data.

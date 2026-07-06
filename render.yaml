@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: aozora-school-system-v3-api-dev
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: corepack enable && corepack prepare pnpm@11.7.0 --activate && pnpm install --frozen-lockfile && pnpm --dir apps/api exec prisma generate && pnpm build:api
+    startCommand: pnpm --dir apps/api start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: https://aozora-school-system-v3-demo.onrender.com
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
