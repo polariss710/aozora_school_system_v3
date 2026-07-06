@@ -51,6 +51,22 @@ export interface StudentWriteInput {
   memo?: string | null;
 }
 
+export interface TeacherRecord {
+  id: string;
+  code: string | null;
+  name: string;
+  kanaName: string | null;
+  status: "active" | "inactive" | "archived";
+  memo: string | null;
+}
+
+export interface TeacherWriteInput {
+  code?: string | null;
+  name: string;
+  kanaName?: string | null;
+  memo?: string | null;
+}
+
 interface ApiHealthResponse {
   service: string;
   status: "ok";
@@ -172,6 +188,42 @@ export function archiveStudent(accessToken: string, studentId: string) {
 
 export function restoreStudent(accessToken: string, studentId: string) {
   return requestJson<{ student: StudentRecord }>(`/students/${studentId}/restore`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listTeachers(accessToken: string) {
+  return requestJson<ListResponse<TeacherRecord>>("/teachers?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function createTeacher(accessToken: string, input: TeacherWriteInput) {
+  return requestJson<{ teacher: TeacherRecord }>("/teachers", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateTeacher(accessToken: string, teacherId: string, input: TeacherWriteInput) {
+  return requestJson<{ teacher: TeacherRecord }>(`/teachers/${teacherId}`, {
+    method: "PATCH",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function archiveTeacher(accessToken: string, teacherId: string) {
+  return requestJson<{ teacher: TeacherRecord }>(`/teachers/${teacherId}/archive`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function restoreTeacher(accessToken: string, teacherId: string) {
+  return requestJson<{ teacher: TeacherRecord }>(`/teachers/${teacherId}/restore`, {
     method: "POST",
     headers: authorizedHeaders(accessToken),
   });

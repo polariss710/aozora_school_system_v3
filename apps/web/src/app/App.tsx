@@ -43,16 +43,28 @@ import {
 } from "lucide-react";
 import {
   archiveStudent,
+  archiveTeacher,
   apiBaseUrl,
   createStudent,
+  createTeacher,
   fetchApiHealthSnapshot,
   isApiRequestError,
   listStudents,
+  listTeachers,
   loginWithPassword,
   restoreStudent,
+  restoreTeacher,
   updateStudent,
+  updateTeacher,
 } from "./api";
-import type { ApiHealthSnapshot, AuthSession, StudentRecord, StudentWriteInput } from "./api";
+import type {
+  ApiHealthSnapshot,
+  AuthSession,
+  StudentRecord,
+  StudentWriteInput,
+  TeacherRecord,
+  TeacherWriteInput,
+} from "./api";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
 
@@ -104,14 +116,21 @@ interface DataRow {
   detail: DetailSection[];
   cashPreview?: CashPreview;
   apiRef?: {
-    resource: "student";
+    resource: "student" | "teacher";
     id: string;
   };
   studentRecord?: StudentRecord;
+  teacherRecord?: TeacherRecord;
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
-type DrawerActionKey = "student.edit" | "student.archive" | "student.restore";
+type DrawerActionKey =
+  | "student.edit"
+  | "student.archive"
+  | "student.restore"
+  | "teacher.edit"
+  | "teacher.archive"
+  | "teacher.restore";
 
 interface DrawerAction {
   label: string;
@@ -160,6 +179,15 @@ type StudentApiState =
   | { status: "error"; rows: DataRow[]; total: number; message: string };
 
 type StudentDialogState =
+  | { mode: "create" }
+  | { mode: "edit"; row: DataRow };
+
+type TeacherApiState =
+  | { status: "idle" | "loading"; rows: DataRow[]; total: number; message?: string }
+  | { status: "ready"; rows: DataRow[]; total: number; message?: string }
+  | { status: "error"; rows: DataRow[]; total: number; message: string };
+
+type TeacherDialogState =
   | { mode: "create" }
   | { mode: "edit"; row: DataRow };
 
@@ -904,13 +932,19 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   }
 
   if (row.id.startsWith("teacher-")) {
+    const statusAction: DrawerAction =
+      row.status === "归档"
+        ? { label: "恢复老师", icon: RotateCcw, variant: "secondary", key: "teacher.restore" }
+        : { label: "归档老师", icon: X, variant: "warning", key: "teacher.archive" };
+
     return [
       {
         title: "老师操作",
         actions: [
-          { label: "编辑老师资料", icon: PencilLine, variant: "primary" },
+          { label: "编辑老师资料", icon: PencilLine, variant: "primary", key: "teacher.edit" },
           { label: "查看工资规则", icon: FileText, variant: "secondary" },
           { label: "查看工资结算", icon: GraduationCap, variant: "secondary" },
+          statusAction,
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ],
       },
@@ -1520,6 +1554,122 @@ function StudentFormModal({
   );
 }
 
+function TeacherFormModal({
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: TeacherDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: TeacherWriteInput) => void;
+}) {
+  const record = state.mode === "edit" ? state.row.teacherRecord : undefined;
+  const [name, setName] = useState(record?.name ?? "");
+  const [code, setCode] = useState(record?.code ?? "");
+  const [kanaName, setKanaName] = useState(record?.kanaName ?? "");
+  const [memo, setMemo] = useState(record?.memo ?? "");
+  const title = state.mode === "edit" ? "编辑老师基础信息" : "新增老师";
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    onSubmit({
+      name: name.trim(),
+      code: normalizeOptionalFormValue(code),
+      kanaName: normalizeOptionalFormValue(kanaName),
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(560px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{title}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">保存后刷新老师管理列表</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">老师姓名</span>
+            <input
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="例如：高若天"
+            />
+          </label>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">老师编号</span>
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="teacher-001"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">假名</span>
+              <input
+                value={kanaName}
+                onChange={(event) => setKanaName(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="选填"
+              />
+            </label>
+          </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea
+              value={memo}
+              onChange={(event) => setMemo(event.target.value)}
+              className="min-h-[92px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="选填"
+            />
+          </label>
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !name.trim()}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "保存中" : "保存"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ActionNotice({
   notice,
   onClose,
@@ -1852,6 +2002,71 @@ function buildStudentsPage(basePage: PageConfig, studentApi: StudentApiState): P
       { label: "归档学生", value: `${archivedCount} 人`, sub: "保留历史结算", tone: "slate", icon: LockKeyhole },
     ],
     rows: studentApi.rows,
+  };
+}
+
+function getTeacherStatusView(status: TeacherRecord["status"]): { label: string; tone: Tone } {
+  if (status === "active") {
+    return { label: "启用", tone: "emerald" };
+  }
+
+  if (status === "inactive") {
+    return { label: "停用", tone: "amber" };
+  }
+
+  return { label: "归档", tone: "slate" };
+}
+
+function mapTeacherRecordToRow(teacher: TeacherRecord): DataRow {
+  const status = getTeacherStatusView(teacher.status);
+
+  return {
+    id: `teacher-${teacher.id}`,
+    title: teacher.name,
+    subtitle: teacher.code ? `编号 ${teacher.code}` : "未设置老师编号",
+    status: status.label,
+    tone: status.tone,
+    apiRef: {
+      resource: "teacher",
+      id: teacher.id,
+    },
+    teacherRecord: teacher,
+    cells: {
+      entity: "-",
+      subjects: "-",
+      rule: "-",
+      account: "-",
+    },
+    detail: [
+      {
+        title: "老师资料",
+        lines: [
+          { label: "假名", value: teacher.kanaName ?? "-" },
+          { label: "备注", value: teacher.memo ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function buildTeachersPage(basePage: PageConfig, teacherApi: TeacherApiState): PageConfig {
+  if (teacherApi.status !== "ready") {
+    return basePage;
+  }
+
+  const activeCount = teacherApi.rows.filter((row) => row.status === "启用").length;
+  const archivedCount = teacherApi.rows.filter((row) => row.status === "归档").length;
+
+  return {
+    ...basePage,
+    description: "老师基础资料、启用状态和当前生效规则概览",
+    metrics: [
+      { label: "合作老师", value: `${activeCount} 人`, sub: "来自 dev API", tone: "emerald", icon: GraduationCap },
+      { label: "老师总数", value: `${teacherApi.total} 人`, sub: "当前接口返回总数", tone: "sky", icon: FileText },
+      { label: "待补信息", value: "-", sub: "等待字段级契约补充", tone: "amber", icon: ShieldCheck },
+      { label: "归档老师", value: `${archivedCount} 人`, sub: "保留历史工资", tone: "slate", icon: LockKeyhole },
+    ],
+    rows: teacherApi.rows,
   };
 }
 
@@ -3832,6 +4047,11 @@ export default function App() {
   const [studentDialog, setStudentDialog] = useState<StudentDialogState | null>(null);
   const [isStudentSubmitting, setIsStudentSubmitting] = useState(false);
   const [studentMutationError, setStudentMutationError] = useState<string | null>(null);
+  const [teacherApi, setTeacherApi] = useState<TeacherApiState>({ status: "idle", rows: [], total: 0 });
+  const [teacherReloadKey, setTeacherReloadKey] = useState(0);
+  const [teacherDialog, setTeacherDialog] = useState<TeacherDialogState | null>(null);
+  const [isTeacherSubmitting, setIsTeacherSubmitting] = useState(false);
+  const [teacherMutationError, setTeacherMutationError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
   const [selectedByPage, setSelectedByPage] = useState<Record<string, Set<string>>>({});
@@ -3845,8 +4065,12 @@ export default function App() {
       return buildStudentsPage(baseActivePage, studentApi);
     }
 
+    if (activeKey === "teachers" && baseActivePage) {
+      return buildTeachersPage(baseActivePage, teacherApi);
+    }
+
     return baseActivePage;
-  }, [activeKey, baseActivePage, studentApi]);
+  }, [activeKey, baseActivePage, studentApi, teacherApi]);
   const selected = selectedByPage[activeKey] ?? new Set<string>();
   const selectedRows = useMemo(() => {
     if (!activePage) {
@@ -3934,6 +4158,50 @@ export default function App() {
     };
   }, [authSession, studentReloadKey]);
 
+  useEffect(() => {
+    if (!authSession) {
+      setTeacherApi({ status: "idle", rows: [], total: 0 });
+      return;
+    }
+
+    let isMounted = true;
+
+    setTeacherApi((current) => ({
+      status: "loading",
+      rows: current.rows,
+      total: current.total,
+    }));
+
+    void listTeachers(authSession.accessToken)
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setTeacherApi({
+          status: "ready",
+          rows: response.items.map(mapTeacherRecordToRow),
+          total: response.total,
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setTeacherApi({
+          status: "error",
+          rows: [],
+          total: 0,
+          message: error instanceof Error ? error.message : "Teachers API request failed",
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession, teacherReloadKey]);
+
   const handleLogin = (session: AuthSession | null, mode: AuthMode) => {
     setAuthSession(session);
     setAuthMode(mode);
@@ -3949,6 +4217,11 @@ export default function App() {
   const openStudentCreate = () => {
     setStudentMutationError(null);
     setStudentDialog({ mode: "create" });
+  };
+
+  const openTeacherCreate = () => {
+    setTeacherMutationError(null);
+    setTeacherDialog({ mode: "create" });
   };
 
   const submitStudentForm = async (input: StudentWriteInput) => {
@@ -3991,29 +4264,78 @@ export default function App() {
       return;
     }
 
+    if (actionKey === "teacher.edit") {
+      setTeacherMutationError(null);
+      setTeacherDialog({ mode: "edit", row });
+      return;
+    }
+
     if (!authSession || !row.apiRef) {
       setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
       return;
     }
 
-    const isRestore = actionKey === "student.restore";
-    const confirmed = window.confirm(`确认${isRestore ? "恢复" : "归档"}学生「${row.title}」？`);
+    const isTeacherAction = actionKey.startsWith("teacher.");
+    const isRestore = actionKey === "student.restore" || actionKey === "teacher.restore";
+    const entityLabel = isTeacherAction ? "老师" : "学生";
+    const confirmed = window.confirm(`确认${isRestore ? "恢复" : "归档"}${entityLabel}「${row.title}」？`);
     if (!confirmed) {
       return;
     }
 
     try {
-      if (isRestore) {
+      if (actionKey === "student.restore") {
         await restoreStudent(authSession.accessToken, row.apiRef.id);
-      } else {
+      } else if (actionKey === "student.archive") {
         await archiveStudent(authSession.accessToken, row.apiRef.id);
+      } else if (actionKey === "teacher.restore") {
+        await restoreTeacher(authSession.accessToken, row.apiRef.id);
+      } else {
+        await archiveTeacher(authSession.accessToken, row.apiRef.id);
       }
 
       setDetailRow(null);
-      setStudentReloadKey((current) => current + 1);
-      setActionNotice({ tone: "emerald", text: isRestore ? "学生已恢复。" : "学生已归档。" });
+      if (isTeacherAction) {
+        setTeacherReloadKey((current) => current + 1);
+      } else {
+        setStudentReloadKey((current) => current + 1);
+      }
+      setActionNotice({ tone: "emerald", text: isRestore ? `${entityLabel}已恢复。` : `${entityLabel}已归档。` });
     } catch (error) {
       setActionNotice({ tone: "rose", text: formatApiError(error) });
+    }
+  };
+
+  const submitTeacherForm = async (input: TeacherWriteInput) => {
+    if (!authSession) {
+      setTeacherMutationError("请先使用真实 API 登录后再保存。");
+      return;
+    }
+
+    if (teacherDialog?.mode === "edit" && !teacherDialog.row.apiRef) {
+      setTeacherMutationError("这条 demo 数据没有后端记录，不能提交保存。");
+      return;
+    }
+
+    setIsTeacherSubmitting(true);
+    setTeacherMutationError(null);
+
+    try {
+      if (teacherDialog?.mode === "edit") {
+        await updateTeacher(authSession.accessToken, teacherDialog.row.apiRef!.id, input);
+        setActionNotice({ tone: "emerald", text: "老师基础信息已保存。" });
+      } else {
+        await createTeacher(authSession.accessToken, input);
+        setActionNotice({ tone: "emerald", text: "老师已创建。" });
+      }
+
+      setTeacherDialog(null);
+      setDetailRow(null);
+      setTeacherReloadKey((current) => current + 1);
+    } catch (error) {
+      setTeacherMutationError(formatApiError(error));
+    } finally {
+      setIsTeacherSubmitting(false);
     }
   };
 
@@ -4048,6 +4370,7 @@ export default function App() {
     setShowCashModal(false);
     setShowSettlementBatchModal(false);
     setStudentDialog(null);
+    setTeacherDialog(null);
   };
 
   const pageForTopBar =
@@ -4098,6 +4421,8 @@ export default function App() {
                 ? () => setShowSettlementBatchModal(true)
                 : activeKey === "students"
                   ? openStudentCreate
+                  : activeKey === "teachers"
+                    ? openTeacherCreate
                   : undefined
             }
           />
@@ -4125,6 +4450,15 @@ export default function App() {
           error={studentMutationError}
           onClose={() => setStudentDialog(null)}
           onSubmit={submitStudentForm}
+        />
+      )}
+      {teacherDialog && (
+        <TeacherFormModal
+          state={teacherDialog}
+          isSubmitting={isTeacherSubmitting}
+          error={teacherMutationError}
+          onClose={() => setTeacherDialog(null)}
+          onSubmit={submitTeacherForm}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />

@@ -4,7 +4,7 @@
 This is the first V3 frontend demo based on the Figma static mockup style.
 
 It keeps the original demo data as a fallback, and now probes the V3 dev API for health, auth, and the first live Students page integration.
-After real API login, the Students page can list, create, update, archive, and restore student records through the backend API.
+After real API login, the Students and Teachers pages can list, create, update, archive, and restore records through the backend API.
 
 ## Run
 
