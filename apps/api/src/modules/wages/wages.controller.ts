@@ -17,6 +17,7 @@ import { AuthenticatedUser } from "../users/users.types";
 import { WagesService } from "./wages.service";
 import {
   ConfirmTeacherWageAdjustmentsBody,
+  ImportTeacherAttendanceAdjustmentsBody,
   ListTeacherWageRulesQuery,
   ListTeacherWageSnapshotsQuery,
   LockTeacherWageBody,
@@ -91,6 +92,34 @@ export class WagesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.wagesService.updateAdjustments(id, body, user.id);
+  }
+
+  @Post("teacher/:id/attendance-export")
+  @RequirePermissions("teacher_attendance_import.manage")
+  exportAttendanceSheet(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.wagesService.exportAttendanceSheet(id, user.id);
+  }
+
+  @Post("teacher/:id/attendance-import-preview")
+  @RequirePermissions("teacher_attendance_import.manage")
+  previewAttendanceImport(
+    @Param("id") id: string,
+    @Body() body: ImportTeacherAttendanceAdjustmentsBody,
+  ) {
+    return this.wagesService.previewAttendanceImport(id, body);
+  }
+
+  @Post("teacher/:id/attendance-import-confirm")
+  @RequirePermissions("teacher_attendance_import.manage")
+  confirmAttendanceImport(
+    @Param("id") id: string,
+    @Body() body: ImportTeacherAttendanceAdjustmentsBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.wagesService.confirmAttendanceImport(id, body, user.id);
   }
 
   @Post("teacher/:id/confirm-adjustments")

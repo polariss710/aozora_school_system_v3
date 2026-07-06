@@ -39,6 +39,10 @@ export type UpdateTeacherWageAdjustmentsBody = {
   memo?: unknown;
 };
 
+export type ImportTeacherAttendanceAdjustmentsBody = UpdateTeacherWageAdjustmentsBody & {
+  importSource?: unknown;
+};
+
 export type ConfirmTeacherWageAdjustmentsBody = {
   memo?: unknown;
 };

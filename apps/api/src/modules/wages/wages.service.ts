@@ -17,6 +17,7 @@ import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import {
   ConfirmTeacherWageAdjustmentsBody,
+  ImportTeacherAttendanceAdjustmentsBody,
   ListTeacherWageRulesQuery,
   ListTeacherWageSnapshotsQuery,
   LockTeacherWageBody,
@@ -393,6 +394,98 @@ export class WagesService {
     return { snapshot };
   }
 
+  async exportAttendanceSheet(id: string, actorUserId: string) {
+    const before = await this.findSnapshot(id);
+    this.assertSnapshotExportable(before);
+
+    const snapshot = await this.prisma.$transaction(async (tx) => {
+      const shouldMarkExported =
+        before.status === TeacherWageSnapshotStatus.locked &&
+        before.adjustmentStatus === TeacherWageAdjustmentStatus.none;
+
+      const updated = shouldMarkExported
+        ? await tx.teacherWageSnapshot.update({
+            where: { id },
+            data: { adjustmentStatus: TeacherWageAdjustmentStatus.exported },
+            select: wageSnapshotSelect,
+          })
+        : before;
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "teacher_wage_snapshot.attendance_export",
+          targetType: "teacher_wage_snapshot",
+          targetId: id,
+          riskLevel: AuditRiskLevel.medium,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return { exportPayload: this.buildAttendanceExportPayload(snapshot), snapshot };
+  }
+
+  async previewAttendanceImport(
+    id: string,
+    body: ImportTeacherAttendanceAdjustmentsBody,
+  ) {
+    const snapshot = await this.findSnapshot(id);
+    this.assertSnapshotAttendanceImportable(snapshot);
+    const input = this.normalizeAttendanceImportInput(body, snapshot);
+
+    return {
+      preview: this.buildAttendanceImportPreview(snapshot, input),
+    };
+  }
+
+  async confirmAttendanceImport(
+    id: string,
+    body: ImportTeacherAttendanceAdjustmentsBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findSnapshot(id);
+    this.assertSnapshotAttendanceImportable(before);
+    const input = this.normalizeAttendanceImportInput(body, before);
+    const preview = this.buildAttendanceImportPreview(before, input);
+
+    const snapshot = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.teacherWageSnapshot.update({
+        where: { id },
+        data: {
+          transportationFeeJpy: input.transportationFeeJpy,
+          classroomFeeJpy: input.classroomFeeJpy,
+          manualAdjustmentJpy: input.manualAdjustmentJpy,
+          totalWageJpy: preview.after.totalWageJpy,
+          memo: input.memo,
+          adjustmentStatus: TeacherWageAdjustmentStatus.imported,
+        },
+        select: wageSnapshotSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "teacher_wage_snapshot.attendance_import",
+          targetType: "teacher_wage_snapshot",
+          targetId: id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: before,
+          afterSnapshot: { snapshot: updated, importSource: input.importSource, preview },
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return { snapshot, preview };
+  }
+
   async confirmAdjustments(
     id: string,
     body: ConfirmTeacherWageAdjustmentsBody,
@@ -608,6 +701,151 @@ export class WagesService {
     if (snapshot.status === TeacherWageSnapshotStatus.revoked) {
       throw new BadRequestException("Revoked wage snapshot cannot be adjusted.");
     }
+  }
+
+  private assertSnapshotExportable(snapshot: WageSnapshot) {
+    if (
+      snapshot.status === TeacherWageSnapshotStatus.expense_created ||
+      snapshot.expenseRecordId
+    ) {
+      throw new BadRequestException("Wage snapshot already generated expense.");
+    }
+
+    if (snapshot.status === TeacherWageSnapshotStatus.revoked) {
+      throw new BadRequestException("Revoked wage snapshot cannot be exported.");
+    }
+  }
+
+  private assertSnapshotAttendanceImportable(snapshot: WageSnapshot) {
+    this.assertSnapshotAdjustable(snapshot);
+
+    if (snapshot.status !== TeacherWageSnapshotStatus.locked) {
+      throw new BadRequestException("Only locked wage snapshot can import attendance adjustments.");
+    }
+
+    if (
+      snapshot.adjustmentStatus === TeacherWageAdjustmentStatus.confirmed
+    ) {
+      throw new BadRequestException("Confirmed wage snapshot cannot import attendance adjustments.");
+    }
+  }
+
+  private buildAttendanceExportPayload(snapshot: WageSnapshot) {
+    return {
+      kind: "teacher_attendance_adjustment_sheet",
+      snapshotId: snapshot.id,
+      teacher: snapshot.teacher,
+      businessEntity: snapshot.businessEntity,
+      yearMonth: snapshot.yearMonth,
+      status: snapshot.status,
+      adjustmentStatus: snapshot.adjustmentStatus,
+      readonlySummary: {
+        lessonCount: snapshot.lessonCount,
+        totalLessonHours: snapshot.totalLessonHours.toNumber(),
+        baseWageJpy: snapshot.baseWageJpy,
+        currentTransportationFeeJpy: snapshot.transportationFeeJpy,
+        currentClassroomFeeJpy: snapshot.classroomFeeJpy,
+        currentManualAdjustmentJpy: snapshot.manualAdjustmentJpy,
+        currentTotalWageJpy: snapshot.totalWageJpy,
+      },
+      writableFields: {
+        transportationFeeJpy: snapshot.transportationFeeJpy,
+        classroomFeeJpy: snapshot.classroomFeeJpy,
+        manualAdjustmentJpy: snapshot.manualAdjustmentJpy,
+        memo: snapshot.memo,
+      },
+      rows: snapshot.details.map((detail, index) => ({
+        rowNo: index + 1,
+        detailId: detail.id,
+        actualLessonId: detail.actualLessonId,
+        actualDate: detail.actualDate.toISOString().slice(0, 10),
+        studentName: detail.studentNameSnapshot,
+        subjectName: detail.subjectNameSnapshot,
+        durationHours: detail.durationHours.toNumber(),
+        hourlyRateJpy: detail.hourlyRateJpy,
+        lessonWageJpy: detail.lessonWageJpy,
+        teacherWageEligible: detail.teacherWageEligible,
+        includedInWage: detail.includedInWage,
+        content: detail.contentSnapshot,
+      })),
+      policy: {
+        editableFields: [
+          "transportationFeeJpy",
+          "classroomFeeJpy",
+          "manualAdjustmentJpy",
+          "memo",
+        ],
+        lessonRowsAreReadonly: true,
+        jpyPrecision: 0,
+      },
+    };
+  }
+
+  private normalizeAttendanceImportInput(
+    body: ImportTeacherAttendanceAdjustmentsBody,
+    current: WageSnapshot,
+  ) {
+    const transportationFeeJpy =
+      body.transportationFeeJpy === undefined
+        ? current.transportationFeeJpy
+        : this.normalizeJpyAmount(body.transportationFeeJpy, "transportationFeeJpy");
+    const classroomFeeJpy =
+      body.classroomFeeJpy === undefined
+        ? current.classroomFeeJpy
+        : this.normalizeJpyAmount(body.classroomFeeJpy, "classroomFeeJpy");
+    const manualAdjustmentJpy =
+      body.manualAdjustmentJpy === undefined
+        ? current.manualAdjustmentJpy
+        : this.normalizeJpySignedAmount(body.manualAdjustmentJpy, "manualAdjustmentJpy");
+    const memo =
+      body.memo === undefined ? current.memo : this.normalizeOptionalString(body.memo);
+    const importSource =
+      this.normalizeOptionalString(body.importSource) ?? "structured_payload";
+
+    return {
+      transportationFeeJpy,
+      classroomFeeJpy,
+      manualAdjustmentJpy,
+      memo,
+      importSource,
+    };
+  }
+
+  private buildAttendanceImportPreview(
+    snapshot: WageSnapshot,
+    input: ReturnType<WagesService["normalizeAttendanceImportInput"]>,
+  ) {
+    const totalWageJpy = this.confirmJpy(
+      snapshot.baseWageJpy +
+        input.transportationFeeJpy +
+        input.classroomFeeJpy +
+        input.manualAdjustmentJpy,
+    );
+
+    return {
+      snapshotId: snapshot.id,
+      importSource: input.importSource,
+      before: {
+        baseWageJpy: snapshot.baseWageJpy,
+        transportationFeeJpy: snapshot.transportationFeeJpy,
+        classroomFeeJpy: snapshot.classroomFeeJpy,
+        manualAdjustmentJpy: snapshot.manualAdjustmentJpy,
+        totalWageJpy: snapshot.totalWageJpy,
+        adjustmentStatus: snapshot.adjustmentStatus,
+      },
+      after: {
+        baseWageJpy: snapshot.baseWageJpy,
+        transportationFeeJpy: input.transportationFeeJpy,
+        classroomFeeJpy: input.classroomFeeJpy,
+        manualAdjustmentJpy: input.manualAdjustmentJpy,
+        totalWageJpy,
+        adjustmentStatus: TeacherWageAdjustmentStatus.imported,
+      },
+      changed:
+        snapshot.transportationFeeJpy !== input.transportationFeeJpy ||
+        snapshot.classroomFeeJpy !== input.classroomFeeJpy ||
+        snapshot.manualAdjustmentJpy !== input.manualAdjustmentJpy,
+    };
   }
 
   private async findRule(id: string): Promise<WageRuleSnapshot> {
