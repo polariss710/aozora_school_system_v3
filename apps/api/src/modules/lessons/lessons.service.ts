@@ -480,6 +480,7 @@ export class LessonsService {
   ) {
     const before = await this.findActualLesson(id);
     this.assertActualLessonEditable(before);
+    await this.assertActualLessonStudentSettlementOpen(before);
     const input = this.normalizeUpdateActualInput(body, before);
     await this.assertActiveTeacher(input.teacherId);
     await this.assertTeacherWageSnapshotOpen(
@@ -537,10 +538,7 @@ export class LessonsService {
       throw new BadRequestException("Actual lesson has no planned lesson binding.");
     }
 
-    await this.assertStudentSettlementOpen(
-      before.studentId,
-      before.plannedLesson.yearMonth,
-    );
+    await this.assertActualLessonStudentSettlementOpen(before);
     await this.assertTeacherWageSnapshotOpen(
       before.teacherId,
       before.yearMonth,
@@ -670,6 +668,29 @@ export class LessonsService {
     if (actualLesson.status !== ActualLessonStatus.completed) {
       throw new BadRequestException("Only completed actual lesson can be edited.");
     }
+  }
+
+  private async assertActualLessonStudentSettlementOpen(
+    actualLesson: ActualLessonSnapshot,
+  ) {
+    const plannedLesson = actualLesson.plannedLesson;
+
+    if (!plannedLesson) {
+      await this.assertStudentSettlementOpen(
+        actualLesson.studentId,
+        actualLesson.yearMonth,
+      );
+      return;
+    }
+
+    if (plannedLesson.status === PlannedLessonStatus.makeup_completed) {
+      return;
+    }
+
+    await this.assertStudentSettlementOpen(
+      actualLesson.studentId,
+      plannedLesson.yearMonth,
+    );
   }
 
   private async assertActiveReferences(input: NormalizedPlannedLessonInput) {
