@@ -1992,8 +1992,8 @@ function SettingsPage({
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
-      <section className="rounded-lg border border-border bg-white p-2">
-        <div className="grid gap-2 md:grid-cols-4">
+      <section className="relative border-b border-border pt-1">
+        <div className="flex flex-wrap items-end gap-1">
           {settingTabs.map((item) => {
             const isActive = item.key === activeTab;
             return (
@@ -2001,10 +2001,10 @@ function SettingsPage({
                 key={item.key}
                 type="button"
                 onClick={() => onTabChange(item.key)}
-                className={`flex h-9 items-center justify-center rounded-md px-3 text-xs font-medium transition ${
+                className={`relative -mb-px min-w-[120px] rounded-t-lg border px-4 py-2.5 text-xs font-medium transition ${
                   isActive
-                    ? "bg-[#1687D9] text-white"
-                    : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                    ? "z-10 border-border border-b-white bg-white text-foreground shadow-[0_-1px_0_rgba(15,23,42,0.04)]"
+                    : "border-transparent bg-muted/40 text-muted-foreground hover:border-border/70 hover:bg-white hover:text-foreground"
                 }`}
               >
                 {item.label}
