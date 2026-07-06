@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../database/prisma.service";
 
 @Injectable()
@@ -96,6 +96,46 @@ export class SettingsService {
     });
 
     return { items };
+  }
+
+  async getRole(id: string) {
+    const role = await this.prisma.role.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        description: true,
+        status: true,
+        rolePermissions: {
+          orderBy: { permission: { code: "asc" } },
+          select: {
+            permission: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                description: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!role) {
+      throw new NotFoundException("Role not found.");
+    }
+
+    const { rolePermissions, ...roleFields } = role;
+
+    return {
+      role: {
+        ...roleFields,
+        permissions: rolePermissions.map((item) => item.permission),
+      },
+    };
   }
 
   async listPermissions() {

@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, Param, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PermissionGuard } from "../auth/permission.guard";
 import { RequirePermissions } from "../auth/permissions.decorator";
@@ -33,6 +33,12 @@ export class SettingsController {
   @RequirePermissions("users.manage")
   listRoles() {
     return this.settingsService.listRoles();
+  }
+
+  @Get("roles/:id")
+  @RequirePermissions("users.manage")
+  getRole(@Param("id") id: string) {
+    return this.settingsService.getRole(id);
   }
 
   @Get("permissions")
