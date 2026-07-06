@@ -10,6 +10,7 @@ import {
   PlannedLessonStatus,
   Prisma,
   RecordStatus,
+  StudentSettlementStatus,
   TeacherWageSnapshotStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
@@ -151,6 +152,7 @@ export class LessonsService {
   ) {
     const input = this.normalizeCreatePlannedInput(body);
     await this.assertActiveReferences(input);
+    await this.assertStudentSettlementOpen(input.studentId, input.yearMonth);
 
     const plannedLesson = await this.prisma.$transaction(async (tx) => {
       const created = await tx.studentPlannedLesson.create({
@@ -184,6 +186,7 @@ export class LessonsService {
     const input = this.normalizeBatchPlannedLessonsInput(body);
     await this.assertActiveBatchReferences(input);
     const generatedInputs = this.buildBatchPlannedLessonInputs(input);
+    await this.assertBatchStudentSettlementsOpen(generatedInputs);
     const conflicts = await this.findBatchPlannedLessonConflicts(generatedInputs);
 
     return this.buildBatchPreview(input, generatedInputs, conflicts);
@@ -220,6 +223,7 @@ export class LessonsService {
     }
 
     const generatedInputs = this.buildBatchPlannedLessonInputs(input);
+    await this.assertBatchStudentSettlementsOpen(generatedInputs);
     const conflicts = await this.findBatchPlannedLessonConflicts(generatedInputs);
 
     if (conflicts.length > 0) {
@@ -279,6 +283,8 @@ export class LessonsService {
     this.assertPlannedLessonEditable(before);
     const input = this.normalizeUpdatePlannedInput(body, before);
     await this.assertActiveReferences(input);
+    await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
+    await this.assertStudentSettlementOpen(input.studentId, input.yearMonth);
 
     const plannedLesson = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.studentPlannedLesson.update({
@@ -312,6 +318,7 @@ export class LessonsService {
   async cancelPlannedLesson(id: string, actorUserId: string) {
     const before = await this.findPlannedLesson(id);
     this.assertPlannedLessonEditable(before);
+    await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
 
     return this.changePlannedStatus(
       before,
@@ -324,6 +331,7 @@ export class LessonsService {
 
   async restorePlannedLesson(id: string, actorUserId: string) {
     const before = await this.findPlannedLesson(id);
+    await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
 
     if (before.actualLesson) {
       throw new BadRequestException(
@@ -343,6 +351,7 @@ export class LessonsService {
   async markMakeupPending(id: string, actorUserId: string) {
     const before = await this.findPlannedLesson(id);
     this.assertPlannedLessonEditable(before);
+    await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
 
     return this.changePlannedStatus(
       before,
@@ -366,6 +375,13 @@ export class LessonsService {
 
     if (plannedBefore.status === PlannedLessonStatus.cancelled) {
       throw new BadRequestException("Cancelled planned lesson cannot generate actual lesson.");
+    }
+
+    if (plannedBefore.status !== PlannedLessonStatus.makeup_pending) {
+      await this.assertStudentSettlementOpen(
+        plannedBefore.studentId,
+        plannedBefore.yearMonth,
+      );
     }
 
     const input = this.normalizeActualInputFromPlanned(body, plannedBefore);
@@ -632,6 +648,45 @@ export class LessonsService {
     if (!teacher) {
       throw new BadRequestException("Active teacher is required.");
     }
+  }
+
+  private async assertStudentSettlementOpen(studentId: string, yearMonth: string) {
+    const settlement = await this.prisma.studentMonthlySettlement.findUnique({
+      where: {
+        studentId_yearMonth: {
+          studentId,
+          yearMonth,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (settlement?.status === StudentSettlementStatus.locked) {
+      throw new BadRequestException(
+        "Student monthly settlement is locked for this student/month.",
+      );
+    }
+  }
+
+  private async assertBatchStudentSettlementsOpen(
+    inputs: GeneratedBatchPlannedLessonInput[],
+  ) {
+    const monthKeys = [
+      ...new Set(
+        inputs.map((input) => `${input.studentId}:${input.yearMonth}`),
+      ),
+    ];
+
+    await Promise.all(
+      monthKeys.map((key) => {
+        const [studentId, yearMonth] = key.split(":");
+
+        return this.assertStudentSettlementOpen(studentId, yearMonth);
+      }),
+    );
   }
 
   private async assertActiveBatchReferences(input: NormalizedBatchPlannedLessonsInput) {
