@@ -17,6 +17,7 @@ import { AuthenticatedUser } from "../users/users.types";
 import { LessonsService } from "./lessons.service";
 import {
   ActualLessonWriteBody,
+  BatchPlannedLessonsBody,
   ListLessonsQuery,
   PlannedLessonWriteBody,
 } from "./lessons.types";
@@ -47,6 +48,21 @@ export class LessonsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.lessonsService.createPlannedLesson(body, user.id);
+  }
+
+  @Post("planned/batch-preview")
+  @RequirePermissions("lessons.manage")
+  previewBatchPlannedLessons(@Body() body: BatchPlannedLessonsBody) {
+    return this.lessonsService.previewBatchPlannedLessons(body);
+  }
+
+  @Post("planned/batch-create")
+  @RequirePermissions("lessons.manage")
+  createBatchPlannedLessons(
+    @Body() body: BatchPlannedLessonsBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.lessonsService.createBatchPlannedLessons(body, user.id);
   }
 
   @Patch("planned/:id")

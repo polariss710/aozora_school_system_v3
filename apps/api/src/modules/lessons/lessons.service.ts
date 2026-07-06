@@ -16,7 +16,10 @@ import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
 import {
   ActualLessonWriteBody,
+  BatchPlannedLessonsBody,
   ListLessonsQuery,
+  NormalizedBatchPlannedLessonRule,
+  NormalizedBatchPlannedLessonsInput,
   NormalizedActualLessonInput,
   NormalizedPlannedLessonInput,
   PlannedLessonWriteBody,
@@ -24,6 +27,8 @@ import {
 
 const defaultLimit = 100;
 const maxLimit = 500;
+const maxBatchPlannedLessonCount = 500;
+const batchPlannedLessonSourceType = "batch_planned_lesson_generation";
 
 const relationSelect = {
   id: true,
@@ -102,6 +107,10 @@ type ActualLessonSnapshot = Prisma.StudentActualLessonGetPayload<{
   select: typeof actualLessonSelect;
 }>;
 
+type GeneratedBatchPlannedLessonInput = NormalizedPlannedLessonInput & {
+  ruleIndex: number;
+};
+
 @Injectable()
 export class LessonsService {
   constructor(
@@ -169,6 +178,96 @@ export class LessonsService {
     });
 
     return { plannedLesson };
+  }
+
+  async previewBatchPlannedLessons(body: BatchPlannedLessonsBody) {
+    const input = this.normalizeBatchPlannedLessonsInput(body);
+    await this.assertActiveBatchReferences(input);
+    const generatedInputs = this.buildBatchPlannedLessonInputs(input);
+    const conflicts = await this.findBatchPlannedLessonConflicts(generatedInputs);
+
+    return this.buildBatchPreview(input, generatedInputs, conflicts);
+  }
+
+  async createBatchPlannedLessons(
+    body: BatchPlannedLessonsBody,
+    actorUserId: string,
+  ) {
+    const input = this.normalizeBatchPlannedLessonsInput(body);
+    await this.assertActiveBatchReferences(input);
+
+    if (input.sourceId) {
+      const existing = await this.prisma.studentPlannedLesson.findMany({
+        where: {
+          sourceType: input.sourceType,
+          sourceId: input.sourceId,
+        },
+        orderBy: [
+          { weekAnchorDate: "asc" },
+          { lessonNo: "asc" },
+          { subject: { sortOrder: "asc" } },
+        ],
+        select: plannedLessonSelect,
+      });
+
+      if (existing.length > 0) {
+        return {
+          plannedLessons: existing,
+          createdCount: 0,
+          idempotent: true,
+        };
+      }
+    }
+
+    const generatedInputs = this.buildBatchPlannedLessonInputs(input);
+    const conflicts = await this.findBatchPlannedLessonConflicts(generatedInputs);
+
+    if (conflicts.length > 0) {
+      throw new BadRequestException(
+        "Batch planned lessons conflict with existing planned lessons.",
+      );
+    }
+
+    const plannedLessons = await this.prisma.$transaction(async (tx) => {
+      const created: PlannedLessonSnapshot[] = [];
+
+      for (const generatedInput of generatedInputs) {
+        const { ruleIndex: _ruleIndex, ...lessonInput } = generatedInput;
+        const plannedLesson = await tx.studentPlannedLesson.create({
+          data: {
+            ...lessonInput,
+            durationHours: new Prisma.Decimal(lessonInput.durationHours),
+            status: PlannedLessonStatus.scheduled,
+          },
+          select: plannedLessonSelect,
+        });
+        created.push(plannedLesson);
+      }
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "student_planned_lesson.batch_create",
+          targetType: "student_planned_lesson_batch",
+          targetId: input.sourceId ?? `batch:${created[0]?.id ?? "empty"}`,
+          riskLevel: AuditRiskLevel.high,
+          afterSnapshot: {
+            input,
+            createdCount: created.length,
+            plannedLessonIds: created.map((lesson) => lesson.id),
+          },
+        },
+        tx,
+      );
+
+      return created;
+    });
+
+    return {
+      plannedLessons,
+      createdCount: plannedLessons.length,
+      idempotent: false,
+    };
   }
 
   async updatePlannedLesson(
@@ -535,6 +634,45 @@ export class LessonsService {
     }
   }
 
+  private async assertActiveBatchReferences(input: NormalizedBatchPlannedLessonsInput) {
+    const [student, businessEntity] = await Promise.all([
+      this.prisma.student.findFirst({
+        where: { id: input.studentId, status: RecordStatus.active },
+        select: { id: true },
+      }),
+      this.prisma.businessEntity.findFirst({
+        where: { id: input.businessEntityId, status: RecordStatus.active },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!student) {
+      throw new BadRequestException("Active student is required.");
+    }
+    if (!businessEntity) {
+      throw new BadRequestException("Active business entity is required.");
+    }
+
+    const teacherIds = [...new Set(input.rules.map((rule) => rule.teacherId))];
+    const subjectIds = [...new Set(input.rules.map((rule) => rule.subjectId))];
+
+    const [teacherCount, subjectCount] = await Promise.all([
+      this.prisma.teacher.count({
+        where: { id: { in: teacherIds }, status: RecordStatus.active },
+      }),
+      this.prisma.subject.count({
+        where: { id: { in: subjectIds }, status: RecordStatus.active },
+      }),
+    ]);
+
+    if (teacherCount !== teacherIds.length) {
+      throw new BadRequestException("All teachers must be active.");
+    }
+    if (subjectCount !== subjectIds.length) {
+      throw new BadRequestException("All subjects must be active.");
+    }
+  }
+
   private async assertTeacherWageSnapshotOpen(
     teacherId: string,
     yearMonth: string,
@@ -561,6 +699,189 @@ export class LessonsService {
         "Actual lesson belongs to locked teacher wage snapshot.",
       );
     }
+  }
+
+  private normalizeBatchPlannedLessonsInput(
+    body: BatchPlannedLessonsBody,
+  ): NormalizedBatchPlannedLessonsInput {
+    const startWeekAnchorDate = this.normalizeDate(
+      body.startWeekAnchorDate,
+      "startWeekAnchorDate",
+    );
+    const endWeekAnchorDate = this.normalizeDate(
+      body.endWeekAnchorDate,
+      "endWeekAnchorDate",
+    );
+    this.assertMonday(startWeekAnchorDate);
+    this.assertMonday(endWeekAnchorDate);
+
+    if (endWeekAnchorDate < startWeekAnchorDate) {
+      throw new BadRequestException(
+        "endWeekAnchorDate must be on or after startWeekAnchorDate.",
+      );
+    }
+
+    const rules = this.normalizeBatchRules(body.rules);
+    const weekCount = this.getMondayAnchors(startWeekAnchorDate, endWeekAnchorDate).length;
+    const totalCount = rules.reduce(
+      (sum, rule) => sum + rule.weeklyCount * weekCount,
+      0,
+    );
+
+    if (totalCount < 1) {
+      throw new BadRequestException("Batch must generate at least one planned lesson.");
+    }
+
+    if (totalCount > maxBatchPlannedLessonCount) {
+      throw new BadRequestException(
+        `Batch planned lesson count must be ${maxBatchPlannedLessonCount} or fewer.`,
+      );
+    }
+
+    return {
+      studentId: this.normalizeRequiredString(body.studentId, "studentId"),
+      businessEntityId: this.normalizeRequiredString(
+        body.businessEntityId,
+        "businessEntityId",
+      ),
+      startWeekAnchorDate,
+      endWeekAnchorDate,
+      rules,
+      sourceType:
+        this.normalizeOptionalString(body.sourceType)?.toLowerCase() ??
+        batchPlannedLessonSourceType,
+      sourceId: this.normalizeOptionalString(body.sourceId),
+      memo: this.normalizeOptionalString(body.memo),
+    };
+  }
+
+  private normalizeBatchRules(value: unknown): NormalizedBatchPlannedLessonRule[] {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new BadRequestException("rules must be a non-empty array.");
+    }
+
+    if (value.length > 20) {
+      throw new BadRequestException("rules must contain 20 items or fewer.");
+    }
+
+    return value.map((item, index) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new BadRequestException("Each rule must be an object.");
+      }
+
+      const rule = item as Record<string, unknown>;
+
+      return {
+        teacherId: this.normalizeRequiredString(rule.teacherId, `rules[${index}].teacherId`),
+        subjectId: this.normalizeRequiredString(rule.subjectId, `rules[${index}].subjectId`),
+        weeklyCount: this.normalizeWeeklyCount(rule.weeklyCount, `rules[${index}].weeklyCount`),
+        firstLessonNo:
+          this.normalizeOptionalPositiveInteger(rule.firstLessonNo, `rules[${index}].firstLessonNo`) ??
+          1,
+        plannedStartTime: this.normalizeOptionalTime(rule.plannedStartTime),
+        plannedEndTime: this.normalizeOptionalTime(rule.plannedEndTime),
+        durationHours: this.normalizeHours(rule.durationHours, `rules[${index}].durationHours`),
+        plannedFeeJpy: this.normalizeJpyAmount(rule.plannedFeeJpy, `rules[${index}].plannedFeeJpy`),
+        content: this.normalizeOptionalString(rule.content),
+        memo: this.normalizeOptionalString(rule.memo),
+      };
+    });
+  }
+
+  private buildBatchPlannedLessonInputs(
+    input: NormalizedBatchPlannedLessonsInput,
+  ): GeneratedBatchPlannedLessonInput[] {
+    const weekAnchors = this.getMondayAnchors(
+      input.startWeekAnchorDate,
+      input.endWeekAnchorDate,
+    );
+    const generated: GeneratedBatchPlannedLessonInput[] = [];
+
+    input.rules.forEach((rule, ruleIndex) => {
+      let lessonNo = rule.firstLessonNo;
+
+      for (const weekAnchorDate of weekAnchors) {
+        for (let repetition = 0; repetition < rule.weeklyCount; repetition += 1) {
+          generated.push({
+            studentId: input.studentId,
+            teacherId: rule.teacherId,
+            subjectId: rule.subjectId,
+            businessEntityId: input.businessEntityId,
+            yearMonth: this.toYearMonth(weekAnchorDate),
+            weekAnchorDate,
+            lessonNo,
+            plannedStartTime: rule.plannedStartTime,
+            plannedEndTime: rule.plannedEndTime,
+            durationHours: rule.durationHours,
+            plannedFeeJpy: rule.plannedFeeJpy,
+            content: rule.content,
+            memo: rule.memo ?? input.memo,
+            sourceType: input.sourceType,
+            sourceId: input.sourceId,
+            ruleIndex,
+          });
+          lessonNo += 1;
+        }
+      }
+    });
+
+    return generated;
+  }
+
+  private async findBatchPlannedLessonConflicts(
+    generatedInputs: GeneratedBatchPlannedLessonInput[],
+  ) {
+    const conditions = generatedInputs
+      .filter((input) => input.lessonNo !== null)
+      .map((input) => ({
+        studentId: input.studentId,
+        subjectId: input.subjectId,
+        weekAnchorDate: input.weekAnchorDate,
+        lessonNo: input.lessonNo,
+        status: { not: PlannedLessonStatus.cancelled },
+      }));
+
+    if (conditions.length === 0) {
+      return [];
+    }
+
+    return this.prisma.studentPlannedLesson.findMany({
+      where: { OR: conditions },
+      orderBy: [
+        { weekAnchorDate: "asc" },
+        { lessonNo: "asc" },
+        { subject: { sortOrder: "asc" } },
+      ],
+      take: maxBatchPlannedLessonCount,
+      select: plannedLessonSelect,
+    });
+  }
+
+  private buildBatchPreview(
+    input: NormalizedBatchPlannedLessonsInput,
+    generatedInputs: GeneratedBatchPlannedLessonInput[],
+    conflicts: PlannedLessonSnapshot[],
+  ) {
+    return {
+      summary: {
+        startWeekAnchorDate: this.formatDate(input.startWeekAnchorDate),
+        endWeekAnchorDate: this.formatDate(input.endWeekAnchorDate),
+        weekCount: this.getMondayAnchors(
+          input.startWeekAnchorDate,
+          input.endWeekAnchorDate,
+        ).length,
+        ruleCount: input.rules.length,
+        plannedLessonCount: generatedInputs.length,
+        conflictCount: conflicts.length,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+      },
+      items: generatedInputs.map((item) => ({
+        ...item,
+        weekAnchorDate: this.formatDate(item.weekAnchorDate),
+      })),
+      conflicts,
+    };
   }
 
   private normalizeCreatePlannedInput(
@@ -867,6 +1188,22 @@ export class LessonsService {
     return date.toISOString().slice(0, 7);
   }
 
+  private formatDate(date: Date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private getMondayAnchors(start: Date, end: Date) {
+    const anchors: Date[] = [];
+    const cursor = new Date(start);
+
+    while (cursor <= end) {
+      anchors.push(new Date(cursor));
+      cursor.setUTCDate(cursor.getUTCDate() + 7);
+    }
+
+    return anchors;
+  }
+
   private normalizeOptionalYearMonth(value: unknown) {
     const yearMonth = this.normalizeOptionalString(value);
 
@@ -927,6 +1264,17 @@ export class LessonsService {
 
     if (!Number.isInteger(parsed) || parsed < 1) {
       throw new BadRequestException(`${field} must be a positive integer.`);
+    }
+
+    return parsed;
+  }
+
+  private normalizeWeeklyCount(value: unknown, field: string) {
+    const parsed =
+      typeof value === "number" ? value : Number.parseInt(String(value), 10);
+
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 14) {
+      throw new BadRequestException(`${field} must be an integer from 1 to 14.`);
     }
 
     return parsed;
