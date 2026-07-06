@@ -136,6 +136,7 @@ interface DataRow {
   studentRecord?: StudentRecord;
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
+  readOnlyActions?: boolean;
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
@@ -902,6 +903,10 @@ function DrawerActionButton({
 }
 
 function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
+  if (row.readOnlyActions) {
+    return [];
+  }
+
   if (row.id.startsWith("student-")) {
     const statusAction: DrawerAction =
       row.status === "归档"
@@ -2489,6 +2494,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
     subtitle: `${sourceLabel} / ${businessEntityName}`,
     status: status.label,
     tone: status.tone,
+    readOnlyActions: true,
     cells: {
       source: sourceLabel,
       businessMonth: record.yearMonth,
@@ -2532,6 +2538,7 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
     subtitle: `${category} / ${businessEntityName}`,
     status: status.label,
     tone: status.tone,
+    readOnlyActions: true,
     cells: {
       category,
       businessMonth: record.yearMonth,
@@ -2575,6 +2582,7 @@ function mapAccountTransactionToRow(record: AccountTransactionRecord): DataRow {
     subtitle: `${record.account.name} / ${sourceLabel}`,
     status: status.label,
     tone: status.tone,
+    readOnlyActions: true,
     cells: {
       account: record.account.name,
       date: formatApiDate(record.transactionDate),
