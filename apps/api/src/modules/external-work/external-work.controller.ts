@@ -97,6 +97,12 @@ export class ExternalWorkController {
     return this.externalWorkService.getSettlement(id);
   }
 
+  @Get("settlements/:id/export-payload")
+  @RequirePermissions("external_work.manage")
+  exportSettlement(@Param("id") id: string) {
+    return this.externalWorkService.exportSettlement(id);
+  }
+
   @Post("settlements/preview")
   @RequirePermissions("external_work.manage")
   previewSettlement(@Body() body: PreviewExternalWorkSettlementBody) {

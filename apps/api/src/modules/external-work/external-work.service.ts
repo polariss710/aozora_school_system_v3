@@ -388,6 +388,19 @@ export class ExternalWorkService {
     return { settlement };
   }
 
+  async exportSettlement(id: string) {
+    const settlement = await this.findSettlement(id);
+
+    if (settlement.status === ExternalWorkSettlementStatus.revoked) {
+      throw new BadRequestException("Revoked external work settlement cannot be exported.");
+    }
+
+    return {
+      exportPayload: this.buildSettlementExportPayload(settlement),
+      settlement,
+    };
+  }
+
   async previewSettlement(body: PreviewExternalWorkSettlementBody) {
     const workplaceId = this.normalizeRequiredString(body.workplaceId, "workplaceId");
     const yearMonth = this.normalizeYearMonth(body.yearMonth);
@@ -702,6 +715,48 @@ export class ExternalWorkService {
         source: "external_work_actual_lessons",
         totalFormula:
           "sum(lesson_wage_jpy) + sum(transportation_fee_jpy) + adjustment_amount_jpy",
+        jpyPrecision: 0,
+      },
+    };
+  }
+
+  private buildSettlementExportPayload(settlement: SettlementSnapshot) {
+    return {
+      kind: "external_work_settlement_export",
+      settlementId: settlement.id,
+      workplace: settlement.workplace,
+      yearMonth: settlement.yearMonth,
+      status: settlement.status,
+      lockedAt: settlement.lockedAt.toISOString(),
+      incomeRecord: settlement.incomeRecord,
+      summary: {
+        lessonCount: settlement.lessonCount,
+        totalLessonHours: settlement.totalLessonHours.toNumber(),
+        lessonWageJpy: settlement.lessonWageJpy,
+        transportationFeeJpy: settlement.transportationFeeJpy,
+        adjustmentAmountJpy: settlement.adjustmentAmountJpy,
+        totalAmountJpy: settlement.totalAmountJpy,
+      },
+      rows: settlement.details.map((detail, index) => ({
+        rowNo: index + 1,
+        detailId: detail.id,
+        actualLessonId: detail.actualLessonId,
+        lessonDate: detail.lessonDate.toISOString().slice(0, 10),
+        startTime: detail.startTime,
+        endTime: detail.endTime,
+        durationHours: detail.durationHours.toNumber(),
+        instructorName: detail.instructorNameSnapshot,
+        lessonTitle: detail.lessonTitleSnapshot,
+        hourlyRateJpy: detail.hourlyRateJpy,
+        lessonWageJpy: detail.lessonWageJpy,
+        transportationFeeJpy: detail.transportationFeeJpy,
+        content: detail.contentSnapshot,
+      })),
+      calculationSnapshot: settlement.calculationSnapshot,
+      policy: {
+        source: "locked_external_work_settlement_details",
+        lessonRowsAreReadonly: true,
+        fileRendering: "not_generated_by_this_api",
         jpyPrecision: 0,
       },
     };
