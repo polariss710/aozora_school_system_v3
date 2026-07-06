@@ -121,7 +121,7 @@ API / Use Case 设计原则：
 
 v3.0 后端 API 当前实现快照：
 
-截至 2026-07-06，后端 `apps/api` 已进入主链路第一轮闭环收口阶段，Controller 路由数约 `143`。当前 API 仍以 dev 环境联调为目标，前端接入前还需要继续整理字段级契约、错误提示口径和列表 / 详情 / 抽屉展示字段。
+截至 2026-07-06，后端 `apps/api` 已进入主链路第一轮闭环收口阶段，Controller 路由数约 `144`。当前 API 仍以 dev 环境联调为目标，前端接入前还需要继续整理字段级契约、错误提示口径和列表 / 详情 / 抽屉展示字段。
 
 认证 / 用户 / 权限：
 
@@ -142,6 +142,7 @@ POST /api/users/:id/activate
 ```text
 GET  /api/settings/business-entities
 GET  /api/settings/accounts
+GET  /api/settings/money-rules
 GET  /api/settings/roles
 GET  /api/settings/permissions
 GET  /api/settings/subjects

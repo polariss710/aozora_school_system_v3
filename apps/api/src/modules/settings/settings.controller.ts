@@ -23,6 +23,12 @@ export class SettingsController {
     return this.settingsService.listAccounts();
   }
 
+  @Get("money-rules")
+  @RequirePermissions("settings.manage")
+  getMoneyRules() {
+    return this.settingsService.getMoneyRules();
+  }
+
   @Get("roles")
   @RequirePermissions("users.manage")
   listRoles() {

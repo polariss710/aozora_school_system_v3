@@ -37,6 +37,52 @@ export class SettingsService {
     return { items };
   }
 
+  getMoneyRules() {
+    return {
+      authorityLayer: "backend_domain_service",
+      frontendPolicy: {
+        canDisplayBackendAmounts: true,
+        canCollectExplicitUserInputs: true,
+        canDisplayNonPersistentPreview: true,
+        cannotRoundBusinessAmounts: true,
+        cannotSubmitDerivedBusinessAmounts: true,
+      },
+      currencies: [
+        {
+          currency: "JPY",
+          fractionDigits: 0,
+          businessAmountType: "integer",
+        },
+        {
+          currency: "CNY",
+          fractionDigits: 2,
+          businessAmountType: "decimal_12_2",
+        },
+      ],
+      exchangeRate: {
+        inputPrecision: "decimal_18_8",
+        submittedByUser: true,
+        businessAmountPrecision:
+          "Converted amounts are confirmed to target currency precision by backend.",
+      },
+      roundingPolicy: {
+        mode: "half_away_from_zero",
+        appliesTo: [
+          "positive_amounts",
+          "negative_amounts",
+          "offsets",
+          "carryover",
+          "cash_request_amounts",
+          "account_transactions",
+        ],
+      },
+      mismatchPolicy: {
+        frontendSubmittedDerivedAmount:
+          "reject_when_it_does_not_match_backend_confirmed_amount",
+      },
+    };
+  }
+
   async listRoles() {
     const items = await this.prisma.role.findMany({
       orderBy: [{ status: "asc" }, { code: "asc" }],
