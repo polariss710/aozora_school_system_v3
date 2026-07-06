@@ -103,6 +103,100 @@ export interface ExternalWorkplaceRecord {
   memo: string | null;
 }
 
+type ApiAmountValue = number | string | null;
+
+interface RelatedBusinessEntityRecord {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface RelatedStudentRecord {
+  id: string;
+  code: string | null;
+  name: string;
+}
+
+interface RelatedTeacherRecord {
+  id: string;
+  code: string | null;
+  name: string;
+}
+
+interface RelatedAccountRecord {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  currency: string;
+}
+
+export interface IncomeRecord {
+  id: string;
+  sourceType: string;
+  sourceId: string | null;
+  studentId: string | null;
+  businessEntityId: string | null;
+  yearMonth: string;
+  title: string;
+  originalCurrency: "JPY" | "CNY";
+  originalAmountJpy: ApiAmountValue;
+  originalAmountCny: ApiAmountValue;
+  carryoverAmountCny: ApiAmountValue;
+  recordStatus: string;
+  cashStatus: string;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  student: RelatedStudentRecord | null;
+  businessEntity: RelatedBusinessEntityRecord | null;
+}
+
+export interface ExpenseRecord {
+  id: string;
+  sourceType: string;
+  sourceId: string | null;
+  teacherId: string | null;
+  businessEntityId: string | null;
+  yearMonth: string;
+  title: string;
+  originalCurrency: "JPY" | "CNY";
+  originalAmountJpy: ApiAmountValue;
+  originalAmountCny: ApiAmountValue;
+  recordStatus: string;
+  cashStatus: string;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  teacher: RelatedTeacherRecord | null;
+  businessEntity: RelatedBusinessEntityRecord | null;
+}
+
+export interface AccountTransactionRecord {
+  id: string;
+  accountId: string;
+  direction: "in" | "out";
+  sourceType: string;
+  sourceId: string | null;
+  incomeRecordId: string | null;
+  expenseRecordId: string | null;
+  transactionDate: string;
+  title: string;
+  currency: "JPY" | "CNY";
+  amountJpy: ApiAmountValue;
+  amountCny: ApiAmountValue;
+  status: string;
+  idempotencyKey: string | null;
+  externalEventId: string | null;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  reversedAt: string | null;
+  account: RelatedAccountRecord;
+  incomeRecord: { id: string; sourceType: string; title: string; recordStatus: string; cashStatus: string } | null;
+  expenseRecord: { id: string; sourceType: string; title: string; recordStatus: string; cashStatus: string } | null;
+}
+
 interface ApiHealthResponse {
   service: string;
   status: "ok";
@@ -289,6 +383,24 @@ export function listSubjects(accessToken: string) {
 
 export function listExternalWorkplaces(accessToken: string) {
   return requestJson<ItemsResponse<ExternalWorkplaceRecord>>("/settings/external-workplaces", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listIncomeRecords(accessToken: string) {
+  return requestJson<ListResponse<IncomeRecord>>("/income?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listExpenseRecords(accessToken: string) {
+  return requestJson<ListResponse<ExpenseRecord>>("/expenses?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listAccountTransactions(accessToken: string) {
+  return requestJson<ListResponse<AccountTransactionRecord>>("/accounts/transactions?limit=100", {
     headers: authorizedHeaders(accessToken),
   });
 }

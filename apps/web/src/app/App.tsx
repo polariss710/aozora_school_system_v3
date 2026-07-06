@@ -49,9 +49,12 @@ import {
   createTeacher,
   fetchApiHealthSnapshot,
   isApiRequestError,
+  listAccountTransactions,
   listAccounts,
   listBusinessEntities,
+  listExpenseRecords,
   listExternalWorkplaces,
+  listIncomeRecords,
   listSubjects,
   listStudents,
   listTeachers,
@@ -64,9 +67,12 @@ import {
 import type {
   ApiHealthSnapshot,
   AccountRecord,
+  AccountTransactionRecord,
   AuthSession,
   BusinessEntityRecord,
+  ExpenseRecord,
   ExternalWorkplaceRecord,
+  IncomeRecord,
   StudentRecord,
   StudentWriteInput,
   SubjectRecord,
@@ -167,6 +173,7 @@ interface PageConfig {
   columns: Column[];
   rows: DataRow[];
   batchAction?: "cash" | "export" | "lock";
+  selectable?: boolean;
 }
 
 interface MenuItem {
@@ -213,6 +220,17 @@ type SettingsApiState =
   | { status: "idle" | "loading"; rows: DataRow[]; counts: SettingsApiCounts; message?: string }
   | { status: "ready"; rows: DataRow[]; counts: SettingsApiCounts; message?: string }
   | { status: "error"; rows: DataRow[]; counts: SettingsApiCounts; message: string };
+
+type FinanceListState =
+  | { status: "idle" | "loading"; rows: DataRow[]; total: number; message?: string }
+  | { status: "ready"; rows: DataRow[]; total: number; message?: string }
+  | { status: "error"; rows: DataRow[]; total: number; message: string };
+
+interface FinanceApiState {
+  incomeRecords: FinanceListState;
+  expenseRecords: FinanceListState;
+  accountLedger: FinanceListState;
+}
 
 const toneClasses: Record<
   Tone,
@@ -1200,7 +1218,7 @@ function BatchActionBar({
   onCash: () => void;
   onLock?: () => void;
 }) {
-  if (selectedRows.length === 0) {
+  if (selectedRows.length === 0 || page.selectable === false) {
     return null;
   }
 
@@ -1954,6 +1972,7 @@ function BusinessPage({
         onToggleAll={onToggleAll}
         onToggleRow={onToggleRow}
         onOpenDetail={onOpenDetail}
+        showSelection={page.selectable !== false}
       />
     </main>
   );
@@ -2364,6 +2383,343 @@ function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState):
     filters: [{ label: "设置类型", options: ["业务归属", "账户", "科目", "外部授课机构"] }, commonFilters.status],
     rows: settingsApi.rows,
   };
+}
+
+function createEmptyFinanceListState(): FinanceListState {
+  return { status: "idle", rows: [], total: 0 };
+}
+
+function createEmptyFinanceApiState(): FinanceApiState {
+  return {
+    incomeRecords: createEmptyFinanceListState(),
+    expenseRecords: createEmptyFinanceListState(),
+    accountLedger: createEmptyFinanceListState(),
+  };
+}
+
+function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListState): PageConfig {
+  if (incomeApi.status !== "ready") {
+    return basePage;
+  }
+
+  const cashTodoCount = incomeApi.rows.filter((row) =>
+    ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
+  ).length;
+  const confirmedCount = incomeApi.rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
+  const voidedCount = incomeApi.rows.filter((row) => row.status === "已作废").length;
+
+  return {
+    ...basePage,
+    description: "真实 dev API 收入记录列表；新增和 Cash 提交动作后续接入",
+    primaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    metrics: [
+      { label: "收入记录", value: `${incomeApi.total} 条`, sub: "来自 dev API", tone: "emerald", icon: ReceiptText },
+      { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: Banknote },
+      { label: "已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: "sky", icon: CheckCircle2 },
+      { label: "已作废", value: `${voidedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: LockKeyhole },
+    ],
+    rows: incomeApi.rows,
+  };
+}
+
+function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListState): PageConfig {
+  if (expenseApi.status !== "ready") {
+    return basePage;
+  }
+
+  const cashTodoCount = expenseApi.rows.filter((row) =>
+    ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
+  ).length;
+  const confirmedCount = expenseApi.rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
+  const voidedCount = expenseApi.rows.filter((row) => row.status === "已作废").length;
+
+  return {
+    ...basePage,
+    description: "真实 dev API 支出记录列表；新增、工资生成和 Cash 提交动作后续接入",
+    primaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    metrics: [
+      { label: "支出记录", value: `${expenseApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: Banknote },
+      { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: Clock },
+      { label: "已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: "emerald", icon: CheckCircle2 },
+      { label: "已作废", value: `${voidedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: LockKeyhole },
+    ],
+    rows: expenseApi.rows,
+  };
+}
+
+function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceListState): PageConfig {
+  if (accountLedgerApi.status !== "ready") {
+    return basePage;
+  }
+
+  const inCount = accountLedgerApi.rows.filter((row) => String(row.cells.direction) === "入金").length;
+  const outCount = accountLedgerApi.rows.filter((row) => String(row.cells.direction) === "出金").length;
+  const reversedCount = accountLedgerApi.rows.filter((row) => row.status === "已冲销").length;
+
+  return {
+    ...basePage,
+    description: "真实 dev API 账户流水列表；新增流水、收入/支出入账和冲销动作后续接入",
+    primaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    metrics: [
+      { label: "流水总数", value: `${accountLedgerApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: History },
+      { label: "入金", value: `${inCount} 条`, sub: "账户增加", tone: "emerald", icon: WalletCards },
+      { label: "出金", value: `${outCount} 条`, sub: "账户减少", tone: "amber", icon: Banknote },
+      { label: "已冲销", value: `${reversedCount} 条`, sub: "反向保留记录", tone: "slate", icon: RotateCcw },
+    ],
+    rows: accountLedgerApi.rows,
+  };
+}
+
+function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
+  const status = getFinancialRecordStatusView(record.recordStatus, record.cashStatus);
+  const sourceLabel = getIncomeSourceLabel(record.sourceType);
+  const businessEntityName = record.businessEntity?.name ?? "未设置业务归属";
+  const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
+  const cashStatus = getCashStatusLabel(record.cashStatus);
+
+  return {
+    id: `income-${record.id}`,
+    title: record.title,
+    subtitle: `${sourceLabel} / ${businessEntityName}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      source: sourceLabel,
+      businessMonth: record.yearMonth,
+      amount,
+      cash: cashStatus,
+    },
+    detail: [
+      {
+        title: "收入记录",
+        lines: [
+          { label: "来源", value: sourceLabel },
+          { label: "业务归属", value: businessEntityName },
+          { label: "学生", value: record.student?.name ?? "-" },
+          { label: "原始金额", value: amount },
+          { label: "Cash 状态", value: cashStatus },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "记录 ID", value: record.id },
+          { label: "sourceType", value: record.sourceType },
+          { label: "sourceId", value: record.sourceId ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
+  const status = getFinancialRecordStatusView(record.recordStatus, record.cashStatus);
+  const category = getExpenseSourceLabel(record.sourceType);
+  const businessEntityName = record.businessEntity?.name ?? "未设置业务归属";
+  const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
+  const cashStatus = getCashStatusLabel(record.cashStatus);
+
+  return {
+    id: `expense-${record.id}`,
+    title: record.title,
+    subtitle: `${category} / ${businessEntityName}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      category,
+      businessMonth: record.yearMonth,
+      amount,
+      cash: cashStatus,
+    },
+    detail: [
+      {
+        title: "支出记录",
+        lines: [
+          { label: "分类", value: category },
+          { label: "业务归属", value: businessEntityName },
+          { label: "老师", value: record.teacher?.name ?? "-" },
+          { label: "原始金额", value: amount },
+          { label: "Cash 状态", value: cashStatus },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "记录 ID", value: record.id },
+          { label: "sourceType", value: record.sourceType },
+          { label: "sourceId", value: record.sourceId ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function mapAccountTransactionToRow(record: AccountTransactionRecord): DataRow {
+  const status = getAccountTransactionStatusView(record.status);
+  const sourceLabel = getAccountTransactionSourceLabel(record.sourceType);
+  const direction = record.direction === "in" ? "入金" : "出金";
+  const amount = formatApiCurrencyAmount(record.currency, record.amountJpy, record.amountCny);
+  const relatedRecordTitle = record.incomeRecord?.title ?? record.expenseRecord?.title ?? "-";
+
+  return {
+    id: `ledger-${record.id}`,
+    title: record.title,
+    subtitle: `${record.account.name} / ${sourceLabel}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      account: record.account.name,
+      date: formatApiDate(record.transactionDate),
+      direction,
+      amount,
+    },
+    detail: [
+      {
+        title: "账户流水",
+        lines: [
+          { label: "账户", value: record.account.name },
+          { label: "方向", value: direction },
+          { label: "金额", value: amount },
+          { label: "来源", value: sourceLabel },
+          { label: "关联记录", value: relatedRecordTitle },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "流水 ID", value: record.id },
+          { label: "sourceType", value: record.sourceType },
+          { label: "sourceId", value: record.sourceId ?? "-" },
+          { label: "idempotencyKey", value: record.idempotencyKey ?? "-" },
+          { label: "externalEventId", value: record.externalEventId ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function getFinancialRecordStatusView(recordStatus: string, cashStatus: string): { label: string; tone: Tone } {
+  if (recordStatus === "voided") {
+    return { label: "已作废", tone: "slate" };
+  }
+
+  if (cashStatus === "account_transaction_created") {
+    return { label: "已生成流水", tone: "emerald" };
+  }
+
+  if (recordStatus === "cash_confirmed" || cashStatus === "cash_confirmed") {
+    return { label: "Cash 已确认", tone: "emerald" };
+  }
+
+  if (cashStatus === "cash_requested") {
+    return { label: "Cash 待确认", tone: "amber" };
+  }
+
+  if (cashStatus === "needs_manual_review") {
+    return { label: "需要复核", tone: "rose" };
+  }
+
+  if (cashStatus === "cash_rejected") {
+    return { label: "Cash 已拒绝", tone: "rose" };
+  }
+
+  if (cashStatus === "cash_withdrawn") {
+    return { label: "Cash 已撤回", tone: "slate" };
+  }
+
+  return { label: "待提交 Cash", tone: "amber" };
+}
+
+function getAccountTransactionStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "reversed") {
+    return { label: "已冲销", tone: "slate" };
+  }
+
+  return { label: "已入账", tone: "emerald" };
+}
+
+function getCashStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    not_requested: "未提交",
+    cash_requested: "Cash 待确认",
+    cash_withdrawn: "Cash 已撤回",
+    cash_rejected: "Cash 已拒绝",
+    cash_confirmed: "Cash 已确认",
+    account_transaction_created: "已生成流水",
+    needs_manual_review: "需要复核",
+  };
+
+  return labels[status] ?? status;
+}
+
+function getIncomeSourceLabel(sourceType: string) {
+  const labels: Record<string, string> = {
+    student_tuition_bill: "学生学费",
+    external_work: "外部授课",
+    manual_income: "手动收入",
+  };
+
+  return labels[sourceType] ?? sourceType;
+}
+
+function getExpenseSourceLabel(sourceType: string) {
+  const labels: Record<string, string> = {
+    teacher_wage_snapshot: "老师工资",
+    manual_expense: "手动支出",
+  };
+
+  return labels[sourceType] ?? sourceType;
+}
+
+function getAccountTransactionSourceLabel(sourceType: string) {
+  const labels: Record<string, string> = {
+    manual_account_transaction: "手动流水",
+    account_correction: "修正流水",
+    account_transfer: "账户调拨",
+    cash_inbound_event: "Cash 入站",
+    reimbursement_record: "报销",
+    manual_income: "手动收入",
+    manual_expense: "手动支出",
+  };
+
+  return labels[sourceType] ?? sourceType;
+}
+
+function formatApiCurrencyAmount(
+  currency: string,
+  amountJpy: number | string | null | undefined,
+  amountCny: number | string | null | undefined,
+) {
+  const amount = parseApiAmount(currency === "CNY" ? amountCny : amountJpy);
+
+  if (amount === null) {
+    return `${currency} -`;
+  }
+
+  return currency === "CNY" ? money.cny(amount) : money.jpy(amount);
+}
+
+function parseApiAmount(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const numberValue = typeof value === "number" ? value : Number(value);
+
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function formatApiDate(value: string) {
+  return value.slice(0, 10);
 }
 
 interface LessonCardData {
@@ -4353,6 +4709,7 @@ export default function App() {
     rows: [],
     counts: emptySettingsCounts,
   });
+  const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
@@ -4375,8 +4732,20 @@ export default function App() {
       return buildSettingsPage(baseActivePage, settingsApi);
     }
 
+    if (activeKey === "income-records" && baseActivePage) {
+      return buildIncomeRecordsPage(baseActivePage, financeApi.incomeRecords);
+    }
+
+    if (activeKey === "expense-records" && baseActivePage) {
+      return buildExpenseRecordsPage(baseActivePage, financeApi.expenseRecords);
+    }
+
+    if (activeKey === "account-ledger" && baseActivePage) {
+      return buildAccountLedgerPage(baseActivePage, financeApi.accountLedger);
+    }
+
     return baseActivePage;
-  }, [activeKey, baseActivePage, studentApi, teacherApi, settingsApi]);
+  }, [activeKey, baseActivePage, studentApi, teacherApi, settingsApi, financeApi]);
   const selected = selectedByPage[activeKey] ?? new Set<string>();
   const selectedRows = useMemo(() => {
     if (!activePage) {
@@ -4559,6 +4928,78 @@ export default function App() {
           rows: [],
           counts: emptySettingsCounts,
           message: error instanceof Error ? error.message : "Settings API request failed",
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession) {
+      setFinanceApi(createEmptyFinanceApiState());
+      return;
+    }
+
+    let isMounted = true;
+
+    setFinanceApi((current) => ({
+      incomeRecords: {
+        status: "loading",
+        rows: current.incomeRecords.rows,
+        total: current.incomeRecords.total,
+      },
+      expenseRecords: {
+        status: "loading",
+        rows: current.expenseRecords.rows,
+        total: current.expenseRecords.total,
+      },
+      accountLedger: {
+        status: "loading",
+        rows: current.accountLedger.rows,
+        total: current.accountLedger.total,
+      },
+    }));
+
+    void Promise.all([
+      listIncomeRecords(authSession.accessToken),
+      listExpenseRecords(authSession.accessToken),
+      listAccountTransactions(authSession.accessToken),
+    ])
+      .then(([incomeRecords, expenseRecords, accountTransactions]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setFinanceApi({
+          incomeRecords: {
+            status: "ready",
+            rows: incomeRecords.items.map(mapIncomeRecordToRow),
+            total: incomeRecords.total,
+          },
+          expenseRecords: {
+            status: "ready",
+            rows: expenseRecords.items.map(mapExpenseRecordToRow),
+            total: expenseRecords.total,
+          },
+          accountLedger: {
+            status: "ready",
+            rows: accountTransactions.items.map(mapAccountTransactionToRow),
+            total: accountTransactions.total,
+          },
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Finance API request failed";
+        setFinanceApi({
+          incomeRecords: { status: "error", rows: [], total: 0, message },
+          expenseRecords: { status: "error", rows: [], total: 0, message },
+          accountLedger: { status: "error", rows: [], total: 0, message },
         });
       });
 

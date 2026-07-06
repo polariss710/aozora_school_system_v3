@@ -6,6 +6,7 @@ This is the first V3 frontend demo based on the Figma static mockup style.
 It keeps the original demo data as a fallback, and now probes the V3 dev API for health, auth, and the first live Students page integration.
 After real API login, the Students and Teachers pages can list, create, update, archive, and restore records through the backend API.
 The Settings page reads business entities, School accounts, subjects, and external workplaces from the backend API as tabbed read-only foundation lists.
+The Income, Expense, and Account Ledger pages read backend API lists as read-only finance views while write actions are connected incrementally.
 
 ## Run
 
