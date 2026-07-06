@@ -1531,6 +1531,8 @@ function ActionNotice({
     return null;
   }
 
+  const Icon = notice.tone === "emerald" ? CheckCircle2 : notice.tone === "amber" ? ShieldCheck : X;
+  const title = notice.tone === "emerald" ? "操作成功" : notice.tone === "amber" ? "需要处理" : "操作失败";
   const className =
     notice.tone === "emerald"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -1539,9 +1541,23 @@ function ActionNotice({
         : "border-rose-200 bg-rose-50 text-rose-700";
 
   return (
-    <div className={`fixed bottom-5 right-5 z-[60] flex max-w-[360px] items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg ${className}`}>
-      <span className="leading-relaxed">{notice.text}</span>
-      <button type="button" onClick={onClose} className="rounded p-0.5 opacity-70 transition hover:bg-white/70 hover:opacity-100">
+    <div
+      role="status"
+      className={`fixed left-1/2 top-4 z-[80] flex w-[min(520px,92vw)] -translate-x-1/2 items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-xl ${className}`}
+    >
+      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/75">
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs font-semibold">{title}</span>
+        <span className="mt-0.5 block leading-relaxed">{notice.text}</span>
+      </span>
+      <button
+        type="button"
+        onClick={onClose}
+        className="rounded p-0.5 opacity-70 transition hover:bg-white/70 hover:opacity-100"
+        aria-label="关闭提示"
+      >
         <X className="h-3.5 w-3.5" />
       </button>
     </div>
@@ -3869,7 +3885,7 @@ export default function App() {
       return;
     }
 
-    const timer = window.setTimeout(() => setActionNotice(null), 4000);
+    const timer = window.setTimeout(() => setActionNotice(null), 8000);
 
     return () => window.clearTimeout(timer);
   }, [actionNotice]);
