@@ -41,6 +41,12 @@ export class SettlementsController {
     return this.settlementsService.getStudentSettlement(id);
   }
 
+  @Get("student/:id/export-payload")
+  @RequirePermissions("student_settlements.manage")
+  exportStudentSettlement(@Param("id") id: string) {
+    return this.settlementsService.exportStudentSettlement(id);
+  }
+
   @Post("student/preview")
   @RequirePermissions("student_settlements.manage")
   previewStudentSettlement(@Body() body: PreviewStudentSettlementBody) {

@@ -62,6 +62,12 @@ type StudentSettlementSnapshot = Prisma.StudentMonthlySettlementGetPayload<{
   select: typeof studentSettlementSelect;
 }>;
 
+const settlementExportLessonRelationSelect = {
+  id: true,
+  code: true,
+  name: true,
+} as const;
+
 type NormalizedSettlementInput = {
   studentId: string;
   yearMonth: string;
@@ -98,6 +104,79 @@ export class SettlementsService {
     const settlement = await this.findStudentSettlement(id);
 
     return { settlement };
+  }
+
+  async exportStudentSettlement(id: string) {
+    const settlement = await this.findStudentSettlement(id);
+
+    if (settlement.status !== StudentSettlementStatus.locked) {
+      throw new BadRequestException("Only locked settlement can be exported.");
+    }
+
+    const plannedLessonIds = this.getSnapshotStringArray(
+      settlement.calculationSnapshot,
+      "sourceLessonIds",
+    );
+    const actualLessonIds = this.getSnapshotStringArray(
+      settlement.calculationSnapshot,
+      "actualLessonIds",
+    );
+
+    const [plannedLessons, actualLessons] = await Promise.all([
+      this.prisma.studentPlannedLesson.findMany({
+        where: { id: { in: plannedLessonIds } },
+        orderBy: [{ weekAnchorDate: "asc" }, { lessonNo: "asc" }],
+        select: {
+          id: true,
+          yearMonth: true,
+          weekAnchorDate: true,
+          lessonNo: true,
+          plannedStartTime: true,
+          plannedEndTime: true,
+          durationHours: true,
+          plannedFeeJpy: true,
+          content: true,
+          memo: true,
+          status: true,
+          sourceType: true,
+          sourceId: true,
+          teacher: { select: settlementExportLessonRelationSelect },
+          subject: { select: settlementExportLessonRelationSelect },
+          businessEntity: { select: settlementExportLessonRelationSelect },
+        },
+      }),
+      this.prisma.studentActualLesson.findMany({
+        where: { id: { in: actualLessonIds } },
+        orderBy: [{ actualDate: "asc" }, { startTime: "asc" }],
+        select: {
+          id: true,
+          plannedLessonId: true,
+          yearMonth: true,
+          actualDate: true,
+          startTime: true,
+          endTime: true,
+          durationHours: true,
+          content: true,
+          memo: true,
+          status: true,
+          teacherWageEligible: true,
+          sourceType: true,
+          sourceId: true,
+          teacher: { select: settlementExportLessonRelationSelect },
+          subject: { select: settlementExportLessonRelationSelect },
+          businessEntity: { select: settlementExportLessonRelationSelect },
+        },
+      }),
+    ]);
+
+    return {
+      exportPayload: this.buildStudentSettlementExportPayload(
+        settlement,
+        plannedLessons,
+        actualLessons,
+      ),
+      settlement,
+    };
   }
 
   async previewStudentSettlement(body: PreviewStudentSettlementBody) {
@@ -475,6 +554,158 @@ export class SettlementsService {
         "Next month tuition bill already exists. Revoke or rebuild downstream bill first.",
       );
     }
+  }
+
+  private buildStudentSettlementExportPayload(
+    settlement: StudentSettlementSnapshot,
+    plannedLessons: Array<
+      Prisma.StudentPlannedLessonGetPayload<{
+        select: {
+          id: true;
+          yearMonth: true;
+          weekAnchorDate: true;
+          lessonNo: true;
+          plannedStartTime: true;
+          plannedEndTime: true;
+          durationHours: true;
+          plannedFeeJpy: true;
+          content: true;
+          memo: true;
+          status: true;
+          sourceType: true;
+          sourceId: true;
+          teacher: { select: typeof settlementExportLessonRelationSelect };
+          subject: { select: typeof settlementExportLessonRelationSelect };
+          businessEntity: { select: typeof settlementExportLessonRelationSelect };
+        };
+      }>
+    >,
+    actualLessons: Array<
+      Prisma.StudentActualLessonGetPayload<{
+        select: {
+          id: true;
+          plannedLessonId: true;
+          yearMonth: true;
+          actualDate: true;
+          startTime: true;
+          endTime: true;
+          durationHours: true;
+          content: true;
+          memo: true;
+          status: true;
+          teacherWageEligible: true;
+          sourceType: true;
+          sourceId: true;
+          teacher: { select: typeof settlementExportLessonRelationSelect };
+          subject: { select: typeof settlementExportLessonRelationSelect };
+          businessEntity: { select: typeof settlementExportLessonRelationSelect };
+        };
+      }>
+    >,
+  ) {
+    const actualByPlannedLessonId = new Map(
+      actualLessons
+        .filter((lesson) => lesson.plannedLessonId)
+        .map((lesson) => [lesson.plannedLessonId, lesson]),
+    );
+
+    return {
+      kind: "student_monthly_settlement_lesson_export",
+      settlementId: settlement.id,
+      student: settlement.student,
+      yearMonth: settlement.yearMonth,
+      status: settlement.status,
+      lockedAt: settlement.lockedAt.toISOString(),
+      summary: {
+        plannedLessonCount: settlement.plannedLessonCount,
+        billableLessonCount: settlement.billableLessonCount,
+        cancelledLessonCount: settlement.cancelledLessonCount,
+        actualLessonCount: settlement.actualLessonCount,
+        plannedAmountJpy: settlement.plannedAmountJpy,
+        billableAmountJpy: settlement.billableAmountJpy,
+        receivedAmountJpy: settlement.receivedAmountJpy,
+        receivedAmountCny: settlement.receivedAmountCny.toNumber(),
+        previousCarryoverAmountCny:
+          settlement.previousCarryoverAmountCny.toNumber(),
+        settlementExchangeRate:
+          settlement.settlementExchangeRate?.toNumber() ?? null,
+        adjustmentAmountCny: settlement.adjustmentAmountCny.toNumber(),
+        carryoverAmountCny: settlement.carryoverAmountCny.toNumber(),
+      },
+      rows: plannedLessons.map((plannedLesson, index) => {
+        const actualLesson = actualByPlannedLessonId.get(plannedLesson.id) ?? null;
+
+        return {
+          rowNo: index + 1,
+          plannedLesson: {
+            id: plannedLesson.id,
+            yearMonth: plannedLesson.yearMonth,
+            weekAnchorDate: this.formatDate(plannedLesson.weekAnchorDate),
+            weekLabel: this.formatWeekLabel(plannedLesson.weekAnchorDate),
+            lessonNo: plannedLesson.lessonNo,
+            plannedStartTime: plannedLesson.plannedStartTime,
+            plannedEndTime: plannedLesson.plannedEndTime,
+            durationHours: plannedLesson.durationHours.toNumber(),
+            plannedFeeJpy: plannedLesson.plannedFeeJpy,
+            content: plannedLesson.content,
+            memo: plannedLesson.memo,
+            status: plannedLesson.status,
+            sourceType: plannedLesson.sourceType,
+            sourceId: plannedLesson.sourceId,
+            teacher: plannedLesson.teacher,
+            subject: plannedLesson.subject,
+            businessEntity: plannedLesson.businessEntity,
+          },
+          actualLesson: actualLesson
+            ? {
+                id: actualLesson.id,
+                yearMonth: actualLesson.yearMonth,
+                actualDate: this.formatDate(actualLesson.actualDate),
+                startTime: actualLesson.startTime,
+                endTime: actualLesson.endTime,
+                durationHours: actualLesson.durationHours.toNumber(),
+                content: actualLesson.content,
+                memo: actualLesson.memo,
+                status: actualLesson.status,
+                teacherWageEligible: actualLesson.teacherWageEligible,
+                sourceType: actualLesson.sourceType,
+                sourceId: actualLesson.sourceId,
+                teacher: actualLesson.teacher,
+                subject: actualLesson.subject,
+                businessEntity: actualLesson.businessEntity,
+              }
+            : null,
+        };
+      }),
+      calculationSnapshot: settlement.calculationSnapshot,
+      policy: {
+        lockedSettlementOnly: true,
+        fileRendering: "not_generated_by_this_api",
+        plannedLessonWeekDate: "week_anchor_monday",
+        jpyPrecision: 0,
+        cnyPrecision: 2,
+      },
+    };
+  }
+
+  private getSnapshotStringArray(snapshot: Prisma.JsonValue, field: string) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return [];
+    }
+
+    const value = (snapshot as Record<string, unknown>)[field];
+
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  }
+
+  private formatDate(date: Date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private formatWeekLabel(date: Date) {
+    return `${date.getUTCMonth() + 1}.${date.getUTCDate()}周`;
   }
 
   private async findStudentSettlement(
