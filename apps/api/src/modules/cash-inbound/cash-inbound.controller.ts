@@ -17,6 +17,7 @@ import { CashInboundService } from "./cash-inbound.service";
 import {
   CreateCashInboundEventBody,
   ListCashInboundEventsQuery,
+  RejectCashInboundEventBody,
 } from "./cash-inbound.types";
 
 @Controller("cash-inbound")
@@ -46,5 +47,15 @@ export class CashInboundController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.cashInboundService.createEvent(body, user.id);
+  }
+
+  @Post("events/:id/reject")
+  @RequirePermissions("cash_inbound.manage")
+  rejectEvent(
+    @Param("id") id: string,
+    @Body() body: RejectCashInboundEventBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cashInboundService.rejectEvent(id, body, user.id);
   }
 }

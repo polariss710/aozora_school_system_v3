@@ -25,3 +25,7 @@ export type CreateCashInboundEventBody = {
   linkedIncomeRecordIds?: unknown;
   memo?: unknown;
 };
+
+export type RejectCashInboundEventBody = {
+  reason?: unknown;
+};

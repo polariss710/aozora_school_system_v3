@@ -23,6 +23,7 @@ import { MoneyService } from "../money/money.service";
 import {
   CreateCashInboundEventBody,
   ListCashInboundEventsQuery,
+  RejectCashInboundEventBody,
 } from "./cash-inbound.types";
 
 const defaultLimit = 100;
@@ -216,6 +217,62 @@ export class CashInboundService {
     });
 
     return { event, idempotent: false };
+  }
+
+  async rejectEvent(
+    id: string,
+    body: RejectCashInboundEventBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findEvent(id);
+
+    if (before.status !== CashInboundEventStatus.account_transaction_created) {
+      throw new BadRequestException("Only created Cash inbound event can be rejected.");
+    }
+
+    if (before.accountTransaction.status !== AccountTransactionStatus.active) {
+      throw new BadRequestException("Cash inbound account transaction is not active.");
+    }
+
+    const reason = this.normalizeOptionalString(body.reason);
+    const memo = reason ?? before.memo;
+
+    const event = await this.prisma.$transaction(async (tx) => {
+      await tx.accountTransaction.update({
+        where: { id: before.accountTransactionId },
+        data: {
+          status: AccountTransactionStatus.reversed,
+          reversedAt: new Date(),
+          memo,
+        },
+      });
+
+      const updated = await tx.cashInboundEvent.update({
+        where: { id },
+        data: {
+          status: CashInboundEventStatus.rejected,
+          memo,
+        },
+        select: cashInboundEventSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "cash_inbound_event.reject",
+          targetType: "cash_inbound_event",
+          targetId: id,
+          riskLevel: AuditRiskLevel.critical,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return { event };
   }
 
   private async findEvent(id: string) {
