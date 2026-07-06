@@ -90,6 +90,12 @@ type TuitionBillSnapshot = Prisma.StudentTuitionBillGetPayload<{
   select: typeof tuitionBillSelect;
 }>;
 
+const tuitionExportLessonRelationSelect = {
+  id: true,
+  code: true,
+  name: true,
+} as const;
+
 @Injectable()
 export class TuitionBillingService {
   constructor(
@@ -118,6 +124,47 @@ export class TuitionBillingService {
     const tuitionBill = await this.findTuitionBill(id);
 
     return { tuitionBill };
+  }
+
+  async exportTuitionBill(id: string) {
+    const tuitionBill = await this.findTuitionBill(id);
+
+    if (tuitionBill.status === TuitionBillStatus.voided) {
+      throw new BadRequestException("Voided tuition bill cannot be exported.");
+    }
+
+    const plannedLessonIds = this.getSnapshotStringArray(
+      tuitionBill.calculationSnapshot,
+      "plannedLessonIds",
+    );
+    const plannedLessons = await this.prisma.studentPlannedLesson.findMany({
+      where: { id: { in: plannedLessonIds } },
+      orderBy: [{ weekAnchorDate: "asc" }, { lessonNo: "asc" }],
+      select: {
+        id: true,
+        yearMonth: true,
+        weekAnchorDate: true,
+        lessonNo: true,
+        plannedStartTime: true,
+        plannedEndTime: true,
+        durationHours: true,
+        plannedFeeJpy: true,
+        content: true,
+        memo: true,
+        status: true,
+        teacher: { select: tuitionExportLessonRelationSelect },
+        subject: { select: tuitionExportLessonRelationSelect },
+        businessEntity: { select: tuitionExportLessonRelationSelect },
+      },
+    });
+
+    return {
+      exportPayload: this.buildTuitionBillExportPayload(
+        tuitionBill,
+        plannedLessons,
+      ),
+      tuitionBill,
+    };
   }
 
   async generateTuitionBill(
@@ -377,6 +424,93 @@ export class TuitionBillingService {
       : [];
 
     return ids.length === 1 ? ids[0] : null;
+  }
+
+  private buildTuitionBillExportPayload(
+    tuitionBill: TuitionBillSnapshot,
+    plannedLessons: Array<
+      Prisma.StudentPlannedLessonGetPayload<{
+        select: {
+          id: true;
+          yearMonth: true;
+          weekAnchorDate: true;
+          lessonNo: true;
+          plannedStartTime: true;
+          plannedEndTime: true;
+          durationHours: true;
+          plannedFeeJpy: true;
+          content: true;
+          memo: true;
+          status: true;
+          teacher: { select: typeof tuitionExportLessonRelationSelect };
+          subject: { select: typeof tuitionExportLessonRelationSelect };
+          businessEntity: { select: typeof tuitionExportLessonRelationSelect };
+        };
+      }>
+    >,
+  ) {
+    return {
+      kind: "student_tuition_bill_export",
+      tuitionBillId: tuitionBill.id,
+      student: tuitionBill.student,
+      yearMonth: tuitionBill.yearMonth,
+      status: tuitionBill.status,
+      generatedAt: tuitionBill.generatedAt.toISOString(),
+      incomeRecord: tuitionBill.incomeRecord,
+      summary: {
+        plannedLessonCount: tuitionBill.plannedLessonCount,
+        plannedAmountJpy: tuitionBill.plannedAmountJpy,
+        carryoverAmountCny: tuitionBill.carryoverAmountCny.toNumber(),
+      },
+      rows: plannedLessons.map((lesson, index) => ({
+        rowNo: index + 1,
+        plannedLessonId: lesson.id,
+        yearMonth: lesson.yearMonth,
+        weekAnchorDate: this.formatDate(lesson.weekAnchorDate),
+        weekLabel: this.formatWeekLabel(lesson.weekAnchorDate),
+        lessonNo: lesson.lessonNo,
+        plannedStartTime: lesson.plannedStartTime,
+        plannedEndTime: lesson.plannedEndTime,
+        durationHours: lesson.durationHours.toNumber(),
+        plannedFeeJpy: lesson.plannedFeeJpy,
+        content: lesson.content,
+        memo: lesson.memo,
+        status: lesson.status,
+        teacher: lesson.teacher,
+        subject: lesson.subject,
+        businessEntity: lesson.businessEntity,
+      })),
+      calculationSnapshot: tuitionBill.calculationSnapshot,
+      policy: {
+        source: "student_tuition_bill_snapshot",
+        plannedLessonWeekDate: "week_anchor_monday",
+        carryoverCnyIsFrozenFromPreviousLockedSettlement: true,
+        notificationAmountIsPreviewOnly: true,
+        fileRendering: "not_generated_by_this_api",
+        jpyPrecision: 0,
+        cnyPrecision: 2,
+      },
+    };
+  }
+
+  private getSnapshotStringArray(snapshot: Prisma.JsonValue, field: string) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return [];
+    }
+
+    const value = (snapshot as Record<string, unknown>)[field];
+
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  }
+
+  private formatDate(date: Date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private formatWeekLabel(date: Date) {
+    return `${date.getUTCMonth() + 1}.${date.getUTCDate()}周`;
   }
 
   private buildWhere(query: ListTuitionBillsQuery): Prisma.StudentTuitionBillWhereInput {

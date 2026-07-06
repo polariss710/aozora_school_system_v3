@@ -39,6 +39,12 @@ export class TuitionBillingController {
     return this.tuitionBillingService.getTuitionBill(id);
   }
 
+  @Get(":id/export-payload")
+  @RequirePermissions("tuition_billing.manage")
+  exportTuitionBill(@Param("id") id: string) {
+    return this.tuitionBillingService.exportTuitionBill(id);
+  }
+
   @Post("generate")
   @RequirePermissions("tuition_billing.manage")
   generateTuitionBill(
