@@ -4,17 +4,28 @@ NestJS backend for the v3 system.
 
 Current stage:
 
-- API skeleton with the first Prisma/PostgreSQL foundation schema.
+- First-round dev API for the v3 main business chain.
 - Supabase dev PostgreSQL is connected through local environment variables.
 - NestJS runtime uses `PrismaService` with the PostgreSQL driver adapter.
-- The initial migration creates users, roles, permissions, business entities, accounts, master data, and audit tables.
+- Prisma migrations cover foundation master data, lessons, settlements, tuition bills, income, expenses, Cash requests, Cash inbound events, account transactions, reimbursements, external work, and teacher wages.
 - The seed script initializes the minimum v3 roles, permissions, business entities, and School-side accounts.
+- Controller route count: 145 as of 2026-07-06.
+
+API contract principles:
+
+- Frontend calls business-action APIs. It must not write business tables directly or assemble core write flows from generic CRUD calls.
+- Business amounts, currency rounding, exchange conversion, Cash request amounts, settlement totals, tuition bills, wage totals, account transaction amounts, and carryovers are backend-confirmed values.
+- Frontend may submit user choices such as exchange rate, rounding mode, memo, reason, explicit adjustment fields, and target accounts, but backend domain services confirm the final business result.
+- State-machine APIs must write audit events for high-risk or irreversible changes.
+- Linked records should be moved forward and released by the same backend use case. Example: Cash inbound creates the School-side corporate account transaction and marks linked Cash-confirmed income records as `account_transaction_created`; rejection reverses the transaction and restores them to `cash_confirmed`.
+- Fresh planned lesson physical delete is only allowed through `POST /api/lessons/planned/:id/delete-fresh` after backend downstream guard checks.
 
 Health endpoints:
 
 ```text
 GET /api/health
 GET /api/health/db
+GET /api/version
 ```
 
 Auth endpoints:
@@ -41,7 +52,9 @@ Settings endpoints:
 ```text
 GET /api/settings/business-entities
 GET /api/settings/accounts
+GET /api/settings/money-rules
 GET /api/settings/roles
+GET /api/settings/roles/:id
 GET /api/settings/permissions
 GET /api/settings/subjects
 GET /api/settings/external-workplaces
@@ -62,6 +75,16 @@ Account endpoints:
 
 ```text
 GET /api/accounts
+GET /api/accounts/transactions
+GET /api/accounts/transactions/:id
+POST /api/accounts/transactions/manual
+POST /api/accounts/transactions/from-income/:incomeRecordId
+POST /api/accounts/transactions/from-expense/:expenseRecordId
+POST /api/accounts/transactions/:id/reverse
+GET /api/accounts/transfers
+GET /api/accounts/transfers/:id
+POST /api/accounts/transfers
+POST /api/accounts/transfers/:id/void
 GET /api/accounts/:id
 POST /api/accounts
 PATCH /api/accounts/:id
@@ -86,7 +109,10 @@ Student lesson endpoints:
 GET /api/lessons/planned
 GET /api/lessons/planned/:id
 POST /api/lessons/planned
+POST /api/lessons/planned/batch-preview
+POST /api/lessons/planned/batch-create
 PATCH /api/lessons/planned/:id
+POST /api/lessons/planned/:id/delete-fresh
 POST /api/lessons/planned/:id/cancel
 POST /api/lessons/planned/:id/restore
 POST /api/lessons/planned/:id/mark-makeup-pending
@@ -94,6 +120,18 @@ POST /api/lessons/planned/:id/generate-actual
 GET /api/lessons/actual
 GET /api/lessons/actual/:id
 PATCH /api/lessons/actual/:id
+POST /api/lessons/actual/:id/cancel
+```
+
+Student settlement endpoints:
+
+```text
+GET /api/settlements/student
+GET /api/settlements/student/:id
+GET /api/settlements/student/:id/export-payload
+POST /api/settlements/student/preview
+POST /api/settlements/student/lock
+POST /api/settlements/student/:id/revoke
 ```
 
 Tuition billing endpoints:
@@ -101,8 +139,10 @@ Tuition billing endpoints:
 ```text
 GET /api/tuition-bills
 GET /api/tuition-bills/:id
+GET /api/tuition-bills/:id/export-payload
 POST /api/tuition-bills/generate
 POST /api/tuition-bills/:id/generate-income
+POST /api/tuition-bills/:id/void
 ```
 
 Income endpoints:
@@ -114,14 +154,35 @@ POST /api/income/manual
 POST /api/income/:id/void
 ```
 
+Expense endpoints:
+
+```text
+GET /api/expenses
+GET /api/expenses/:id
+POST /api/expenses/manual
+POST /api/expenses/from-wage/:snapshotId
+POST /api/expenses/:id/void
+```
+
 Cash request endpoints:
 
 ```text
 GET /api/cash/requests
 GET /api/cash/requests/:id
 POST /api/cash/requests/income/:incomeRecordId
+POST /api/cash/requests/expense/:expenseRecordId
 POST /api/cash/requests/:id/reject
+POST /api/cash/requests/:id/withdraw
 POST /api/cash/requests/:id/confirm
+```
+
+Cash inbound endpoints:
+
+```text
+GET /api/cash-inbound/events
+GET /api/cash-inbound/events/:id
+POST /api/cash-inbound/events
+POST /api/cash-inbound/events/:id/reject
 ```
 
 Subject endpoints:
@@ -146,6 +207,24 @@ POST /api/teachers/:id/archive
 POST /api/teachers/:id/restore
 ```
 
+Teacher wage endpoints:
+
+```text
+GET /api/wages/rules
+POST /api/wages/rules
+PATCH /api/wages/rules/:id
+GET /api/wages/teacher
+GET /api/wages/teacher/:id
+POST /api/wages/teacher/preview
+POST /api/wages/teacher/lock
+PATCH /api/wages/teacher/:id/adjustments
+POST /api/wages/teacher/:id/attendance-export
+POST /api/wages/teacher/:id/attendance-import-preview
+POST /api/wages/teacher/:id/attendance-import-confirm
+POST /api/wages/teacher/:id/confirm-adjustments
+POST /api/wages/teacher/:id/revoke
+```
+
 External workplace endpoints:
 
 ```text
@@ -157,10 +236,38 @@ POST /api/external-workplaces/:id/archive
 POST /api/external-workplaces/:id/restore
 ```
 
+External work endpoints:
+
+```text
+GET /api/external-work/lessons
+GET /api/external-work/lessons/:id
+POST /api/external-work/lessons/planned
+PATCH /api/external-work/lessons/:id
+DELETE /api/external-work/lessons/:id
+POST /api/external-work/lessons/:id/generate-actual
+GET /api/external-work/settlements
+GET /api/external-work/settlements/:id
+GET /api/external-work/settlements/:id/export-payload
+POST /api/external-work/settlements/preview
+POST /api/external-work/settlements/lock
+POST /api/external-work/settlements/:id/revoke
+POST /api/external-work/settlements/:id/generate-income
+```
+
+Reimbursement endpoints:
+
+```text
+GET /api/reimbursements
+GET /api/reimbursements/:id
+POST /api/reimbursements/from-expense/:expenseRecordId
+POST /api/reimbursements/:id/void
+```
+
 Audit endpoints:
 
 ```text
 GET /api/audit/events
+GET /api/audit/events/:id
 ```
 
 Optional seed admin:
