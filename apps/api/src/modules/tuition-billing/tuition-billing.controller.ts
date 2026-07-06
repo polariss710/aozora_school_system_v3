@@ -17,6 +17,7 @@ import { TuitionBillingService } from "./tuition-billing.service";
 import {
   GenerateTuitionBillBody,
   ListTuitionBillsQuery,
+  VoidTuitionBillBody,
 } from "./tuition-billing.types";
 
 @Controller("tuition-bills")
@@ -61,5 +62,15 @@ export class TuitionBillingController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tuitionBillingService.generateIncomeRecord(id, user.id);
+  }
+
+  @Post(":id/void")
+  @RequirePermissions("tuition_billing.manage")
+  voidTuitionBill(
+    @Param("id") id: string,
+    @Body() body: VoidTuitionBillBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tuitionBillingService.voidTuitionBill(id, body, user.id);
   }
 }

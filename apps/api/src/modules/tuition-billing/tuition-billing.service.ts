@@ -19,6 +19,7 @@ import { PrismaService } from "../database/prisma.service";
 import {
   GenerateTuitionBillBody,
   ListTuitionBillsQuery,
+  VoidTuitionBillBody,
 } from "./tuition-billing.types";
 
 const defaultLimit = 100;
@@ -402,6 +403,64 @@ export class TuitionBillingService {
     return incomeRecord;
   }
 
+  async voidTuitionBill(
+    id: string,
+    body: VoidTuitionBillBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findTuitionBill(id);
+
+    if (before.status === TuitionBillStatus.voided) {
+      return { tuitionBill: before };
+    }
+
+    if (before.status !== TuitionBillStatus.generated) {
+      throw new BadRequestException(
+        "Only generated tuition bill without income can be voided.",
+      );
+    }
+
+    if (before.incomeRecordId) {
+      throw new BadRequestException(
+        "Tuition bill with income record cannot be voided directly.",
+      );
+    }
+
+    const reason = this.normalizeOptionalString(body.reason);
+    const calculationSnapshot = this.mergeVoidReason(
+      before.calculationSnapshot,
+      reason,
+    );
+
+    const tuitionBill = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.studentTuitionBill.update({
+        where: { id },
+        data: {
+          status: TuitionBillStatus.voided,
+          calculationSnapshot,
+        },
+        select: tuitionBillSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "tuition_bill.void",
+          targetType: "tuition_bill",
+          targetId: id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return { tuitionBill };
+  }
+
   private async findTuitionBill(id: string): Promise<TuitionBillSnapshot> {
     const tuitionBill = await this.prisma.studentTuitionBill.findUnique({
       where: { id },
@@ -424,6 +483,21 @@ export class TuitionBillingService {
       : [];
 
     return ids.length === 1 ? ids[0] : null;
+  }
+
+  private mergeVoidReason(snapshot: Prisma.JsonValue, reason: string | null) {
+    const base =
+      snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+        ? (snapshot as Record<string, unknown>)
+        : {};
+
+    return {
+      ...base,
+      voided: {
+        reason,
+        voidedAt: new Date().toISOString(),
+      },
+    };
   }
 
   private buildTuitionBillExportPayload(

@@ -3,6 +3,10 @@ export type GenerateTuitionBillBody = {
   yearMonth?: unknown;
 };
 
+export type VoidTuitionBillBody = {
+  reason?: unknown;
+};
+
 export type ListTuitionBillsQuery = {
   yearMonth?: unknown;
   studentId?: unknown;
