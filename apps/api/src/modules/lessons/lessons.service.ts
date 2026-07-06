@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -18,6 +19,7 @@ import { PrismaService } from "../database/prisma.service";
 import {
   ActualLessonWriteBody,
   BatchPlannedLessonsBody,
+  DeleteFreshPlannedLessonBody,
   ListLessonsQuery,
   NormalizedBatchPlannedLessonRule,
   NormalizedBatchPlannedLessonsInput,
@@ -55,6 +57,8 @@ const plannedLessonSelect = {
   status: true,
   sourceType: true,
   sourceId: true,
+  createdAt: true,
+  updatedAt: true,
   student: { select: relationSelect },
   teacher: { select: relationSelect },
   subject: { select: relationSelect },
@@ -314,6 +318,62 @@ export class LessonsService {
     });
 
     return { plannedLesson };
+  }
+
+  async deleteFreshPlannedLesson(
+    id: string,
+    body: DeleteFreshPlannedLessonBody,
+    actorUserId: string,
+  ) {
+    const expectedUpdatedAt = this.normalizeExpectedUpdatedAt(
+      body.expectedUpdatedAt,
+    );
+
+    if (!this.normalizeBoolean(body.confirmDelete, "confirmDelete")) {
+      throw new BadRequestException("confirmDelete must be true.");
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const before = await tx.studentPlannedLesson.findUnique({
+        where: { id },
+        select: plannedLessonSelect,
+      });
+
+      if (!before) {
+        throw new NotFoundException("Planned lesson not found.");
+      }
+
+      this.assertFreshPlannedLessonDeleteCandidate(before);
+      this.assertExpectedUpdatedAtMatches(before, expectedUpdatedAt);
+      await this.assertNoDownstreamPlannedLessonReferences(before, tx);
+
+      await tx.studentPlannedLesson.delete({
+        where: { id },
+        select: { id: true },
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "student_planned_lesson.delete_fresh",
+          targetType: "student_planned_lesson",
+          targetId: before.id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: before,
+          afterSnapshot: {
+            deleted: true,
+            deletedPlannedLesson: this.buildDeletedPlannedLessonSummary(before),
+          },
+        },
+        tx,
+      );
+
+      return {
+        deletedPlannedLesson: this.buildDeletedPlannedLessonSummary(before),
+      };
+    });
+
+    return result;
   }
 
   async cancelPlannedLesson(id: string, actorUserId: string) {
@@ -662,6 +722,171 @@ export class LessonsService {
     ) {
       throw new BadRequestException("Planned lesson is already completed.");
     }
+  }
+
+  private assertFreshPlannedLessonDeleteCandidate(
+    plannedLesson: PlannedLessonSnapshot,
+  ) {
+    if (plannedLesson.status !== PlannedLessonStatus.scheduled) {
+      throw new BadRequestException(
+        "Only fresh scheduled planned lesson can be deleted.",
+      );
+    }
+
+    if (plannedLesson.actualLesson) {
+      throw new BadRequestException(
+        "Planned lesson with actual lesson cannot be deleted.",
+      );
+    }
+  }
+
+  private assertExpectedUpdatedAtMatches(
+    plannedLesson: PlannedLessonSnapshot,
+    expectedUpdatedAt: Date,
+  ) {
+    if (plannedLesson.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+      throw new ConflictException(
+        "Planned lesson was updated by another operation. Please reload before deleting.",
+      );
+    }
+  }
+
+  private async assertNoDownstreamPlannedLessonReferences(
+    plannedLesson: PlannedLessonSnapshot,
+    client: Prisma.TransactionClient,
+  ) {
+    const [actualLessonCount, settlements, tuitionBills, wageDetailCount] =
+      await Promise.all([
+        client.studentActualLesson.count({
+          where: {
+            OR: [
+              { plannedLessonId: plannedLesson.id },
+              { sourceType: "planned_lesson", sourceId: plannedLesson.id },
+            ],
+          },
+        }),
+        client.studentMonthlySettlement.findMany({
+          where: {
+            studentId: plannedLesson.studentId,
+            yearMonth: plannedLesson.yearMonth,
+          },
+          select: {
+            id: true,
+            status: true,
+            calculationSnapshot: true,
+          },
+        }),
+        client.studentTuitionBill.findMany({
+          where: {
+            studentId: plannedLesson.studentId,
+            yearMonth: plannedLesson.yearMonth,
+          },
+          select: {
+            id: true,
+            status: true,
+            incomeRecordId: true,
+            calculationSnapshot: true,
+          },
+        }),
+        client.teacherWageSnapshotDetail.count({
+          where: {
+            actualLesson: {
+              OR: [
+                { plannedLessonId: plannedLesson.id },
+                { sourceType: "planned_lesson", sourceId: plannedLesson.id },
+              ],
+            },
+          },
+        }),
+      ]);
+
+    if (actualLessonCount > 0) {
+      throw new BadRequestException(
+        "Planned lesson has downstream actual lesson reference.",
+      );
+    }
+
+    const referencingSettlement = settlements.find((settlement) =>
+      this.snapshotReferencesPlannedLesson(
+        settlement.calculationSnapshot,
+        [
+          "sourceLessonIds",
+          "billableLessonIds",
+          "cancelledLessonIds",
+          "plannedLessonIds",
+        ],
+        plannedLesson.id,
+      ),
+    );
+
+    if (referencingSettlement) {
+      throw new BadRequestException(
+        "Planned lesson is referenced by student monthly settlement.",
+      );
+    }
+
+    const referencingTuitionBill = tuitionBills.find((tuitionBill) =>
+      this.snapshotReferencesPlannedLesson(
+        tuitionBill.calculationSnapshot,
+        ["plannedLessonIds"],
+        plannedLesson.id,
+      ),
+    );
+
+    if (referencingTuitionBill) {
+      throw new BadRequestException(
+        "Planned lesson is referenced by tuition bill snapshot.",
+      );
+    }
+
+    if (wageDetailCount > 0) {
+      throw new BadRequestException(
+        "Planned lesson is referenced by teacher wage snapshot.",
+      );
+    }
+  }
+
+  private snapshotReferencesPlannedLesson(
+    snapshot: Prisma.JsonValue,
+    keys: string[],
+    plannedLessonId: string,
+  ) {
+    return keys.some((key) =>
+      this.getSnapshotStringArray(snapshot, key).includes(plannedLessonId),
+    );
+  }
+
+  private getSnapshotStringArray(snapshot: Prisma.JsonValue, key: string) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return [];
+    }
+
+    const value = (snapshot as Record<string, unknown>)[key];
+
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.filter((item): item is string => typeof item === "string");
+  }
+
+  private buildDeletedPlannedLessonSummary(
+    plannedLesson: PlannedLessonSnapshot,
+  ) {
+    return {
+      id: plannedLesson.id,
+      studentId: plannedLesson.studentId,
+      teacherId: plannedLesson.teacherId,
+      subjectId: plannedLesson.subjectId,
+      businessEntityId: plannedLesson.businessEntityId,
+      yearMonth: plannedLesson.yearMonth,
+      weekAnchorDate: this.formatDate(plannedLesson.weekAnchorDate),
+      lessonNo: plannedLesson.lessonNo,
+      plannedFeeJpy: plannedLesson.plannedFeeJpy,
+      status: plannedLesson.status,
+      sourceType: plannedLesson.sourceType,
+      sourceId: plannedLesson.sourceId,
+    };
   }
 
   private assertActualLessonEditable(actualLesson: ActualLessonSnapshot) {
@@ -1333,6 +1558,22 @@ export class LessonsService {
 
   private formatDate(date: Date) {
     return date.toISOString().slice(0, 10);
+  }
+
+  private normalizeExpectedUpdatedAt(value: unknown) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new BadRequestException("expectedUpdatedAt is required.");
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        "expectedUpdatedAt must be a valid ISO datetime.",
+      );
+    }
+
+    return date;
   }
 
   private getMondayAnchors(start: Date, end: Date) {

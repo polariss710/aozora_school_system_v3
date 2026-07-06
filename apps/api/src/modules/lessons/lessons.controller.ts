@@ -18,6 +18,7 @@ import { LessonsService } from "./lessons.service";
 import {
   ActualLessonWriteBody,
   BatchPlannedLessonsBody,
+  DeleteFreshPlannedLessonBody,
   ListLessonsQuery,
   PlannedLessonWriteBody,
 } from "./lessons.types";
@@ -73,6 +74,16 @@ export class LessonsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.lessonsService.updatePlannedLesson(id, body, user.id);
+  }
+
+  @Post("planned/:id/delete-fresh")
+  @RequirePermissions("lessons.manage")
+  deleteFreshPlannedLesson(
+    @Param("id") id: string,
+    @Body() body: DeleteFreshPlannedLessonBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.lessonsService.deleteFreshPlannedLesson(id, body, user.id);
   }
 
   @Post("planned/:id/cancel")

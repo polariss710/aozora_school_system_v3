@@ -61,6 +61,11 @@ export type ActualLessonWriteBody = {
   teacherWageEligible?: unknown;
 };
 
+export type DeleteFreshPlannedLessonBody = {
+  expectedUpdatedAt?: unknown;
+  confirmDelete?: unknown;
+};
+
 export type NormalizedPlannedLessonInput = {
   studentId: string;
   teacherId: string;
