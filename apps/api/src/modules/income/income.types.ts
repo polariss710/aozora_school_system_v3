@@ -19,3 +19,7 @@ export type ManualIncomeBody = {
   originalAmountCny?: unknown;
   memo?: unknown;
 };
+
+export type VoidIncomeRecordBody = {
+  reason?: unknown;
+};

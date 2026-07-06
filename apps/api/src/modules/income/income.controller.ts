@@ -14,7 +14,11 @@ import { PermissionGuard } from "../auth/permission.guard";
 import { RequirePermissions } from "../auth/permissions.decorator";
 import { AuthenticatedUser } from "../users/users.types";
 import { IncomeService } from "./income.service";
-import { ListIncomeRecordsQuery, ManualIncomeBody } from "./income.types";
+import {
+  ListIncomeRecordsQuery,
+  ManualIncomeBody,
+  VoidIncomeRecordBody,
+} from "./income.types";
 
 @Controller("income")
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -48,8 +52,9 @@ export class IncomeController {
   @RequirePermissions("income.manage")
   voidIncomeRecord(
     @Param("id") id: string,
+    @Body() body: VoidIncomeRecordBody,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.incomeService.voidIncomeRecord(id, user.id);
+    return this.incomeService.voidIncomeRecord(id, body, user.id);
   }
 }

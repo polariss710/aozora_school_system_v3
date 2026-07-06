@@ -18,7 +18,11 @@ import {
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
-import { ListIncomeRecordsQuery, ManualIncomeBody } from "./income.types";
+import {
+  ListIncomeRecordsQuery,
+  ManualIncomeBody,
+  VoidIncomeRecordBody,
+} from "./income.types";
 
 const defaultLimit = 100;
 const maxLimit = 500;
@@ -136,7 +140,11 @@ export class IncomeService {
     return { incomeRecord };
   }
 
-  async voidIncomeRecord(id: string, actorUserId: string) {
+  async voidIncomeRecord(
+    id: string,
+    body: VoidIncomeRecordBody,
+    actorUserId: string,
+  ) {
     const before = await this.findIncomeRecord(id);
 
     if (before.recordStatus !== IncomeRecordStatus.pending) {
@@ -156,6 +164,8 @@ export class IncomeService {
         "Only manual income account transaction can be voided from income.",
       );
     }
+
+    const reason = this.normalizeOptionalString(body.reason);
 
     const incomeRecord = await this.prisma.$transaction(async (tx) => {
       let reversedAccountTransactionIds: string[] = [];
@@ -225,6 +235,7 @@ export class IncomeService {
           targetType: "income_record",
           targetId: id,
           riskLevel: AuditRiskLevel.high,
+          reason,
           beforeSnapshot: before,
           afterSnapshot: { incomeRecord: updated, reversedAccountTransactionIds },
         },
