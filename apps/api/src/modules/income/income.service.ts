@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import {
+  AccountTransactionStatus,
   AuditRiskLevel,
   CashRequestStatus,
   CurrencyCode,
@@ -142,11 +143,51 @@ export class IncomeService {
       throw new BadRequestException("Only pending income can be voided.");
     }
 
-    if (before.cashStatus !== CashRequestStatus.not_requested) {
-      throw new BadRequestException("Income with Cash request cannot be voided.");
+    this.assertIncomeCanBeVoided(before);
+
+    const shouldReverseAccountTransaction =
+      before.cashStatus === CashRequestStatus.account_transaction_created;
+
+    if (
+      shouldReverseAccountTransaction &&
+      before.sourceType !== manualIncomeSourceType
+    ) {
+      throw new BadRequestException(
+        "Only manual income account transaction can be voided from income.",
+      );
     }
 
     const incomeRecord = await this.prisma.$transaction(async (tx) => {
+      let reversedAccountTransactionIds: string[] = [];
+
+      if (shouldReverseAccountTransaction) {
+        const accountTransactions = await tx.accountTransaction.findMany({
+          where: {
+            incomeRecordId: id,
+            status: AccountTransactionStatus.active,
+          },
+          select: { id: true },
+        });
+
+        if (accountTransactions.length === 0) {
+          throw new BadRequestException(
+            "Active account transaction is required before voiding income.",
+          );
+        }
+
+        reversedAccountTransactionIds = accountTransactions.map(
+          (transaction) => transaction.id,
+        );
+
+        await tx.accountTransaction.updateMany({
+          where: { id: { in: reversedAccountTransactionIds } },
+          data: {
+            status: AccountTransactionStatus.reversed,
+            reversedAt: new Date(),
+          },
+        });
+      }
+
       const updated = await tx.incomeRecord.update({
         where: { id },
         data: { recordStatus: IncomeRecordStatus.voided },
@@ -185,7 +226,7 @@ export class IncomeService {
           targetId: id,
           riskLevel: AuditRiskLevel.high,
           beforeSnapshot: before,
-          afterSnapshot: updated,
+          afterSnapshot: { incomeRecord: updated, reversedAccountTransactionIds },
         },
         tx,
       );
@@ -194,6 +235,19 @@ export class IncomeService {
     });
 
     return { incomeRecord };
+  }
+
+  private assertIncomeCanBeVoided(incomeRecord: IncomeRecordSnapshot) {
+    if (
+      incomeRecord.cashStatus === CashRequestStatus.not_requested ||
+      incomeRecord.cashStatus === CashRequestStatus.cash_rejected ||
+      incomeRecord.cashStatus === CashRequestStatus.cash_withdrawn ||
+      incomeRecord.cashStatus === CashRequestStatus.account_transaction_created
+    ) {
+      return;
+    }
+
+    throw new BadRequestException("Income downstream status does not allow void.");
   }
 
   private async findIncomeRecord(id: string): Promise<IncomeRecordSnapshot> {

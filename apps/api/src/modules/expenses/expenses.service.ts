@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import {
+  AccountTransactionStatus,
   AuditRiskLevel,
   CashRequestStatus,
   CurrencyCode,
@@ -216,13 +217,53 @@ export class ExpensesService {
       throw new BadRequestException("Only pending expense can be voided.");
     }
 
-    if (before.cashStatus !== CashRequestStatus.not_requested) {
-      throw new BadRequestException("Expense with Cash request cannot be voided.");
+    this.assertExpenseCanBeVoided(before);
+
+    const shouldReverseAccountTransaction =
+      before.cashStatus === CashRequestStatus.account_transaction_created;
+
+    if (
+      shouldReverseAccountTransaction &&
+      before.sourceType !== manualExpenseSourceType
+    ) {
+      throw new BadRequestException(
+        "Only manual expense account transaction can be voided from expense.",
+      );
     }
 
     const reason = this.normalizeOptionalString(body.reason);
 
     const result = await this.prisma.$transaction(async (tx) => {
+      let reversedAccountTransactionIds: string[] = [];
+
+      if (shouldReverseAccountTransaction) {
+        const accountTransactions = await tx.accountTransaction.findMany({
+          where: {
+            expenseRecordId: id,
+            status: AccountTransactionStatus.active,
+          },
+          select: { id: true },
+        });
+
+        if (accountTransactions.length === 0) {
+          throw new BadRequestException(
+            "Active account transaction is required before voiding expense.",
+          );
+        }
+
+        reversedAccountTransactionIds = accountTransactions.map(
+          (transaction) => transaction.id,
+        );
+
+        await tx.accountTransaction.updateMany({
+          where: { id: { in: reversedAccountTransactionIds } },
+          data: {
+            status: AccountTransactionStatus.reversed,
+            reversedAt: new Date(),
+          },
+        });
+      }
+
       const expenseRecord = await tx.expenseRecord.update({
         where: { id },
         data: { recordStatus: ExpenseRecordStatus.voided },
@@ -254,7 +295,11 @@ export class ExpensesService {
           riskLevel: AuditRiskLevel.high,
           reason,
           beforeSnapshot: before,
-          afterSnapshot: { expenseRecord, wageSnapshot },
+          afterSnapshot: {
+            expenseRecord,
+            wageSnapshot,
+            reversedAccountTransactionIds,
+          },
         },
         tx,
       );
@@ -263,6 +308,19 @@ export class ExpensesService {
     });
 
     return result;
+  }
+
+  private assertExpenseCanBeVoided(expenseRecord: ExpenseRecordSnapshot) {
+    if (
+      expenseRecord.cashStatus === CashRequestStatus.not_requested ||
+      expenseRecord.cashStatus === CashRequestStatus.cash_rejected ||
+      expenseRecord.cashStatus === CashRequestStatus.cash_withdrawn ||
+      expenseRecord.cashStatus === CashRequestStatus.account_transaction_created
+    ) {
+      return;
+    }
+
+    throw new BadRequestException("Expense downstream status does not allow void.");
   }
 
   private assertWageSnapshotCanGenerateExpense(wageSnapshot: WageSnapshot) {
