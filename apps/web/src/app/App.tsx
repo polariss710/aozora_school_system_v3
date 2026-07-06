@@ -129,6 +129,7 @@ interface DataRow {
   };
   studentRecord?: StudentRecord;
   teacherRecord?: TeacherRecord;
+  settingCategory?: SettingCategory;
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
@@ -198,6 +199,8 @@ type TeacherApiState =
 type TeacherDialogState =
   | { mode: "create" }
   | { mode: "edit"; row: DataRow };
+
+type SettingCategory = "businessEntities" | "accounts" | "subjects" | "externalWorkplaces";
 
 interface SettingsApiCounts {
   businessEntities: number;
@@ -721,12 +724,14 @@ function DataTable({
   onToggleRow,
   onToggleAll,
   onOpenDetail,
+  showSelection = true,
 }: {
   page: PageConfig;
   selected: Set<string>;
   onToggleRow: (id: string) => void;
   onToggleAll: () => void;
   onOpenDetail: (row: DataRow) => void;
+  showSelection?: boolean;
 }) {
   const allChecked = page.rows.length > 0 && selected.size === page.rows.length;
 
@@ -740,14 +745,16 @@ function DataTable({
         <table className="w-full min-w-[980px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30">
-              <th className="w-10 px-4 py-2.5 text-left">
-                <input
-                  checked={allChecked}
-                  onChange={onToggleAll}
-                  type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-border accent-[#1687D9]"
-                />
-              </th>
+              {showSelection && (
+                <th className="w-10 px-4 py-2.5 text-left">
+                  <input
+                    checked={allChecked}
+                    onChange={onToggleAll}
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-border accent-[#1687D9]"
+                  />
+                </th>
+              )}
               <th className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground">对象</th>
               {page.columns.map((column) => (
                 <th
@@ -783,14 +790,16 @@ function DataTable({
                     isSelected ? "bg-sky-50/50" : ""
                   }`}
                 >
-                  <td className="px-4 py-3">
-                    <input
-                      checked={isSelected}
-                      onChange={() => onToggleRow(row.id)}
-                      type="checkbox"
-                      className="h-3.5 w-3.5 rounded border-border accent-[#1687D9]"
-                    />
-                  </td>
+                  {showSelection && (
+                    <td className="px-4 py-3">
+                      <input
+                        checked={isSelected}
+                        onChange={() => onToggleRow(row.id)}
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-border accent-[#1687D9]"
+                      />
+                    </td>
+                  )}
                   <td className="px-3 py-3">
                     <div className="font-medium leading-snug text-foreground">{row.title}</div>
                     {row.subtitle && <div className="mt-0.5 text-xs text-muted-foreground">{row.subtitle}</div>}
@@ -1950,6 +1959,72 @@ function BusinessPage({
   );
 }
 
+function SettingsPage({
+  page,
+  settingsApi,
+  activeTab,
+  onTabChange,
+  onOpenDetail,
+}: {
+  page: PageConfig;
+  settingsApi: SettingsApiState;
+  activeTab: SettingCategory;
+  onTabChange: (tab: SettingCategory) => void;
+  onOpenDetail: (row: DataRow) => void;
+}) {
+  const tab = settingTabs.find((item) => item.key === activeTab) ?? settingTabs[0];
+  const rows =
+    settingsApi.status === "ready"
+      ? settingsApi.rows.filter((row) => row.settingCategory === tab.key)
+      : page.rows.filter((row) => row.settingCategory === tab.key);
+  const tablePage: PageConfig = {
+    ...page,
+    title: tab.label,
+    columns: tab.columns,
+    rows,
+  };
+
+  return (
+    <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-28">
+      <PageHeader page={page} />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {page.metrics.map((metric) => (
+          <MetricCard key={metric.label} metric={metric} />
+        ))}
+      </div>
+      <section className="rounded-lg border border-border bg-white p-2">
+        <div className="grid gap-2 md:grid-cols-4">
+          {settingTabs.map((item) => {
+            const isActive = item.key === activeTab;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => onTabChange(item.key)}
+                className={`flex h-9 items-center justify-center rounded-md px-3 text-xs font-medium transition ${
+                  isActive
+                    ? "bg-[#1687D9] text-white"
+                    : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      <DataTable
+        page={tablePage}
+        selected={new Set()}
+        onToggleAll={() => undefined}
+        onToggleRow={() => undefined}
+        onOpenDetail={onOpenDetail}
+        showSelection={false}
+      />
+    </main>
+  );
+}
+
 const commonFilters = {
   month: { label: "业务月份", options: ["2026-07", "2026-06", "2026-05"] },
   student: { label: "学生", options: ["王小明", "陈美咲", "林拓海", "佐藤优"] },
@@ -2097,6 +2172,49 @@ const emptySettingsCounts: SettingsApiCounts = {
   externalWorkplaces: 0,
 };
 
+const settingTabs: Array<{ key: SettingCategory; label: string; columns: Column[] }> = [
+  {
+    key: "businessEntities",
+    label: "业务归属",
+    columns: [
+      { key: "code", label: "编码" },
+      { key: "memo", label: "备注", wide: true },
+      { key: "status", label: "状态" },
+    ],
+  },
+  {
+    key: "accounts",
+    label: "账户",
+    columns: [
+      { key: "code", label: "编码" },
+      { key: "accountType", label: "账户类型" },
+      { key: "currency", label: "币种" },
+      { key: "memo", label: "备注", wide: true },
+      { key: "status", label: "状态" },
+    ],
+  },
+  {
+    key: "subjects",
+    label: "科目",
+    columns: [
+      { key: "code", label: "编码" },
+      { key: "category", label: "分类" },
+      { key: "sortOrder", label: "排序", align: "right" },
+      { key: "memo", label: "备注", wide: true },
+      { key: "status", label: "状态" },
+    ],
+  },
+  {
+    key: "externalWorkplaces",
+    label: "外部授课机构",
+    columns: [
+      { key: "code", label: "编码" },
+      { key: "memo", label: "备注", wide: true },
+      { key: "status", label: "状态" },
+    ],
+  },
+];
+
 function getSettingStatusView(status: BusinessEntityRecord["status"]): { label: string; tone: Tone } {
   if (status === "active") {
     return { label: "启用", tone: "emerald" };
@@ -2118,7 +2236,9 @@ function mapBusinessEntityToSettingRow(item: BusinessEntityRecord): DataRow {
     subtitle: `业务归属 · ${item.code}`,
     status: status.label,
     tone: status.tone,
+    settingCategory: "businessEntities",
     cells: {
+      code: item.code,
       type: "业务归属",
       name: item.name,
       owner: "系统管理员",
@@ -2137,9 +2257,13 @@ function mapAccountToSettingRow(item: AccountRecord): DataRow {
     subtitle: `${item.currency} · ${item.type}`,
     status: status.label,
     tone: status.tone,
+    settingCategory: "accounts",
     cells: {
+      code: item.code,
       type: "账户",
       name: item.name,
+      accountType: item.type,
+      currency: item.currency,
       owner: "管理员 / 财务",
       memo: item.memo ?? `${item.currency} / ${item.type}`,
     },
@@ -2166,9 +2290,13 @@ function mapSubjectToSettingRow(item: SubjectRecord): DataRow {
     subtitle: `科目 · ${item.category}`,
     status: status.label,
     tone: status.tone,
+    settingCategory: "subjects",
     cells: {
+      code: item.code,
       type: "科目",
       name: item.name,
+      category: item.category,
+      sortOrder: item.sortOrder,
       owner: "系统管理员",
       memo: item.memo ?? `排序 ${item.sortOrder}`,
     },
@@ -2195,7 +2323,9 @@ function mapExternalWorkplaceToSettingRow(item: ExternalWorkplaceRecord): DataRo
     subtitle: `外部授课机构 · ${item.code}`,
     status: status.label,
     tone: status.tone,
+    settingCategory: "externalWorkplaces",
     cells: {
+      code: item.code,
       type: "外部授课机构",
       name: item.name,
       owner: "业务人员",
@@ -2206,8 +2336,14 @@ function mapExternalWorkplaceToSettingRow(item: ExternalWorkplaceRecord): DataRo
 }
 
 function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState): PageConfig {
+  const baseSettingsPage: PageConfig = {
+    ...basePage,
+    description: "基础设置按类型分区展示；新增和编辑入口后续按类型逐步接入",
+    primaryAction: undefined,
+  };
+
   if (settingsApi.status !== "ready") {
-    return basePage;
+    return baseSettingsPage;
   }
 
   const total =
@@ -2217,9 +2353,8 @@ function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState):
     settingsApi.counts.externalWorkplaces;
 
   return {
-    ...basePage,
+    ...baseSettingsPage,
     description: "真实 dev API 只读设置列表；新增和编辑入口后续按类型逐步接入",
-    primaryAction: undefined,
     metrics: [
       { label: "业务归属", value: `${settingsApi.counts.businessEntities} 个`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
       { label: "School 账户", value: `${settingsApi.counts.accounts} 个`, sub: "法人 + 垫付账户", tone: "emerald", icon: Landmark },
@@ -4218,6 +4353,7 @@ export default function App() {
     rows: [],
     counts: emptySettingsCounts,
   });
+  const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
   const [selectedByPage, setSelectedByPage] = useState<Record<string, Set<string>>>({});
@@ -4638,6 +4774,14 @@ export default function App() {
           <LessonManagementPage />
         ) : activeKey === "external-lessons" ? (
           <ExternalWorkLessonsPage onOpenDetail={setDetailRow} />
+        ) : activeKey === "settings" && activePage ? (
+          <SettingsPage
+            page={activePage}
+            settingsApi={settingsApi}
+            activeTab={settingsActiveTab}
+            onTabChange={setSettingsActiveTab}
+            onOpenDetail={setDetailRow}
+          />
         ) : activePage ? (
           <BusinessPage
             page={activePage}
