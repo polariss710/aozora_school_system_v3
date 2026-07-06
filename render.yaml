@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: corepack enable && corepack prepare pnpm@11.7.0 --activate && pnpm install --frozen-lockfile && pnpm --dir apps/api exec prisma generate && pnpm build:api
+    buildCommand: pnpm install --frozen-lockfile && pnpm --dir apps/api exec prisma generate && pnpm build:api
     startCommand: pnpm --dir apps/api start
     envVars:
       - key: NODE_ENV
