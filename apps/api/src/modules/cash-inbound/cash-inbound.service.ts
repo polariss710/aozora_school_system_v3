@@ -201,6 +201,23 @@ export class CashInboundService {
         select: cashInboundEventSelect,
       });
 
+      if (input.linkedIncomeRecordIds.length > 0) {
+        const linkedIncomeRecords = await tx.incomeRecord.updateMany({
+          where: {
+            id: { in: input.linkedIncomeRecordIds },
+            recordStatus: IncomeRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.cash_confirmed,
+          },
+          data: { cashStatus: CashRequestStatus.account_transaction_created },
+        });
+
+        if (linkedIncomeRecords.count !== input.linkedIncomeRecordIds.length) {
+          throw new BadRequestException(
+            "Linked income records must be Cash confirmed and not yet posted to account.",
+          );
+        }
+      }
+
       await this.auditService.recordEvent(
         {
           actorUserId,
@@ -246,6 +263,23 @@ export class CashInboundService {
           memo,
         },
       });
+
+      if (before.linkedIncomeRecordIds.length > 0) {
+        const linkedIncomeRecords = await tx.incomeRecord.updateMany({
+          where: {
+            id: { in: before.linkedIncomeRecordIds },
+            recordStatus: IncomeRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.account_transaction_created,
+          },
+          data: { cashStatus: CashRequestStatus.cash_confirmed },
+        });
+
+        if (linkedIncomeRecords.count !== before.linkedIncomeRecordIds.length) {
+          throw new BadRequestException(
+            "Linked income records are not in account transaction status.",
+          );
+        }
+      }
 
       const updated = await tx.cashInboundEvent.update({
         where: { id },
@@ -314,7 +348,7 @@ export class CashInboundService {
       where: {
         id: { in: ids },
         recordStatus: IncomeRecordStatus.cash_confirmed,
-        cashStatus: { in: [CashRequestStatus.cash_confirmed, CashRequestStatus.account_transaction_created] },
+        cashStatus: CashRequestStatus.cash_confirmed,
       },
     });
 
