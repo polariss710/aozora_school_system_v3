@@ -67,6 +67,42 @@ export interface TeacherWriteInput {
   memo?: string | null;
 }
 
+export interface BusinessEntityRecord {
+  id: string;
+  code: string;
+  name: string;
+  status: "active" | "inactive" | "archived";
+  memo: string | null;
+}
+
+export interface AccountRecord {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  currency: string;
+  status: "active" | "inactive" | "archived";
+  memo: string | null;
+}
+
+export interface SubjectRecord {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  sortOrder: number;
+  status: "active" | "inactive" | "archived";
+  memo: string | null;
+}
+
+export interface ExternalWorkplaceRecord {
+  id: string;
+  code: string;
+  name: string;
+  status: "active" | "inactive" | "archived";
+  memo: string | null;
+}
+
 interface ApiHealthResponse {
   service: string;
   status: "ok";
@@ -91,6 +127,10 @@ interface ListResponse<T> {
   items: T[];
   total: number;
   limit: number;
+}
+
+interface ItemsResponse<T> {
+  items: T[];
 }
 
 export class ApiRequestError extends Error {
@@ -225,6 +265,30 @@ export function archiveTeacher(accessToken: string, teacherId: string) {
 export function restoreTeacher(accessToken: string, teacherId: string) {
   return requestJson<{ teacher: TeacherRecord }>(`/teachers/${teacherId}/restore`, {
     method: "POST",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listBusinessEntities(accessToken: string) {
+  return requestJson<ItemsResponse<BusinessEntityRecord>>("/settings/business-entities", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listAccounts(accessToken: string) {
+  return requestJson<ItemsResponse<AccountRecord>>("/settings/accounts", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listSubjects(accessToken: string) {
+  return requestJson<ItemsResponse<SubjectRecord>>("/settings/subjects", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listExternalWorkplaces(accessToken: string) {
+  return requestJson<ItemsResponse<ExternalWorkplaceRecord>>("/settings/external-workplaces", {
     headers: authorizedHeaders(accessToken),
   });
 }

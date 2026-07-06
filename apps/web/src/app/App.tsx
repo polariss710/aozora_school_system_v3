@@ -49,6 +49,10 @@ import {
   createTeacher,
   fetchApiHealthSnapshot,
   isApiRequestError,
+  listAccounts,
+  listBusinessEntities,
+  listExternalWorkplaces,
+  listSubjects,
   listStudents,
   listTeachers,
   loginWithPassword,
@@ -59,9 +63,13 @@ import {
 } from "./api";
 import type {
   ApiHealthSnapshot,
+  AccountRecord,
   AuthSession,
+  BusinessEntityRecord,
+  ExternalWorkplaceRecord,
   StudentRecord,
   StudentWriteInput,
+  SubjectRecord,
   TeacherRecord,
   TeacherWriteInput,
 } from "./api";
@@ -190,6 +198,18 @@ type TeacherApiState =
 type TeacherDialogState =
   | { mode: "create" }
   | { mode: "edit"; row: DataRow };
+
+interface SettingsApiCounts {
+  businessEntities: number;
+  accounts: number;
+  subjects: number;
+  externalWorkplaces: number;
+}
+
+type SettingsApiState =
+  | { status: "idle" | "loading"; rows: DataRow[]; counts: SettingsApiCounts; message?: string }
+  | { status: "ready"; rows: DataRow[]; counts: SettingsApiCounts; message?: string }
+  | { status: "error"; rows: DataRow[]; counts: SettingsApiCounts; message: string };
 
 const toneClasses: Record<
   Tone,
@@ -2067,6 +2087,147 @@ function buildTeachersPage(basePage: PageConfig, teacherApi: TeacherApiState): P
       { label: "归档老师", value: `${archivedCount} 人`, sub: "保留历史工资", tone: "slate", icon: LockKeyhole },
     ],
     rows: teacherApi.rows,
+  };
+}
+
+const emptySettingsCounts: SettingsApiCounts = {
+  businessEntities: 0,
+  accounts: 0,
+  subjects: 0,
+  externalWorkplaces: 0,
+};
+
+function getSettingStatusView(status: BusinessEntityRecord["status"]): { label: string; tone: Tone } {
+  if (status === "active") {
+    return { label: "启用", tone: "emerald" };
+  }
+
+  if (status === "inactive") {
+    return { label: "停用", tone: "amber" };
+  }
+
+  return { label: "归档", tone: "slate" };
+}
+
+function mapBusinessEntityToSettingRow(item: BusinessEntityRecord): DataRow {
+  const status = getSettingStatusView(item.status);
+
+  return {
+    id: `setting-business-entity-${item.id}`,
+    title: item.name,
+    subtitle: `业务归属 · ${item.code}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      type: "业务归属",
+      name: item.name,
+      owner: "系统管理员",
+      memo: item.memo ?? "-",
+    },
+    detail: [{ title: "业务归属", lines: [{ label: "编码", value: item.code }, { label: "备注", value: item.memo ?? "-" }] }],
+  };
+}
+
+function mapAccountToSettingRow(item: AccountRecord): DataRow {
+  const status = getSettingStatusView(item.status);
+
+  return {
+    id: `setting-account-${item.id}`,
+    title: item.name,
+    subtitle: `${item.currency} · ${item.type}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      type: "账户",
+      name: item.name,
+      owner: "管理员 / 财务",
+      memo: item.memo ?? `${item.currency} / ${item.type}`,
+    },
+    detail: [
+      {
+        title: "账户资料",
+        lines: [
+          { label: "编码", value: item.code },
+          { label: "币种", value: item.currency },
+          { label: "类型", value: item.type },
+          { label: "备注", value: item.memo ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function mapSubjectToSettingRow(item: SubjectRecord): DataRow {
+  const status = getSettingStatusView(item.status);
+
+  return {
+    id: `setting-subject-${item.id}`,
+    title: item.name,
+    subtitle: `科目 · ${item.category}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      type: "科目",
+      name: item.name,
+      owner: "系统管理员",
+      memo: item.memo ?? `排序 ${item.sortOrder}`,
+    },
+    detail: [
+      {
+        title: "科目资料",
+        lines: [
+          { label: "编码", value: item.code },
+          { label: "分类", value: item.category },
+          { label: "排序", value: item.sortOrder },
+          { label: "备注", value: item.memo ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function mapExternalWorkplaceToSettingRow(item: ExternalWorkplaceRecord): DataRow {
+  const status = getSettingStatusView(item.status);
+
+  return {
+    id: `setting-external-workplace-${item.id}`,
+    title: item.name,
+    subtitle: `外部授课机构 · ${item.code}`,
+    status: status.label,
+    tone: status.tone,
+    cells: {
+      type: "外部授课机构",
+      name: item.name,
+      owner: "业务人员",
+      memo: item.memo ?? "-",
+    },
+    detail: [{ title: "外部授课机构", lines: [{ label: "编码", value: item.code }, { label: "备注", value: item.memo ?? "-" }] }],
+  };
+}
+
+function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState): PageConfig {
+  if (settingsApi.status !== "ready") {
+    return basePage;
+  }
+
+  const total =
+    settingsApi.counts.businessEntities +
+    settingsApi.counts.accounts +
+    settingsApi.counts.subjects +
+    settingsApi.counts.externalWorkplaces;
+
+  return {
+    ...basePage,
+    description: "真实 dev API 只读设置列表；新增和编辑入口后续按类型逐步接入",
+    primaryAction: undefined,
+    metrics: [
+      { label: "业务归属", value: `${settingsApi.counts.businessEntities} 个`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
+      { label: "School 账户", value: `${settingsApi.counts.accounts} 个`, sub: "法人 + 垫付账户", tone: "emerald", icon: Landmark },
+      { label: "科目", value: `${settingsApi.counts.subjects} 个`, sub: "课程和工资规则基础", tone: "violet", icon: BookOpen },
+      { label: "外部授课机构", value: `${settingsApi.counts.externalWorkplaces} 个`, sub: `设置合计 ${total} 条`, tone: "amber", icon: Building2 },
+    ],
+    filters: [{ label: "设置类型", options: ["业务归属", "账户", "科目", "外部授课机构"] }, commonFilters.status],
+    rows: settingsApi.rows,
   };
 }
 
@@ -4052,6 +4213,11 @@ export default function App() {
   const [teacherDialog, setTeacherDialog] = useState<TeacherDialogState | null>(null);
   const [isTeacherSubmitting, setIsTeacherSubmitting] = useState(false);
   const [teacherMutationError, setTeacherMutationError] = useState<string | null>(null);
+  const [settingsApi, setSettingsApi] = useState<SettingsApiState>({
+    status: "idle",
+    rows: [],
+    counts: emptySettingsCounts,
+  });
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
   const [selectedByPage, setSelectedByPage] = useState<Record<string, Set<string>>>({});
@@ -4069,8 +4235,12 @@ export default function App() {
       return buildTeachersPage(baseActivePage, teacherApi);
     }
 
+    if (activeKey === "settings" && baseActivePage) {
+      return buildSettingsPage(baseActivePage, settingsApi);
+    }
+
     return baseActivePage;
-  }, [activeKey, baseActivePage, studentApi, teacherApi]);
+  }, [activeKey, baseActivePage, studentApi, teacherApi, settingsApi]);
   const selected = selectedByPage[activeKey] ?? new Set<string>();
   const selectedRows = useMemo(() => {
     if (!activePage) {
@@ -4201,6 +4371,65 @@ export default function App() {
       isMounted = false;
     };
   }, [authSession, teacherReloadKey]);
+
+  useEffect(() => {
+    if (!authSession) {
+      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts });
+      return;
+    }
+
+    let isMounted = true;
+
+    setSettingsApi((current) => ({
+      status: "loading",
+      rows: current.rows,
+      counts: current.counts,
+    }));
+
+    void Promise.all([
+      listBusinessEntities(authSession.accessToken),
+      listAccounts(authSession.accessToken),
+      listSubjects(authSession.accessToken),
+      listExternalWorkplaces(authSession.accessToken),
+    ])
+      .then(([businessEntities, accounts, subjects, externalWorkplaces]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setSettingsApi({
+          status: "ready",
+          rows: [
+            ...businessEntities.items.map(mapBusinessEntityToSettingRow),
+            ...accounts.items.map(mapAccountToSettingRow),
+            ...subjects.items.map(mapSubjectToSettingRow),
+            ...externalWorkplaces.items.map(mapExternalWorkplaceToSettingRow),
+          ],
+          counts: {
+            businessEntities: businessEntities.items.length,
+            accounts: accounts.items.length,
+            subjects: subjects.items.length,
+            externalWorkplaces: externalWorkplaces.items.length,
+          },
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setSettingsApi({
+          status: "error",
+          rows: [],
+          counts: emptySettingsCounts,
+          message: error instanceof Error ? error.message : "Settings API request failed",
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession]);
 
   const handleLogin = (session: AuthSession | null, mode: AuthMode) => {
     setAuthSession(session);
