@@ -17,6 +17,7 @@ import { ReimbursementsService } from "./reimbursements.service";
 import {
   CreateReimbursementBody,
   ListReimbursementsQuery,
+  VoidReimbursementBody,
 } from "./reimbursements.types";
 
 @Controller("reimbursements")
@@ -51,5 +52,15 @@ export class ReimbursementsController {
       body,
       user.id,
     );
+  }
+
+  @Post(":id/void")
+  @RequirePermissions("reimbursements.manage")
+  voidReimbursement(
+    @Param("id") id: string,
+    @Body() body: VoidReimbursementBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.reimbursementsService.voidReimbursement(id, body, user.id);
   }
 }

@@ -22,6 +22,7 @@ import { PrismaService } from "../database/prisma.service";
 import {
   CreateReimbursementBody,
   ListReimbursementsQuery,
+  VoidReimbursementBody,
 } from "./reimbursements.types";
 
 const defaultLimit = 100;
@@ -41,6 +42,7 @@ const reimbursementSelect = {
   amountCny: true,
   status: true,
   memo: true,
+  voidedAt: true,
   createdAt: true,
   updatedAt: true,
   expenseRecord: {
@@ -254,6 +256,64 @@ export class ReimbursementsService {
     return { reimbursement };
   }
 
+  async voidReimbursement(
+    id: string,
+    body: VoidReimbursementBody,
+    actorUserId: string,
+  ) {
+    const before = await this.findReimbursement(id);
+
+    if (before.status !== ReimbursementStatus.completed) {
+      throw new BadRequestException("Only completed reimbursement can be voided.");
+    }
+
+    this.assertReimbursementTransactionsActive(before);
+
+    const memo = this.normalizeOptionalString(body.memo) ?? before.memo;
+
+    const reimbursement = await this.prisma.$transaction(async (tx) => {
+      await tx.accountTransaction.updateMany({
+        where: {
+          id: {
+            in: [before.corporateTransactionId, before.advanceTransactionId],
+          },
+          status: AccountTransactionStatus.active,
+        },
+        data: {
+          status: AccountTransactionStatus.reversed,
+          reversedAt: new Date(),
+        },
+      });
+
+      const updated = await tx.reimbursementRecord.update({
+        where: { id },
+        data: {
+          status: ReimbursementStatus.voided,
+          voidedAt: new Date(),
+          memo,
+        },
+        select: reimbursementSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "reimbursement.void",
+          targetType: "reimbursement_record",
+          targetId: id,
+          riskLevel: AuditRiskLevel.critical,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return { reimbursement };
+  }
+
   private async findReimbursement(id: string) {
     const reimbursement = await this.prisma.reimbursementRecord.findUnique({
       where: { id },
@@ -265,6 +325,19 @@ export class ReimbursementsService {
     }
 
     return reimbursement;
+  }
+
+  private assertReimbursementTransactionsActive(
+    reimbursement: Awaited<ReturnType<ReimbursementsService["findReimbursement"]>>,
+  ) {
+    if (
+      reimbursement.corporateTransaction.status !== AccountTransactionStatus.active ||
+      reimbursement.advanceTransaction.status !== AccountTransactionStatus.active
+    ) {
+      throw new BadRequestException(
+        "Reimbursement account transactions are not active.",
+      );
+    }
   }
 
   private async findExpenseForReimbursement(

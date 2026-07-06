@@ -12,3 +12,7 @@ export type CreateReimbursementBody = {
   reimbursementDate?: unknown;
   memo?: unknown;
 };
+
+export type VoidReimbursementBody = {
+  memo?: unknown;
+};
