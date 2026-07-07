@@ -970,7 +970,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const canRejectInbound = row.cashInbound?.status === "account_transaction_created";
     const actions: DrawerAction[] = canRejectInbound
       ? [
-          { label: "拒绝入站事件", icon: X, variant: "danger", key: "cashInbound.reject" },
+          { label: "冲销入站", icon: RotateCcw, variant: "danger", key: "cashInbound.reject" },
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ]
       : [{ label: "查看操作记录", icon: History, variant: "quiet" }];
@@ -2909,19 +2909,19 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
   }
 
   const postedCount = cashInboundApi.rows.filter((row) => row.status === "已入账").length;
-  const rejectedCount = cashInboundApi.rows.filter((row) => row.status === "已拒绝").length;
+  const reversedInboundCount = cashInboundApi.rows.filter((row) => row.status === "已冲销").length;
   const linkedCount = cashInboundApi.rows.filter((row) => Number(row.cells.linkedIncomeCount ?? 0) > 0).length;
 
   return {
     ...basePage,
-    description: "真实 dev API Cash 入站事件列表；已入账事件可拒绝，创建入站事件后续接入",
+    description: "真实 dev API Cash 入站事件列表；已入账事件可冲销，创建入站事件后续接入",
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
     metrics: [
       { label: "入站事件", value: `${cashInboundApi.total} 条`, sub: "来自 dev API", tone: "cyan", icon: WalletCards },
       { label: "已入账", value: `${postedCount} 条`, sub: "已生成账户流水", tone: "emerald", icon: CheckCircle2 },
-      { label: "已拒绝", value: `${rejectedCount} 条`, sub: "流水已冲销", tone: "slate", icon: RotateCcw },
+      { label: "已冲销", value: `${reversedInboundCount} 条`, sub: "入站已撤销", tone: "slate", icon: RotateCcw },
       { label: "关联收入", value: `${linkedCount} 条`, sub: "联动收入状态", tone: "sky", icon: ReceiptText },
     ],
     rows: cashInboundApi.rows,
@@ -3299,7 +3299,7 @@ function getCashInboundStatusView(status: string): { label: string; tone: Tone }
   }
 
   if (status === "rejected") {
-    return { label: "已拒绝", tone: "slate" };
+    return { label: "已冲销", tone: "slate" };
   }
 
   return { label: status, tone: "slate" };
@@ -5906,8 +5906,8 @@ export default function App() {
       }
 
       const reason = window.prompt(
-        `确认拒绝 Cash 入站事件「${row.title}」？这会冲销对应账户流水，并把关联收入退回 Cash 已确认。请输入原因（可留空）：`,
-        "测试拒绝入站",
+        `确认冲销 Cash 入站「${row.title}」？这会冲销对应账户流水，并把关联收入退回 Cash 已确认。请输入原因（可留空）：`,
+        "测试冲销入站",
       );
       if (reason === null) {
         return;
@@ -5919,7 +5919,7 @@ export default function App() {
         });
         setDetailRow(null);
         setFinanceReloadKey((current) => current + 1);
-        setActionNotice({ tone: "emerald", text: "Cash 入站事件已拒绝，对应账户流水已冲销。" });
+        setActionNotice({ tone: "emerald", text: "Cash 入站已冲销，对应账户流水已冲销。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }

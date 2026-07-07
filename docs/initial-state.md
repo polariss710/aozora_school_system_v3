@@ -112,7 +112,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 - dev DB 已执行基础 seed，包含角色、权限、业务归属和 School 侧账户。
 - dev API 已补充 Render Web Service 蓝图 `render.yaml`，默认服务名为 `aozora-school-system-v3-api-dev`，并通过 `CORS_ORIGIN` 允许前端 demo 域名和本地 Vite 联调访问。
 - 2026-07-07 已确认 dev API Web Service 部署成功，`https://aozora-school-system-v3-api-dev.onrender.com/api/health` 与 DB health 可用于前端联调。
-- 前端 demo 已开始接真实 dev API：登录页会检查 API health，优先调用 `/api/auth/login`；登录成功后学生管理页和老师管理页可用 token 拉取真实列表，并可调用新增、基础信息编辑、归档和恢复动作；基础设置页可按类型标签页只读拉取业务归属、School 账户、科目和外部授课机构；收入和支出页可拉取真实列表、新增 / 作废手动记录并提交 Cash 请求；Cash 请求页可拉取真实请求队列，并允许 School 端撤回待确认请求；Cash 入站页可拉取真实列表并拒绝已入账事件；账户流水页可只读拉取真实列表。API 不可达时保留 demo fallback。
+- 前端 demo 已开始接真实 dev API：登录页会检查 API health，优先调用 `/api/auth/login`；登录成功后学生管理页和老师管理页可用 token 拉取真实列表，并可调用新增、基础信息编辑、归档和恢复动作；基础设置页可按类型标签页只读拉取业务归属、School 账户、科目和外部授课机构；收入和支出页可拉取真实列表、新增 / 作废手动记录并提交 Cash 请求；Cash 请求页可拉取真实请求队列，并允许 School 端撤回待确认请求；Cash 入站页可拉取真实列表并冲销已入账事件；账户流水页可只读拉取真实列表。API 不可达时保留 demo fallback。
 - 后端 Controller 路由数为 `145`，已覆盖认证、用户、权限、主数据、学生课时、学生月度结算、学费账单、老师工资、勤务表导入、收入、支出、Cash 请求、Cash 入站、账户流水、报销、外部授课、审计、健康检查和版本信息。
 - 已在 `apps/api/README.md` 建立第一版 API 契约索引，记录模块 endpoint、金额权威原则、状态机写入原则、Cash 入站联动和全新预定课时删除保护。
 - 当前 API 仍以 dev 联调为目标，前端正式接入前还需要继续整理字段级 request / response、错误提示口径和列表 / 详情 / 抽屉展示字段。
@@ -125,7 +125,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 
 当前仍未执行以下动作：
 
-- 未全面连接真实后端 API 到前端；当前完成 health / auth / students / teachers / settings 第一轮接入，完成 income / expenses 列表、手动新增、手动作废和 Cash 请求提交接入，完成 cash requests 队列和 School 端撤回接入，完成 cash inbound events 列表和拒绝动作接入，并完成 account transactions 只读列表接入。
+- 未全面连接真实后端 API 到前端；当前完成 health / auth / students / teachers / settings 第一轮接入，完成 income / expenses 列表、手动新增、手动作废和 Cash 请求提交接入，完成 cash requests 队列和 School 端撤回接入，完成 cash inbound events 列表和冲销入站动作接入，并完成 account transactions 只读列表接入。
 - 未导入或迁移 v2 数据。
 - 未读取或修改 v2 项目。
 - 未执行任何生产数据操作。
@@ -153,7 +153,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
   - 老师管理页登录真实 API 后调用 `/api/teachers`。
   - 老师管理页已接 `POST /api/teachers`、`PATCH /api/teachers/:id`、`POST /api/teachers/:id/archive`、`POST /api/teachers/:id/restore`。
   - 基础设置页已接 `/api/settings/business-entities`、`/api/settings/accounts`、`/api/settings/subjects`、`/api/settings/external-workplaces`，并按类型标签页展示只读列表。
-  - 收入记录、支出记录页已接 `/api/income`、`/api/expenses` 列表，`/api/income/manual`、`/api/expenses/manual` 手动新增，`/api/income/:id/void`、`/api/expenses/:id/void` 手动作废，以及 `/api/cash/requests/income/:incomeRecordId`、`/api/cash/requests/expense/:expenseRecordId` 提交 Cash 请求；Cash 请求页已接 `/api/cash/requests` 队列和 `/api/cash/requests/:id/withdraw` 撤回动作；Cash 入站页已接 `/api/cash-inbound/events` 列表和 `/api/cash-inbound/events/:id/reject` 拒绝动作；账户流水页已接 `/api/accounts/transactions` 只读列表。
+  - 收入记录、支出记录页已接 `/api/income`、`/api/expenses` 列表，`/api/income/manual`、`/api/expenses/manual` 手动新增，`/api/income/:id/void`、`/api/expenses/:id/void` 手动作废，以及 `/api/cash/requests/income/:incomeRecordId`、`/api/cash/requests/expense/:expenseRecordId` 提交 Cash 请求；Cash 请求页已接 `/api/cash/requests` 队列和 `/api/cash/requests/:id/withdraw` 撤回动作；Cash 入站页已接 `/api/cash-inbound/events` 列表和 `/api/cash-inbound/events/:id/reject` 冲销入站动作；账户流水页已接 `/api/accounts/transactions` 只读列表。
 - `MoneyService` 初版金额取舍测试骨架。
 - Supabase `aozora-school-v3-dev` project。
 - Prisma foundation migration。
@@ -171,7 +171,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 - 第一批后端测试：
   - MoneyService 金额取舍、半分值、负数 rounding、汇率折算和 mismatch 拒绝。
   - PasswordService 密码 hash / verify。
-  - CashInboundService Cash 入站创建 / 拒绝时对关联收入 `cash_confirmed` 与 `account_transaction_created` 的状态闭环。
+  - CashInboundService Cash 入站创建 / 冲销时对关联收入 `cash_confirmed` 与 `account_transaction_created` 的状态闭环。
 - 基础 seed：
   - 4 个角色：系统管理员、财务负责人、业务人员、销售人员。
   - 21 个权限。
