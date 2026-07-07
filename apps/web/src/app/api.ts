@@ -167,6 +167,21 @@ export interface VoidFinanceRecordInput {
   reason?: string | null;
 }
 
+export interface SubmitCashRequestInput {
+  requestedCurrency: "JPY" | "CNY";
+  exchangeRate?: number | null;
+  exchangeRateSource?: string | null;
+  conversionMethod?: "ceil" | "floor" | "half-up" | "round" | null;
+  cashAccountCode?: string | null;
+}
+
+export interface CashRequestRecord {
+  id: string;
+  status: string;
+  direction: "income" | "expense";
+  requestedCurrency: "JPY" | "CNY";
+}
+
 export interface ExpenseRecord {
   id: string;
   sourceType: string;
@@ -434,6 +449,17 @@ export function voidIncomeRecord(accessToken: string, incomeRecordId: string, in
   });
 }
 
+export function submitIncomeCashRequest(accessToken: string, incomeRecordId: string, input: SubmitCashRequestInput) {
+  return requestJson<{ cashRequest: CashRequestRecord; incomeRecord: IncomeRecord }>(
+    `/cash/requests/income/${incomeRecordId}`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function listExpenseRecords(accessToken: string) {
   return requestJson<ListResponse<ExpenseRecord>>("/expenses?limit=100", {
     headers: authorizedHeaders(accessToken),
@@ -454,6 +480,17 @@ export function voidExpenseRecord(accessToken: string, expenseRecordId: string, 
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),
   });
+}
+
+export function submitExpenseCashRequest(accessToken: string, expenseRecordId: string, input: SubmitCashRequestInput) {
+  return requestJson<{ cashRequest: CashRequestRecord; expenseRecord: ExpenseRecord }>(
+    `/cash/requests/expense/${expenseRecordId}`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function listAccountTransactions(accessToken: string) {

@@ -63,6 +63,8 @@ import {
   loginWithPassword,
   restoreStudent,
   restoreTeacher,
+  submitExpenseCashRequest,
+  submitIncomeCashRequest,
   updateStudent,
   updateTeacher,
   voidExpenseRecord,
@@ -79,6 +81,7 @@ import type {
   IncomeRecord,
   ManualExpenseInput,
   ManualIncomeInput,
+  SubmitCashRequestInput,
   StudentRecord,
   StudentWriteInput,
   SubjectRecord,
@@ -143,6 +146,15 @@ interface DataRow {
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
+  financeRecord?: {
+    kind: "income" | "expense";
+    sourceType: string;
+    recordStatus: string;
+    cashStatus: string;
+    originalCurrency: "JPY" | "CNY";
+    amountJpy: number | null;
+    amountCny: number | null;
+  };
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
@@ -153,6 +165,7 @@ type DrawerActionKey =
   | "teacher.edit"
   | "teacher.archive"
   | "teacher.restore"
+  | "cash.submit"
   | "income.void"
   | "expense.void";
 
@@ -217,6 +230,7 @@ type TeacherDialogState =
   | { mode: "edit"; row: DataRow };
 
 type FinanceDialogState = { kind: "income" | "expense" };
+type CashRequestDialogState = { row: DataRow };
 
 type SettingCategory = "businessEntities" | "accounts" | "subjects" | "externalWorkplaces";
 
@@ -919,14 +933,25 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
 
   if (row.apiRef?.resource === "income" || row.apiRef?.resource === "expense") {
     const actionKey = row.apiRef.resource === "income" ? "income.void" : "expense.void";
+    const actions: DrawerAction[] = [];
+    const canVoid = row.financeRecord
+      ? canVoidManualFinanceRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
+      : false;
+
+    if (row.financeRecord && canSubmitCashRequest(row.financeRecord.recordStatus, row.financeRecord.cashStatus)) {
+      actions.push({ label: "提交 Cash 请求", icon: Send, variant: "primary", key: "cash.submit" });
+    }
+
+    if (canVoid) {
+      actions.push({ label: "作废记录", icon: X, variant: "danger", key: actionKey });
+    }
+
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
 
     return [
       {
         title: "财务操作",
-        actions: [
-          { label: "作废记录", icon: X, variant: "danger", key: actionKey },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
-        ],
+        actions,
       },
     ];
   }
@@ -1911,6 +1936,158 @@ function FinanceRecordFormModal({
   );
 }
 
+function CashRequestFormModal({
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: CashRequestDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: SubmitCashRequestInput) => void;
+}) {
+  const financeRecord = state.row.financeRecord;
+  const originalCurrency = financeRecord?.originalCurrency ?? "JPY";
+  const [requestedCurrency, setRequestedCurrency] = useState<"JPY" | "CNY">(originalCurrency);
+  const [exchangeRate, setExchangeRate] = useState("");
+  const [exchangeRateSource, setExchangeRateSource] = useState("");
+  const [conversionMethod, setConversionMethod] = useState<"half-up" | "ceil" | "floor">("half-up");
+  const [cashAccountCode, setCashAccountCode] = useState("");
+  const requiresExchangeRate = originalCurrency === "JPY" && requestedCurrency === "CNY";
+  const exchangeRateNumber = Number(exchangeRate);
+  const canSubmit = !requiresExchangeRate || (Number.isFinite(exchangeRateNumber) && exchangeRateNumber > 0);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!canSubmit) {
+      return;
+    }
+
+    onSubmit({
+      requestedCurrency,
+      exchangeRate: requiresExchangeRate ? exchangeRateNumber : null,
+      exchangeRateSource: normalizeOptionalFormValue(exchangeRateSource),
+      conversionMethod,
+      cashAccountCode: normalizeOptionalFormValue(cashAccountCode),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(620px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">提交 Cash 请求</h2>
+            <p className="mt-1 text-xs text-muted-foreground">提交后记录会进入 Cash 待确认状态</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <section className="rounded-lg border border-border bg-muted/20 px-3 py-3">
+            <div className="text-sm font-medium text-foreground">{state.row.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              原始金额：{state.row.cells.amount} / 当前状态：{state.row.status}
+            </div>
+          </section>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">请求币种</span>
+              <select
+                value={requestedCurrency}
+                onChange={(event) => setRequestedCurrency(event.target.value as "JPY" | "CNY")}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              >
+                <option value={originalCurrency}>{originalCurrency}</option>
+                {originalCurrency === "JPY" && <option value="CNY">CNY</option>}
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Cash 账户编码</span>
+              <input
+                value={cashAccountCode}
+                onChange={(event) => setCashAccountCode(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="选填，例如 alipay-main"
+              />
+            </label>
+          </div>
+
+          {requiresExchangeRate && (
+            <div className="grid gap-4 md:grid-cols-[1fr_160px]">
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">JPY → CNY 汇率</span>
+                <input
+                  required
+                  min="0"
+                  step="0.000001"
+                  type="number"
+                  value={exchangeRate}
+                  onChange={(event) => setExchangeRate(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                  placeholder="例如：0.0478"
+                />
+              </label>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">取舍方式</span>
+                <select
+                  value={conversionMethod}
+                  onChange={(event) => setConversionMethod(event.target.value as "half-up" | "ceil" | "floor")}
+                  className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                >
+                  <option value="half-up">四舍五入</option>
+                  <option value="ceil">进位</option>
+                  <option value="floor">舍去</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 md:col-span-2">
+                <span className="text-xs font-medium text-muted-foreground">汇率来源</span>
+                <input
+                  value={exchangeRateSource}
+                  onChange={(event) => setExchangeRateSource(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                  placeholder="选填，例如 cash / manual"
+                />
+              </label>
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !canSubmit}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            {isSubmitting ? "提交中" : "提交"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ActionNotice({
   notice,
   onClose,
@@ -2604,7 +2781,7 @@ function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListStat
 
   return {
     ...basePage,
-    description: "真实 dev API 收入记录列表；手动新增和手动作废已接入，Cash 提交动作后续接入",
+    description: "真实 dev API 收入记录列表；手动新增、手动作废和 Cash 请求提交已接入",
     primaryAction: "新增手动收入",
     batchAction: undefined,
     selectable: false,
@@ -2631,7 +2808,7 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
 
   return {
     ...basePage,
-    description: "真实 dev API 支出记录列表；手动新增和手动作废已接入，工资生成和 Cash 提交动作后续接入",
+    description: "真实 dev API 支出记录列表；手动新增、手动作废和 Cash 请求提交已接入，工资生成后续接入",
     primaryAction: "新增手动支出",
     batchAction: undefined,
     selectable: false,
@@ -2677,6 +2854,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
   const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
   const cashStatus = getCashStatusLabel(record.cashStatus);
   const canVoid = canVoidManualFinanceRecord(record.sourceType, record.recordStatus, record.cashStatus);
+  const canSubmitCash = canSubmitCashRequest(record.recordStatus, record.cashStatus);
 
   return {
     id: `income-${record.id}`,
@@ -2688,7 +2866,16 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       resource: "income",
       id: record.id,
     },
-    readOnlyActions: !canVoid,
+    readOnlyActions: !canVoid && !canSubmitCash,
+    financeRecord: {
+      kind: "income",
+      sourceType: record.sourceType,
+      recordStatus: record.recordStatus,
+      cashStatus: record.cashStatus,
+      originalCurrency: record.originalCurrency,
+      amountJpy: parseApiAmount(record.originalAmountJpy),
+      amountCny: parseApiAmount(record.originalAmountCny),
+    },
     cells: {
       source: sourceLabel,
       businessMonth: record.yearMonth,
@@ -2726,6 +2913,7 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
   const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
   const cashStatus = getCashStatusLabel(record.cashStatus);
   const canVoid = canVoidManualFinanceRecord(record.sourceType, record.recordStatus, record.cashStatus);
+  const canSubmitCash = canSubmitCashRequest(record.recordStatus, record.cashStatus);
 
   return {
     id: `expense-${record.id}`,
@@ -2737,7 +2925,16 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
       resource: "expense",
       id: record.id,
     },
-    readOnlyActions: !canVoid,
+    readOnlyActions: !canVoid && !canSubmitCash,
+    financeRecord: {
+      kind: "expense",
+      sourceType: record.sourceType,
+      recordStatus: record.recordStatus,
+      cashStatus: record.cashStatus,
+      originalCurrency: record.originalCurrency,
+      amountJpy: parseApiAmount(record.originalAmountJpy),
+      amountCny: parseApiAmount(record.originalAmountCny),
+    },
     cells: {
       category,
       businessMonth: record.yearMonth,
@@ -2852,6 +3049,10 @@ function canVoidManualFinanceRecord(sourceType: string, recordStatus: string, ca
   const cashIsNotLocked = ["not_requested", "cash_rejected", "cash_withdrawn"].includes(cashStatus);
 
   return isManualRecord && isPending && cashIsNotLocked;
+}
+
+function canSubmitCashRequest(recordStatus: string, cashStatus: string) {
+  return recordStatus === "pending" && ["not_requested", "cash_rejected"].includes(cashStatus);
 }
 
 function getAccountTransactionStatusView(status: string): { label: string; tone: Tone } {
@@ -4930,6 +5131,9 @@ export default function App() {
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
   const [isFinanceSubmitting, setIsFinanceSubmitting] = useState(false);
   const [financeMutationError, setFinanceMutationError] = useState<string | null>(null);
+  const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
+  const [isCashRequestSubmitting, setIsCashRequestSubmitting] = useState(false);
+  const [cashRequestError, setCashRequestError] = useState<string | null>(null);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
@@ -5304,6 +5508,17 @@ export default function App() {
       return;
     }
 
+    if (actionKey === "cash.submit") {
+      if (!authSession || !row.apiRef || !row.financeRecord) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
+        return;
+      }
+
+      setCashRequestError(null);
+      setCashRequestDialog({ row });
+      return;
+    }
+
     if (actionKey === "income.void" || actionKey === "expense.void") {
       if (!authSession || !row.apiRef) {
         setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
@@ -5432,6 +5647,33 @@ export default function App() {
     }
   };
 
+  const submitCashRequestForm = async (input: SubmitCashRequestInput) => {
+    if (!authSession || !cashRequestDialog?.row.apiRef || !cashRequestDialog.row.financeRecord) {
+      setCashRequestError("请先使用真实 API 登录后再提交 Cash 请求。");
+      return;
+    }
+
+    setIsCashRequestSubmitting(true);
+    setCashRequestError(null);
+
+    try {
+      if (cashRequestDialog.row.financeRecord.kind === "income") {
+        await submitIncomeCashRequest(authSession.accessToken, cashRequestDialog.row.apiRef.id, input);
+      } else {
+        await submitExpenseCashRequest(authSession.accessToken, cashRequestDialog.row.apiRef.id, input);
+      }
+
+      setCashRequestDialog(null);
+      setDetailRow(null);
+      setFinanceReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: "Cash 请求已提交。" });
+    } catch (error) {
+      setCashRequestError(formatApiError(error));
+    } finally {
+      setIsCashRequestSubmitting(false);
+    }
+  };
+
   const setSelected = (next: Set<string>) => {
     setSelectedByPage((current) => ({ ...current, [activeKey]: next }));
   };
@@ -5465,6 +5707,7 @@ export default function App() {
     setStudentDialog(null);
     setTeacherDialog(null);
     setFinanceDialog(null);
+    setCashRequestDialog(null);
   };
 
   const pageForTopBar =
@@ -5575,6 +5818,15 @@ export default function App() {
           error={financeMutationError}
           onClose={() => setFinanceDialog(null)}
           onSubmit={submitFinanceForm}
+        />
+      )}
+      {cashRequestDialog && (
+        <CashRequestFormModal
+          state={cashRequestDialog}
+          isSubmitting={isCashRequestSubmitting}
+          error={cashRequestError}
+          onClose={() => setCashRequestDialog(null)}
+          onSubmit={submitCashRequestForm}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />
