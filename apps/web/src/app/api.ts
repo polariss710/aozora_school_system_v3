@@ -175,6 +175,20 @@ export interface SubmitCashRequestInput {
   cashAccountCode?: string | null;
 }
 
+export interface RejectCashRequestInput {
+  rejectionReason?: string | null;
+  externalCashEventId?: string | null;
+}
+
+export interface WithdrawCashRequestInput {
+  reason?: string | null;
+}
+
+export interface ConfirmCashRequestInput {
+  externalCashRequestId?: string | null;
+  externalCashEventId?: string | null;
+}
+
 export interface CashRequestRecord {
   id: string;
   direction: "income" | "expense";
@@ -534,6 +548,42 @@ export function submitExpenseCashRequest(accessToken: string, expenseRecordId: s
 export function listCashRequests(accessToken: string) {
   return requestJson<ListResponse<CashRequestRecord>>("/cash/requests?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function rejectCashRequest(accessToken: string, cashRequestId: string, input: RejectCashRequestInput = {}) {
+  return requestJson<{
+    cashRequest: CashRequestRecord;
+    incomeRecord: IncomeRecord | null;
+    expenseRecord: ExpenseRecord | null;
+  }>(`/cash/requests/${cashRequestId}/reject`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function withdrawCashRequest(accessToken: string, cashRequestId: string, input: WithdrawCashRequestInput = {}) {
+  return requestJson<{
+    cashRequest: CashRequestRecord;
+    incomeRecord: IncomeRecord | null;
+    expenseRecord: ExpenseRecord | null;
+  }>(`/cash/requests/${cashRequestId}/withdraw`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function confirmCashRequest(accessToken: string, cashRequestId: string, input: ConfirmCashRequestInput = {}) {
+  return requestJson<{
+    cashRequest: CashRequestRecord;
+    incomeRecord: IncomeRecord | null;
+    expenseRecord: ExpenseRecord | null;
+  }>(`/cash/requests/${cashRequestId}/confirm`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
   });
 }
 
