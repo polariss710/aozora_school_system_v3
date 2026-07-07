@@ -45,7 +45,6 @@ import {
   archiveStudent,
   archiveTeacher,
   apiBaseUrl,
-  confirmCashRequest,
   createManualExpense,
   createManualIncome,
   createStudent,
@@ -63,7 +62,6 @@ import {
   listStudents,
   listTeachers,
   loginWithPassword,
-  rejectCashRequest,
   restoreStudent,
   restoreTeacher,
   submitExpenseCashRequest,
@@ -175,8 +173,6 @@ type DrawerActionKey =
   | "teacher.archive"
   | "teacher.restore"
   | "cash.submit"
-  | "cash.confirm"
-  | "cash.reject"
   | "cash.withdraw"
   | "income.void"
   | "expense.void";
@@ -949,8 +945,6 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const canManageCashRequest = row.cashRequest?.status === "cash_requested";
     const actions: DrawerAction[] = canManageCashRequest
       ? [
-          { label: "确认 Cash 已完成", icon: CheckCircle2, variant: "primary", key: "cash.confirm" },
-          { label: "拒绝请求", icon: X, variant: "danger", key: "cash.reject" },
           { label: "撤回请求", icon: RotateCcw, variant: "warning", key: "cash.withdraw" },
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ]
@@ -5734,50 +5728,24 @@ export default function App() {
       return;
     }
 
-    if (actionKey === "cash.confirm" || actionKey === "cash.reject" || actionKey === "cash.withdraw") {
+    if (actionKey === "cash.withdraw") {
       if (!authSession || row.apiRef?.resource !== "cashRequest") {
         setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
         return;
       }
 
       try {
-        if (actionKey === "cash.confirm") {
-          const externalCashEventId = window.prompt(
-            `确认 Cash 已完成「${row.title}」？如有 Cash 回写事件 ID 可填写（可留空）：`,
-            "",
-          );
-          if (externalCashEventId === null) {
-            return;
-          }
-
-          await confirmCashRequest(authSession.accessToken, row.apiRef.id, {
-            externalCashEventId: normalizeOptionalFormValue(externalCashEventId),
-          });
-          setActionNotice({ tone: "emerald", text: "Cash 请求已确认。" });
-        } else if (actionKey === "cash.reject") {
-          const rejectionReason = window.prompt(`确认拒绝 Cash 请求「${row.title}」？请输入拒绝原因（可留空）：`, "测试拒绝");
-          if (rejectionReason === null) {
-            return;
-          }
-
-          await rejectCashRequest(authSession.accessToken, row.apiRef.id, {
-            rejectionReason: normalizeOptionalFormValue(rejectionReason),
-          });
-          setActionNotice({ tone: "emerald", text: "Cash 请求已拒绝。" });
-        } else {
-          const reason = window.prompt(`确认撤回 Cash 请求「${row.title}」？请输入撤回原因（可留空）：`, "测试撤回");
-          if (reason === null) {
-            return;
-          }
-
-          await withdrawCashRequest(authSession.accessToken, row.apiRef.id, {
-            reason: normalizeOptionalFormValue(reason),
-          });
-          setActionNotice({ tone: "emerald", text: "Cash 请求已撤回，来源记录已释放。" });
+        const reason = window.prompt(`确认撤回 Cash 请求「${row.title}」？请输入撤回原因（可留空）：`, "测试撤回");
+        if (reason === null) {
+          return;
         }
 
+        await withdrawCashRequest(authSession.accessToken, row.apiRef.id, {
+          reason: normalizeOptionalFormValue(reason),
+        });
         setDetailRow(null);
         setFinanceReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "Cash 请求已撤回，来源记录已释放。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
