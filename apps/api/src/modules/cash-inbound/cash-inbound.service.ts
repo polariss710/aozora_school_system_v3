@@ -265,20 +265,10 @@ export class CashInboundService {
       });
 
       if (before.linkedIncomeRecordIds.length > 0) {
-        const linkedIncomeRecords = await tx.incomeRecord.updateMany({
-          where: {
-            id: { in: before.linkedIncomeRecordIds },
-            recordStatus: IncomeRecordStatus.cash_confirmed,
-            cashStatus: CashRequestStatus.account_transaction_created,
-          },
-          data: { cashStatus: CashRequestStatus.cash_confirmed },
-        });
-
-        if (linkedIncomeRecords.count !== before.linkedIncomeRecordIds.length) {
-          throw new BadRequestException(
-            "Linked income records are not in account transaction status.",
-          );
-        }
+        await this.restoreLinkedIncomeRecordsForRejectedInbound(
+          tx,
+          before.linkedIncomeRecordIds,
+        );
       }
 
       const updated = await tx.cashInboundEvent.update({
@@ -307,6 +297,63 @@ export class CashInboundService {
     });
 
     return { event };
+  }
+
+  private async restoreLinkedIncomeRecordsForRejectedInbound(
+    tx: Prisma.TransactionClient,
+    linkedIncomeRecordIds: string[],
+  ) {
+    const reversibleCashStatuses: CashRequestStatus[] = [
+      CashRequestStatus.account_transaction_created,
+      CashRequestStatus.cash_confirmed,
+    ];
+
+    const linkedIncomeRecords = await tx.incomeRecord.findMany({
+      where: { id: { in: linkedIncomeRecordIds } },
+      select: { id: true, recordStatus: true, cashStatus: true },
+    });
+
+    if (linkedIncomeRecords.length !== linkedIncomeRecordIds.length) {
+      throw new BadRequestException("Linked income records were not found.");
+    }
+
+    const invalidRecords = linkedIncomeRecords.filter(
+      (record) =>
+        record.recordStatus !== IncomeRecordStatus.cash_confirmed ||
+        !reversibleCashStatuses.includes(record.cashStatus),
+    );
+
+    if (invalidRecords.length > 0) {
+      throw new BadRequestException(
+        "Linked income records are not in a reversible Cash inbound status.",
+      );
+    }
+
+    const postedIncomeRecordIds = linkedIncomeRecords
+      .filter(
+        (record) =>
+          record.cashStatus === CashRequestStatus.account_transaction_created,
+      )
+      .map((record) => record.id);
+
+    if (postedIncomeRecordIds.length === 0) {
+      return;
+    }
+
+    const restored = await tx.incomeRecord.updateMany({
+      where: {
+        id: { in: postedIncomeRecordIds },
+        recordStatus: IncomeRecordStatus.cash_confirmed,
+        cashStatus: CashRequestStatus.account_transaction_created,
+      },
+      data: { cashStatus: CashRequestStatus.cash_confirmed },
+    });
+
+    if (restored.count !== postedIncomeRecordIds.length) {
+      throw new BadRequestException(
+        "Linked income records changed while rejecting Cash inbound event.",
+      );
+    }
   }
 
   private async findEvent(id: string) {

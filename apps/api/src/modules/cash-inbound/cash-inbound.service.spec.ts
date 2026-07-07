@@ -104,6 +104,18 @@ describe("CashInboundService", () => {
         update: vi.fn().mockResolvedValue({ id: "account-transaction-1" }),
       },
       incomeRecord: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "income-1",
+            recordStatus: IncomeRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.account_transaction_created,
+          },
+          {
+            id: "income-2",
+            recordStatus: IncomeRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.account_transaction_created,
+          },
+        ]),
         updateMany: vi.fn().mockResolvedValue({ count: 2 }),
       },
       cashInboundEvent: {
@@ -139,5 +151,73 @@ describe("CashInboundService", () => {
       },
       data: { cashStatus: CashRequestStatus.cash_confirmed },
     });
+  });
+
+  it("rejects inbound event when linked income records were already restored", async () => {
+    const before = {
+      id: "cash-inbound-1",
+      accountTransactionId: "account-transaction-1",
+      linkedIncomeRecordIds: ["income-1"],
+      status: CashInboundEventStatus.account_transaction_created,
+      memo: "before memo",
+      accountTransaction: {
+        id: "account-transaction-1",
+        status: AccountTransactionStatus.active,
+      },
+    };
+
+    const tx = {
+      accountTransaction: {
+        update: vi.fn().mockResolvedValue({ id: "account-transaction-1" }),
+      },
+      incomeRecord: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "income-1",
+            recordStatus: IncomeRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.cash_confirmed,
+          },
+        ]),
+        updateMany: vi.fn(),
+      },
+      cashInboundEvent: {
+        update: vi.fn().mockResolvedValue({
+          ...before,
+          status: CashInboundEventStatus.rejected,
+        }),
+      },
+    };
+
+    const prisma = {
+      cashInboundEvent: {
+        findUnique: vi.fn().mockResolvedValue(before),
+      },
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+
+    const service = buildService(prisma);
+
+    await service.rejectEvent(
+      "cash-inbound-1",
+      { reason: "cash side rejected" },
+      "actor-1",
+    );
+
+    expect(tx.accountTransaction.update).toHaveBeenCalledWith({
+      where: { id: "account-transaction-1" },
+      data: expect.objectContaining({
+        status: AccountTransactionStatus.reversed,
+      }),
+    });
+    expect(tx.incomeRecord.updateMany).not.toHaveBeenCalled();
+    expect(tx.cashInboundEvent.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: CashInboundEventStatus.rejected,
+        }),
+      }),
+    );
   });
 });
