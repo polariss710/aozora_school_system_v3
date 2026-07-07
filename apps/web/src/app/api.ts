@@ -163,6 +163,10 @@ export interface ManualIncomeInput {
   memo?: string | null;
 }
 
+export interface VoidFinanceRecordInput {
+  reason?: string | null;
+}
+
 export interface ExpenseRecord {
   id: string;
   sourceType: string;
@@ -422,6 +426,14 @@ export function createManualIncome(accessToken: string, input: ManualIncomeInput
   });
 }
 
+export function voidIncomeRecord(accessToken: string, incomeRecordId: string, input: VoidFinanceRecordInput = {}) {
+  return requestJson<{ incomeRecord: IncomeRecord }>(`/income/${incomeRecordId}/void`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
 export function listExpenseRecords(accessToken: string) {
   return requestJson<ListResponse<ExpenseRecord>>("/expenses?limit=100", {
     headers: authorizedHeaders(accessToken),
@@ -430,6 +442,14 @@ export function listExpenseRecords(accessToken: string) {
 
 export function createManualExpense(accessToken: string, input: ManualExpenseInput) {
   return requestJson<{ expenseRecord: ExpenseRecord }>("/expenses/manual", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function voidExpenseRecord(accessToken: string, expenseRecordId: string, input: VoidFinanceRecordInput = {}) {
+  return requestJson<{ expenseRecord: ExpenseRecord }>(`/expenses/${expenseRecordId}/void`, {
     method: "POST",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),

@@ -65,6 +65,8 @@ import {
   restoreTeacher,
   updateStudent,
   updateTeacher,
+  voidExpenseRecord,
+  voidIncomeRecord,
 } from "./api";
 import type {
   ApiHealthSnapshot,
@@ -134,7 +136,7 @@ interface DataRow {
   detail: DetailSection[];
   cashPreview?: CashPreview;
   apiRef?: {
-    resource: "student" | "teacher";
+    resource: "student" | "teacher" | "income" | "expense";
     id: string;
   };
   studentRecord?: StudentRecord;
@@ -150,7 +152,9 @@ type DrawerActionKey =
   | "student.restore"
   | "teacher.edit"
   | "teacher.archive"
-  | "teacher.restore";
+  | "teacher.restore"
+  | "income.void"
+  | "expense.void";
 
 interface DrawerAction {
   label: string;
@@ -911,6 +915,20 @@ function DrawerActionButton({
 function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   if (row.readOnlyActions) {
     return [];
+  }
+
+  if (row.apiRef?.resource === "income" || row.apiRef?.resource === "expense") {
+    const actionKey = row.apiRef.resource === "income" ? "income.void" : "expense.void";
+
+    return [
+      {
+        title: "财务操作",
+        actions: [
+          { label: "作废记录", icon: X, variant: "danger", key: actionKey },
+          { label: "查看操作记录", icon: History, variant: "quiet" },
+        ],
+      },
+    ];
   }
 
   if (row.id.startsWith("student-")) {
@@ -2586,7 +2604,7 @@ function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListStat
 
   return {
     ...basePage,
-    description: "真实 dev API 收入记录列表；手动新增已接入，Cash 提交动作后续接入",
+    description: "真实 dev API 收入记录列表；手动新增和手动作废已接入，Cash 提交动作后续接入",
     primaryAction: "新增手动收入",
     batchAction: undefined,
     selectable: false,
@@ -2613,7 +2631,7 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
 
   return {
     ...basePage,
-    description: "真实 dev API 支出记录列表；手动新增已接入，工资生成和 Cash 提交动作后续接入",
+    description: "真实 dev API 支出记录列表；手动新增和手动作废已接入，工资生成和 Cash 提交动作后续接入",
     primaryAction: "新增手动支出",
     batchAction: undefined,
     selectable: false,
@@ -2658,6 +2676,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
   const businessEntityName = record.businessEntity?.name ?? "未设置业务归属";
   const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
   const cashStatus = getCashStatusLabel(record.cashStatus);
+  const canVoid = canVoidManualFinanceRecord(record.sourceType, record.recordStatus, record.cashStatus);
 
   return {
     id: `income-${record.id}`,
@@ -2665,7 +2684,11 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
     subtitle: `${sourceLabel} / ${businessEntityName}`,
     status: status.label,
     tone: status.tone,
-    readOnlyActions: true,
+    apiRef: {
+      resource: "income",
+      id: record.id,
+    },
+    readOnlyActions: !canVoid,
     cells: {
       source: sourceLabel,
       businessMonth: record.yearMonth,
@@ -2702,6 +2725,7 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
   const businessEntityName = record.businessEntity?.name ?? "未设置业务归属";
   const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
   const cashStatus = getCashStatusLabel(record.cashStatus);
+  const canVoid = canVoidManualFinanceRecord(record.sourceType, record.recordStatus, record.cashStatus);
 
   return {
     id: `expense-${record.id}`,
@@ -2709,7 +2733,11 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
     subtitle: `${category} / ${businessEntityName}`,
     status: status.label,
     tone: status.tone,
-    readOnlyActions: true,
+    apiRef: {
+      resource: "expense",
+      id: record.id,
+    },
+    readOnlyActions: !canVoid,
     cells: {
       category,
       businessMonth: record.yearMonth,
@@ -2816,6 +2844,14 @@ function getFinancialRecordStatusView(recordStatus: string, cashStatus: string):
   }
 
   return { label: "待提交 Cash", tone: "amber" };
+}
+
+function canVoidManualFinanceRecord(sourceType: string, recordStatus: string, cashStatus: string) {
+  const isManualRecord = sourceType === "manual_income" || sourceType === "manual_expense";
+  const isPending = recordStatus === "pending";
+  const cashIsNotLocked = ["not_requested", "cash_rejected", "cash_withdrawn"].includes(cashStatus);
+
+  return isManualRecord && isPending && cashIsNotLocked;
 }
 
 function getAccountTransactionStatusView(status: string): { label: string; tone: Tone } {
@@ -5265,6 +5301,37 @@ export default function App() {
     if (actionKey === "teacher.edit") {
       setTeacherMutationError(null);
       setTeacherDialog({ mode: "edit", row });
+      return;
+    }
+
+    if (actionKey === "income.void" || actionKey === "expense.void") {
+      if (!authSession || !row.apiRef) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
+        return;
+      }
+
+      const reason = window.prompt(`确认作废「${row.title}」？请输入作废原因（可留空）：`, "测试作废");
+      if (reason === null) {
+        return;
+      }
+
+      try {
+        if (actionKey === "income.void") {
+          await voidIncomeRecord(authSession.accessToken, row.apiRef.id, {
+            reason: normalizeOptionalFormValue(reason),
+          });
+        } else {
+          await voidExpenseRecord(authSession.accessToken, row.apiRef.id, {
+            reason: normalizeOptionalFormValue(reason),
+          });
+        }
+
+        setDetailRow(null);
+        setFinanceReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "财务记录已作废。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
       return;
     }
 
