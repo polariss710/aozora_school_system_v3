@@ -152,6 +152,17 @@ export interface IncomeRecord {
   businessEntity: RelatedBusinessEntityRecord | null;
 }
 
+export interface ManualIncomeInput {
+  studentId?: string | null;
+  businessEntityId?: string | null;
+  yearMonth?: string | null;
+  title: string;
+  originalCurrency: "JPY" | "CNY";
+  originalAmountJpy?: number | null;
+  originalAmountCny?: number | null;
+  memo?: string | null;
+}
+
 export interface ExpenseRecord {
   id: string;
   sourceType: string;
@@ -170,6 +181,16 @@ export interface ExpenseRecord {
   updatedAt: string;
   teacher: RelatedTeacherRecord | null;
   businessEntity: RelatedBusinessEntityRecord | null;
+}
+
+export interface ManualExpenseInput {
+  businessEntityId?: string | null;
+  yearMonth?: string | null;
+  title: string;
+  originalCurrency: "JPY" | "CNY";
+  originalAmountJpy?: number | null;
+  originalAmountCny?: number | null;
+  memo?: string | null;
 }
 
 export interface AccountTransactionRecord {
@@ -393,9 +414,25 @@ export function listIncomeRecords(accessToken: string) {
   });
 }
 
+export function createManualIncome(accessToken: string, input: ManualIncomeInput) {
+  return requestJson<{ incomeRecord: IncomeRecord }>("/income/manual", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
 export function listExpenseRecords(accessToken: string) {
   return requestJson<ListResponse<ExpenseRecord>>("/expenses?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function createManualExpense(accessToken: string, input: ManualExpenseInput) {
+  return requestJson<{ expenseRecord: ExpenseRecord }>("/expenses/manual", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
   });
 }
 

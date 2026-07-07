@@ -45,6 +45,8 @@ import {
   archiveStudent,
   archiveTeacher,
   apiBaseUrl,
+  createManualExpense,
+  createManualIncome,
   createStudent,
   createTeacher,
   fetchApiHealthSnapshot,
@@ -73,6 +75,8 @@ import type {
   ExpenseRecord,
   ExternalWorkplaceRecord,
   IncomeRecord,
+  ManualExpenseInput,
+  ManualIncomeInput,
   StudentRecord,
   StudentWriteInput,
   SubjectRecord,
@@ -208,6 +212,8 @@ type TeacherDialogState =
   | { mode: "create" }
   | { mode: "edit"; row: DataRow };
 
+type FinanceDialogState = { kind: "income" | "expense" };
+
 type SettingCategory = "businessEntities" | "accounts" | "subjects" | "externalWorkplaces";
 
 interface SettingsApiCounts {
@@ -218,9 +224,9 @@ interface SettingsApiCounts {
 }
 
 type SettingsApiState =
-  | { status: "idle" | "loading"; rows: DataRow[]; counts: SettingsApiCounts; message?: string }
-  | { status: "ready"; rows: DataRow[]; counts: SettingsApiCounts; message?: string }
-  | { status: "error"; rows: DataRow[]; counts: SettingsApiCounts; message: string };
+  | { status: "idle" | "loading"; rows: DataRow[]; counts: SettingsApiCounts; businessEntities: BusinessEntityRecord[]; message?: string }
+  | { status: "ready"; rows: DataRow[]; counts: SettingsApiCounts; businessEntities: BusinessEntityRecord[]; message?: string }
+  | { status: "error"; rows: DataRow[]; counts: SettingsApiCounts; businessEntities: BusinessEntityRecord[]; message: string };
 
 type FinanceListState =
   | { status: "idle" | "loading"; rows: DataRow[]; total: number; message?: string }
@@ -1722,6 +1728,171 @@ function TeacherFormModal({
   );
 }
 
+function FinanceRecordFormModal({
+  state,
+  businessEntities,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: FinanceDialogState;
+  businessEntities: BusinessEntityRecord[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: ManualIncomeInput | ManualExpenseInput) => void;
+}) {
+  const defaultMonth = new Date().toISOString().slice(0, 7);
+  const activeBusinessEntities = businessEntities.filter((item) => item.status === "active");
+  const [title, setTitle] = useState("");
+  const [yearMonth, setYearMonth] = useState(defaultMonth);
+  const [businessEntityId, setBusinessEntityId] = useState(activeBusinessEntities[0]?.id ?? "");
+  const [currency, setCurrency] = useState<"JPY" | "CNY">("JPY");
+  const [amount, setAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const isIncome = state.kind === "income";
+  const modalTitle = isIncome ? "新增手动收入" : "新增手动支出";
+  const amountNumber = Number(amount);
+  const canSubmit = title.trim() && yearMonth && Number.isFinite(amountNumber) && amountNumber > 0;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!canSubmit) {
+      return;
+    }
+
+    onSubmit({
+      title: title.trim(),
+      yearMonth,
+      businessEntityId: normalizeOptionalFormValue(businessEntityId),
+      originalCurrency: currency,
+      originalAmountJpy: currency === "JPY" ? amountNumber : null,
+      originalAmountCny: currency === "CNY" ? amountNumber : null,
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(620px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{modalTitle}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">保存后刷新{isIncome ? "收入记录" : "支出记录"}列表</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">标题</span>
+            <input
+              required
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder={isIncome ? "例如：教材费收入" : "例如：教材采购支出"}
+            />
+          </label>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">业务月份</span>
+              <input
+                required
+                type="month"
+                value={yearMonth}
+                onChange={(event) => setYearMonth(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">业务归属</span>
+              <select
+                value={businessEntityId}
+                onChange={(event) => setBusinessEntityId(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              >
+                <option value="">未设置</option>
+                {activeBusinessEntities.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-[140px_1fr]">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">币种</span>
+              <select
+                value={currency}
+                onChange={(event) => setCurrency(event.target.value as "JPY" | "CNY")}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              >
+                <option value="JPY">JPY</option>
+                <option value="CNY">CNY</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">金额</span>
+              <input
+                required
+                min="0"
+                step={currency === "JPY" ? "1" : "0.01"}
+                type="number"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder={currency === "JPY" ? "例如：12000" : "例如：320.50"}
+              />
+            </label>
+          </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea
+              value={memo}
+              onChange={(event) => setMemo(event.target.value)}
+              className="min-h-[92px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="选填"
+            />
+          </label>
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !canSubmit}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "保存中" : "保存"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ActionNotice({
   notice,
   onClose,
@@ -2415,8 +2586,8 @@ function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListStat
 
   return {
     ...basePage,
-    description: "真实 dev API 收入记录列表；新增和 Cash 提交动作后续接入",
-    primaryAction: undefined,
+    description: "真实 dev API 收入记录列表；手动新增已接入，Cash 提交动作后续接入",
+    primaryAction: "新增手动收入",
     batchAction: undefined,
     selectable: false,
     metrics: [
@@ -2442,8 +2613,8 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
 
   return {
     ...basePage,
-    description: "真实 dev API 支出记录列表；新增、工资生成和 Cash 提交动作后续接入",
-    primaryAction: undefined,
+    description: "真实 dev API 支出记录列表；手动新增已接入，工资生成和 Cash 提交动作后续接入",
+    primaryAction: "新增手动支出",
     batchAction: undefined,
     selectable: false,
     metrics: [
@@ -4716,8 +4887,13 @@ export default function App() {
     status: "idle",
     rows: [],
     counts: emptySettingsCounts,
+    businessEntities: [],
   });
   const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
+  const [financeReloadKey, setFinanceReloadKey] = useState(0);
+  const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
+  const [isFinanceSubmitting, setIsFinanceSubmitting] = useState(false);
+  const [financeMutationError, setFinanceMutationError] = useState<string | null>(null);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
@@ -4887,7 +5063,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authSession) {
-      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts });
+      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts, businessEntities: [] });
       return;
     }
 
@@ -4897,6 +5073,7 @@ export default function App() {
       status: "loading",
       rows: current.rows,
       counts: current.counts,
+      businessEntities: current.businessEntities,
     }));
 
     void Promise.all([
@@ -4924,6 +5101,7 @@ export default function App() {
             subjects: subjects.items.length,
             externalWorkplaces: externalWorkplaces.items.length,
           },
+          businessEntities: businessEntities.items,
         });
       })
       .catch((error) => {
@@ -4935,6 +5113,7 @@ export default function App() {
           status: "error",
           rows: [],
           counts: emptySettingsCounts,
+          businessEntities: [],
           message: error instanceof Error ? error.message : "Settings API request failed",
         });
       });
@@ -5014,7 +5193,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [authSession]);
+  }, [authSession, financeReloadKey]);
 
   const handleLogin = (session: AuthSession | null, mode: AuthMode) => {
     setAuthSession(session);
@@ -5036,6 +5215,11 @@ export default function App() {
   const openTeacherCreate = () => {
     setTeacherMutationError(null);
     setTeacherDialog({ mode: "create" });
+  };
+
+  const openFinanceCreate = (kind: "income" | "expense") => {
+    setFinanceMutationError(null);
+    setFinanceDialog({ kind });
   };
 
   const submitStudentForm = async (input: StudentWriteInput) => {
@@ -5153,6 +5337,34 @@ export default function App() {
     }
   };
 
+  const submitFinanceForm = async (input: ManualIncomeInput | ManualExpenseInput) => {
+    if (!authSession || !financeDialog) {
+      setFinanceMutationError("请先使用真实 API 登录后再保存。");
+      return;
+    }
+
+    setIsFinanceSubmitting(true);
+    setFinanceMutationError(null);
+
+    try {
+      if (financeDialog.kind === "income") {
+        await createManualIncome(authSession.accessToken, input as ManualIncomeInput);
+        setActionNotice({ tone: "emerald", text: "手动收入已创建。" });
+      } else {
+        await createManualExpense(authSession.accessToken, input as ManualExpenseInput);
+        setActionNotice({ tone: "emerald", text: "手动支出已创建。" });
+      }
+
+      setFinanceDialog(null);
+      setDetailRow(null);
+      setFinanceReloadKey((current) => current + 1);
+    } catch (error) {
+      setFinanceMutationError(formatApiError(error));
+    } finally {
+      setIsFinanceSubmitting(false);
+    }
+  };
+
   const setSelected = (next: Set<string>) => {
     setSelectedByPage((current) => ({ ...current, [activeKey]: next }));
   };
@@ -5185,6 +5397,7 @@ export default function App() {
     setShowSettlementBatchModal(false);
     setStudentDialog(null);
     setTeacherDialog(null);
+    setFinanceDialog(null);
   };
 
   const pageForTopBar =
@@ -5245,6 +5458,10 @@ export default function App() {
                   ? openStudentCreate
                   : activeKey === "teachers"
                     ? openTeacherCreate
+                    : activeKey === "income-records"
+                      ? () => openFinanceCreate("income")
+                      : activeKey === "expense-records"
+                        ? () => openFinanceCreate("expense")
                   : undefined
             }
           />
@@ -5281,6 +5498,16 @@ export default function App() {
           error={teacherMutationError}
           onClose={() => setTeacherDialog(null)}
           onSubmit={submitTeacherForm}
+        />
+      )}
+      {financeDialog && (
+        <FinanceRecordFormModal
+          state={financeDialog}
+          businessEntities={settingsApi.businessEntities}
+          isSubmitting={isFinanceSubmitting}
+          error={financeMutationError}
+          onClose={() => setFinanceDialog(null)}
+          onSubmit={submitFinanceForm}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />
