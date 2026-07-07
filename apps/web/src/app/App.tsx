@@ -6358,12 +6358,15 @@ export default function App() {
       }
 
       try {
-        await voidReimbursement(authSession.accessToken, row.apiRef.id, {
+        const result = await voidReimbursement(authSession.accessToken, row.apiRef.id, {
           memo: normalizeOptionalFormValue(memo),
         });
         setDetailRow(null);
         setFinanceReloadKey((current) => current + 1);
-        setActionNotice({ tone: "emerald", text: "报销已作废，关联账户流水已冲销。" });
+        setActionNotice({
+          tone: "emerald",
+          text: result.idempotent ? "该报销已经作废，列表已刷新。" : "报销已作废，关联账户流水已冲销。",
+        });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }

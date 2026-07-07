@@ -743,7 +743,7 @@ export function createReimbursementFromExpense(
 }
 
 export function voidReimbursement(accessToken: string, reimbursementId: string, input: VoidReimbursementInput = {}) {
-  return requestJson<{ reimbursement: ReimbursementRecord }>(`/reimbursements/${reimbursementId}/void`, {
+  return requestJson<{ reimbursement: ReimbursementRecord; idempotent?: boolean }>(`/reimbursements/${reimbursementId}/void`, {
     method: "POST",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),

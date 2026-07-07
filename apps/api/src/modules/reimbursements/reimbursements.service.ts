@@ -309,6 +309,10 @@ export class ReimbursementsService {
   ) {
     const before = await this.findReimbursement(id);
 
+    if (before.status === ReimbursementStatus.voided) {
+      return { reimbursement: before, idempotent: true };
+    }
+
     if (before.status !== ReimbursementStatus.completed) {
       throw new BadRequestException("Only completed reimbursement can be voided.");
     }
@@ -357,7 +361,7 @@ export class ReimbursementsService {
       return updated;
     });
 
-    return { reimbursement };
+    return { reimbursement, idempotent: false };
   }
 
   private async findReimbursement(id: string) {
