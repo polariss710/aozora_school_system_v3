@@ -45,6 +45,7 @@ import {
   archiveStudent,
   archiveTeacher,
   apiBaseUrl,
+  createCashInboundEvent,
   createManualExpense,
   createManualIncome,
   createStudent,
@@ -82,6 +83,7 @@ import type {
   BusinessEntityRecord,
   CashInboundEventRecord,
   CashRequestRecord,
+  CreateCashInboundEventInput,
   ExpenseRecord,
   ExternalWorkplaceRecord,
   IncomeRecord,
@@ -246,6 +248,7 @@ type TeacherDialogState =
 
 type FinanceDialogState = { kind: "income" | "expense" };
 type CashRequestDialogState = { row: DataRow };
+type CashInboundDialogState = { mode: "create" };
 
 type SettingCategory = "businessEntities" | "accounts" | "subjects" | "externalWorkplaces";
 
@@ -257,9 +260,30 @@ interface SettingsApiCounts {
 }
 
 type SettingsApiState =
-  | { status: "idle" | "loading"; rows: DataRow[]; counts: SettingsApiCounts; businessEntities: BusinessEntityRecord[]; message?: string }
-  | { status: "ready"; rows: DataRow[]; counts: SettingsApiCounts; businessEntities: BusinessEntityRecord[]; message?: string }
-  | { status: "error"; rows: DataRow[]; counts: SettingsApiCounts; businessEntities: BusinessEntityRecord[]; message: string };
+  | {
+      status: "idle" | "loading";
+      rows: DataRow[];
+      counts: SettingsApiCounts;
+      businessEntities: BusinessEntityRecord[];
+      accounts: AccountRecord[];
+      message?: string;
+    }
+  | {
+      status: "ready";
+      rows: DataRow[];
+      counts: SettingsApiCounts;
+      businessEntities: BusinessEntityRecord[];
+      accounts: AccountRecord[];
+      message?: string;
+    }
+  | {
+      status: "error";
+      rows: DataRow[];
+      counts: SettingsApiCounts;
+      businessEntities: BusinessEntityRecord[];
+      accounts: AccountRecord[];
+      message: string;
+    };
 
 type FinanceListState =
   | { status: "idle" | "loading"; rows: DataRow[]; total: number; message?: string }
@@ -2140,6 +2164,223 @@ function CashRequestFormModal({
   );
 }
 
+function CashInboundEventFormModal({
+  accounts,
+  incomeRows,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  accounts: AccountRecord[];
+  incomeRows: DataRow[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: CreateCashInboundEventInput) => void;
+}) {
+  const activeCorporateAccounts = accounts.filter(
+    (account) => account.status === "active" && account.type === "corporate",
+  );
+  const candidateIncomeRows = incomeRows.filter(
+    (row) =>
+      row.apiRef?.resource === "income" &&
+      row.financeRecord?.kind === "income" &&
+      row.financeRecord.recordStatus === "cash_confirmed" &&
+      row.financeRecord.cashStatus === "cash_confirmed",
+  );
+  const defaultDate = new Date().toISOString().slice(0, 10);
+  const [externalCashEventId, setExternalCashEventId] = useState(`DEV-CASH-IN-${Date.now()}`);
+  const [corporateAccountId, setCorporateAccountId] = useState(activeCorporateAccounts[0]?.id ?? "");
+  const selectedAccount = activeCorporateAccounts.find((account) => account.id === corporateAccountId) ?? activeCorporateAccounts[0];
+  const targetCurrency = selectedAccount?.currency === "CNY" ? "CNY" : "JPY";
+  const [eventDate, setEventDate] = useState(defaultDate);
+  const [targetAmount, setTargetAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const [linkedIncomeRecordIds, setLinkedIncomeRecordIds] = useState<string[]>([]);
+  const targetAmountNumber = Number(targetAmount);
+  const canSubmit =
+    externalCashEventId.trim() &&
+    corporateAccountId &&
+    eventDate &&
+    Number.isFinite(targetAmountNumber) &&
+    targetAmountNumber > 0;
+
+  const toggleIncomeRecord = (incomeRecordId: string) => {
+    setLinkedIncomeRecordIds((current) =>
+      current.includes(incomeRecordId)
+        ? current.filter((id) => id !== incomeRecordId)
+        : [...current, incomeRecordId],
+    );
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!canSubmit) {
+      return;
+    }
+
+    onSubmit({
+      externalCashEventId: externalCashEventId.trim(),
+      corporateAccountId,
+      eventDate,
+      targetCurrency,
+      targetAmountJpy: targetCurrency === "JPY" ? targetAmountNumber : null,
+      targetAmountCny: targetCurrency === "CNY" ? targetAmountNumber : null,
+      linkedIncomeRecordIds,
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex max-h-[92vh] w-[min(760px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">新增 Cash 入站</h2>
+            <p className="mt-1 text-xs text-muted-foreground">登记后会生成法人账户入金流水，并把关联收入推进到已生成流水</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Cash 事件 ID</span>
+              <input
+                required
+                value={externalCashEventId}
+                onChange={(event) => setExternalCashEventId(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="例如 CASH-IN-202607-001"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">入站日期</span>
+              <input
+                required
+                type="date"
+                value={eventDate}
+                onChange={(event) => setEventDate(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">入账法人账户</span>
+              <select
+                required
+                value={corporateAccountId}
+                onChange={(event) => setCorporateAccountId(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              >
+                {activeCorporateAccounts.length === 0 && <option value="">没有可用法人账户</option>}
+                {activeCorporateAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} / {account.currency}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">入账金额 ({targetCurrency})</span>
+              <input
+                required
+                min="0"
+                step={targetCurrency === "JPY" ? "1" : "0.01"}
+                type="number"
+                value={targetAmount}
+                onChange={(event) => setTargetAmount(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder={targetCurrency === "JPY" ? "例如：120000" : "例如：6000.00"}
+              />
+            </label>
+          </div>
+
+          <section className="rounded-lg border border-border bg-muted/10">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-xs font-semibold text-foreground">关联 Cash 已确认收入</span>
+              <span className="text-xs text-muted-foreground">{linkedIncomeRecordIds.length} / {candidateIncomeRows.length} 条</span>
+            </div>
+            <div className="max-h-44 overflow-y-auto p-2">
+              {candidateIncomeRows.length === 0 ? (
+                <div className="px-2 py-4 text-xs text-muted-foreground">当前没有可关联的 Cash 已确认收入。</div>
+              ) : (
+                <div className="grid gap-2">
+                  {candidateIncomeRows.map((row) => {
+                    const incomeRecordId = row.apiRef!.id;
+                    const checked = linkedIncomeRecordIds.includes(incomeRecordId);
+                    return (
+                      <label
+                        key={row.id}
+                        className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition ${
+                          checked ? "border-[#1687D9] bg-sky-50" : "border-border bg-white hover:bg-muted/40"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleIncomeRecord(incomeRecordId)}
+                          className="mt-0.5 h-3.5 w-3.5 rounded border-border"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium text-foreground">{row.title}</span>
+                          <span className="mt-0.5 block text-muted-foreground">
+                            {row.cells.businessMonth} / {row.cells.amount}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea
+              value={memo}
+              onChange={(event) => setMemo(event.target.value)}
+              className="min-h-[82px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="选填"
+            />
+          </label>
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !canSubmit}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "登记中" : "登记入站"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ActionNotice({
   notice,
   onClose,
@@ -2914,8 +3155,8 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
 
   return {
     ...basePage,
-    description: "真实 dev API Cash 入站事件列表；已入账事件可冲销，创建入站事件后续接入",
-    primaryAction: undefined,
+    description: "真实 dev API Cash 入站事件列表；可登记新入站并冲销已入账事件",
+    primaryAction: "新增入站",
     batchAction: undefined,
     selectable: false,
     metrics: [
@@ -5449,6 +5690,7 @@ export default function App() {
     rows: [],
     counts: emptySettingsCounts,
     businessEntities: [],
+    accounts: [],
   });
   const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
   const [financeReloadKey, setFinanceReloadKey] = useState(0);
@@ -5458,6 +5700,9 @@ export default function App() {
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
   const [isCashRequestSubmitting, setIsCashRequestSubmitting] = useState(false);
   const [cashRequestError, setCashRequestError] = useState<string | null>(null);
+  const [cashInboundDialog, setCashInboundDialog] = useState<CashInboundDialogState | null>(null);
+  const [isCashInboundSubmitting, setIsCashInboundSubmitting] = useState(false);
+  const [cashInboundError, setCashInboundError] = useState<string | null>(null);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
@@ -5635,7 +5880,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authSession) {
-      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts, businessEntities: [] });
+      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts, businessEntities: [], accounts: [] });
       return;
     }
 
@@ -5646,6 +5891,7 @@ export default function App() {
       rows: current.rows,
       counts: current.counts,
       businessEntities: current.businessEntities,
+      accounts: current.accounts,
     }));
 
     void Promise.all([
@@ -5674,6 +5920,7 @@ export default function App() {
             externalWorkplaces: externalWorkplaces.items.length,
           },
           businessEntities: businessEntities.items,
+          accounts: accounts.items,
         });
       })
       .catch((error) => {
@@ -5686,6 +5933,7 @@ export default function App() {
           rows: [],
           counts: emptySettingsCounts,
           businessEntities: [],
+          accounts: [],
           message: error instanceof Error ? error.message : "Settings API request failed",
         });
       });
@@ -5816,6 +6064,11 @@ export default function App() {
   const openFinanceCreate = (kind: "income" | "expense") => {
     setFinanceMutationError(null);
     setFinanceDialog({ kind });
+  };
+
+  const openCashInboundCreate = () => {
+    setCashInboundError(null);
+    setCashInboundDialog({ mode: "create" });
   };
 
   const submitStudentForm = async (input: StudentWriteInput) => {
@@ -6081,6 +6334,31 @@ export default function App() {
     }
   };
 
+  const submitCashInboundForm = async (input: CreateCashInboundEventInput) => {
+    if (!authSession || !cashInboundDialog) {
+      setCashInboundError("请先使用真实 API 登录后再登记 Cash 入站。");
+      return;
+    }
+
+    setIsCashInboundSubmitting(true);
+    setCashInboundError(null);
+
+    try {
+      const result = await createCashInboundEvent(authSession.accessToken, input);
+      setCashInboundDialog(null);
+      setDetailRow(null);
+      setFinanceReloadKey((current) => current + 1);
+      setActionNotice({
+        tone: "emerald",
+        text: result.idempotent ? "Cash 入站已存在，已刷新列表。" : "Cash 入站已登记，账户流水已生成。",
+      });
+    } catch (error) {
+      setCashInboundError(formatApiError(error));
+    } finally {
+      setIsCashInboundSubmitting(false);
+    }
+  };
+
   const setSelected = (next: Set<string>) => {
     setSelectedByPage((current) => ({ ...current, [activeKey]: next }));
   };
@@ -6115,6 +6393,7 @@ export default function App() {
     setTeacherDialog(null);
     setFinanceDialog(null);
     setCashRequestDialog(null);
+    setCashInboundDialog(null);
   };
 
   const pageForTopBar =
@@ -6177,8 +6456,10 @@ export default function App() {
                     ? openTeacherCreate
                     : activeKey === "income-records"
                       ? () => openFinanceCreate("income")
-                      : activeKey === "expense-records"
-                        ? () => openFinanceCreate("expense")
+                    : activeKey === "expense-records"
+                      ? () => openFinanceCreate("expense")
+                      : activeKey === "cash-inbound"
+                        ? openCashInboundCreate
                   : undefined
             }
           />
@@ -6234,6 +6515,16 @@ export default function App() {
           error={cashRequestError}
           onClose={() => setCashRequestDialog(null)}
           onSubmit={submitCashRequestForm}
+        />
+      )}
+      {cashInboundDialog && (
+        <CashInboundEventFormModal
+          accounts={settingsApi.accounts}
+          incomeRows={financeApi.incomeRecords.rows}
+          isSubmitting={isCashInboundSubmitting}
+          error={cashInboundError}
+          onClose={() => setCashInboundDialog(null)}
+          onSubmit={submitCashInboundForm}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />

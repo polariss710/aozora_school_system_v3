@@ -193,6 +193,25 @@ export interface RejectCashInboundEventInput {
   reason?: string | null;
 }
 
+export interface CreateCashInboundEventInput {
+  externalCashEventId: string;
+  eventType?: string | null;
+  corporateAccountId: string;
+  eventDate: string;
+  sourceCurrency?: "JPY" | "CNY" | null;
+  sourceAmountJpy?: number | null;
+  sourceAmountCny?: number | null;
+  targetCurrency: "JPY" | "CNY";
+  targetAmountJpy?: number | null;
+  targetAmountCny?: number | null;
+  exchangeRate?: number | null;
+  feeCurrency?: "JPY" | "CNY" | null;
+  feeAmountJpy?: number | null;
+  feeAmountCny?: number | null;
+  linkedIncomeRecordIds?: string[];
+  memo?: string | null;
+}
+
 export interface CashRequestRecord {
   id: string;
   direction: "income" | "expense";
@@ -594,6 +613,14 @@ export function listCashRequests(accessToken: string) {
 export function listCashInboundEvents(accessToken: string) {
   return requestJson<ListResponse<CashInboundEventRecord>>("/cash-inbound/events?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function createCashInboundEvent(accessToken: string, input: CreateCashInboundEventInput) {
+  return requestJson<{ event: CashInboundEventRecord; idempotent: boolean }>("/cash-inbound/events", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
   });
 }
 
