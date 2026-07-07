@@ -258,6 +258,7 @@ Reimbursement endpoints:
 
 ```text
 GET /api/reimbursements
+GET /api/reimbursements/candidates/expenses
 GET /api/reimbursements/:id
 POST /api/reimbursements/from-expense/:expenseRecordId
 POST /api/reimbursements/:id/void

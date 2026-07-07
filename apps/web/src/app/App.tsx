@@ -45,6 +45,7 @@ import {
   archiveStudent,
   archiveTeacher,
   apiBaseUrl,
+  createReimbursementFromExpense,
   createManualExpense,
   createManualIncome,
   createStudent,
@@ -59,6 +60,8 @@ import {
   listExpenseRecords,
   listExternalWorkplaces,
   listIncomeRecords,
+  listReimbursementCandidateExpenses,
+  listReimbursements,
   listSubjects,
   listStudents,
   listTeachers,
@@ -72,6 +75,7 @@ import {
   updateTeacher,
   voidExpenseRecord,
   voidIncomeRecord,
+  voidReimbursement,
   withdrawCashRequest,
 } from "./api";
 import type {
@@ -82,11 +86,14 @@ import type {
   BusinessEntityRecord,
   CashInboundEventRecord,
   CashRequestRecord,
+  CreateReimbursementInput,
   ExpenseRecord,
   ExternalWorkplaceRecord,
   IncomeRecord,
   ManualExpenseInput,
   ManualIncomeInput,
+  ReimbursementCandidateExpenseRecord,
+  ReimbursementRecord,
   SubmitCashRequestInput,
   StudentRecord,
   StudentWriteInput,
@@ -145,7 +152,7 @@ interface DataRow {
   detail: DetailSection[];
   cashPreview?: CashPreview;
   apiRef?: {
-    resource: "student" | "teacher" | "income" | "expense" | "cashRequest" | "cashInbound";
+    resource: "student" | "teacher" | "income" | "expense" | "cashRequest" | "cashInbound" | "reimbursement";
     id: string;
   };
   studentRecord?: StudentRecord;
@@ -168,6 +175,9 @@ interface DataRow {
   cashInbound?: {
     status: string;
   };
+  reimbursement?: {
+    status: string;
+  };
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
@@ -182,7 +192,8 @@ type DrawerActionKey =
   | "cash.withdraw"
   | "cashInbound.reject"
   | "income.void"
-  | "expense.void";
+  | "expense.void"
+  | "reimbursement.void";
 
 interface DrawerAction {
   label: string;
@@ -246,6 +257,14 @@ type TeacherDialogState =
 
 type FinanceDialogState = { kind: "income" | "expense" };
 type CashRequestDialogState = { row: DataRow };
+type ReimbursementDialogState = {
+  isLoading: boolean;
+  candidates: ReimbursementCandidateExpenseRecord[];
+  accounts: AccountRecord[];
+};
+type ReimbursementFormInput = CreateReimbursementInput & {
+  expenseRecordId: string;
+};
 
 type SettingCategory = "businessEntities" | "accounts" | "subjects" | "externalWorkplaces";
 
@@ -290,6 +309,7 @@ interface FinanceApiState {
   cashRequests: FinanceListState;
   cashInbound: FinanceListState;
   accountLedger: FinanceListState;
+  reimbursements: FinanceListState;
 }
 
 const toneClasses: Record<
@@ -996,6 +1016,23 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     return [
       {
         title: "Cash 入站操作",
+        actions,
+      },
+    ];
+  }
+
+  if (row.apiRef?.resource === "reimbursement") {
+    const canVoidReimbursement = row.reimbursement?.status === "completed";
+    const actions: DrawerAction[] = canVoidReimbursement
+      ? [
+          { label: "作废报销", icon: X, variant: "danger", key: "reimbursement.void" },
+          { label: "查看操作记录", icon: History, variant: "quiet" },
+        ]
+      : [{ label: "查看操作记录", icon: History, variant: "quiet" }];
+
+    return [
+      {
+        title: "报销操作",
         actions,
       },
     ];
@@ -2158,6 +2195,203 @@ function CashRequestFormModal({
   );
 }
 
+function ReimbursementFormModal({
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: ReimbursementDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: ReimbursementFormInput) => void;
+}) {
+  const defaultDate = new Date().toISOString().slice(0, 10);
+  const [expenseRecordId, setExpenseRecordId] = useState("");
+  const [corporateAccountId, setCorporateAccountId] = useState("");
+  const [reimbursementDate, setReimbursementDate] = useState(defaultDate);
+  const [memo, setMemo] = useState("");
+  const selectedCandidate = state.candidates.find((candidate) => candidate.id === expenseRecordId) ?? state.candidates[0];
+  const advanceTransaction = selectedCandidate ? getReimbursementCandidateAdvanceTransaction(selectedCandidate) : null;
+  const candidateCurrency = advanceTransaction?.currency ?? selectedCandidate?.originalCurrency ?? "JPY";
+  const matchingCorporateAccounts = getMatchingCorporateAccounts(state.accounts, candidateCurrency);
+  const canSubmit =
+    !state.isLoading &&
+    Boolean(selectedCandidate) &&
+    Boolean(advanceTransaction) &&
+    Boolean(corporateAccountId) &&
+    Boolean(reimbursementDate);
+
+  useEffect(() => {
+    if (state.isLoading) {
+      return;
+    }
+
+    const nextExpenseRecordId = expenseRecordId || state.candidates[0]?.id || "";
+    if (nextExpenseRecordId && nextExpenseRecordId !== expenseRecordId) {
+      setExpenseRecordId(nextExpenseRecordId);
+    }
+
+    const candidate = state.candidates.find((item) => item.id === nextExpenseRecordId) ?? state.candidates[0];
+    const nextCorporateAccountId = candidate ? getDefaultReimbursementCorporateAccountId(state.accounts, candidate) : "";
+    if (!matchingCorporateAccounts.some((account) => account.id === corporateAccountId)) {
+      setCorporateAccountId(nextCorporateAccountId);
+    }
+  }, [state.isLoading, state.candidates, state.accounts, expenseRecordId, corporateAccountId, matchingCorporateAccounts]);
+
+  const handleExpenseChange = (nextExpenseRecordId: string) => {
+    setExpenseRecordId(nextExpenseRecordId);
+    const candidate = state.candidates.find((item) => item.id === nextExpenseRecordId);
+    setCorporateAccountId(candidate ? getDefaultReimbursementCorporateAccountId(state.accounts, candidate) : "");
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!canSubmit || !selectedCandidate) {
+      return;
+    }
+
+    onSubmit({
+      expenseRecordId: selectedCandidate.id,
+      corporateAccountId,
+      reimbursementDate,
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex max-h-[92vh] w-[min(720px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">新增报销</h2>
+            <p className="mt-1 text-xs text-muted-foreground">从已入账的垫付支出生成法人账户出金和垫付账户入金</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 overflow-y-auto px-6 py-5">
+          {state.isLoading ? (
+            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              正在读取可报销支出...
+            </div>
+          ) : state.candidates.length === 0 ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-700">
+              当前没有可报销的垫付支出。需要先有一笔已生成账户流水的垫付账户支出。
+            </div>
+          ) : (
+            <>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">关联垫付支出</span>
+                <select
+                  required
+                  value={expenseRecordId}
+                  onChange={(event) => handleExpenseChange(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                >
+                  {state.candidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.title} / {getReimbursementCandidateAmount(candidate)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedCandidate && advanceTransaction && (
+                <section className="rounded-lg border border-border bg-muted/10 px-3 py-3">
+                  <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-3">
+                    <div>
+                      <span className="block font-medium text-foreground">垫付账户</span>
+                      <span>{advanceTransaction.account.name}</span>
+                    </div>
+                    <div>
+                      <span className="block font-medium text-foreground">报销金额</span>
+                      <span>{getReimbursementCandidateAmount(selectedCandidate)}</span>
+                    </div>
+                    <div>
+                      <span className="block font-medium text-foreground">来源</span>
+                      <span>{getExpenseSourceLabel(selectedCandidate.sourceType)}</span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              <div className="grid gap-4 md:grid-cols-[1fr_170px]">
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">法人出金账户</span>
+                  <select
+                    required
+                    value={corporateAccountId}
+                    onChange={(event) => setCorporateAccountId(event.target.value)}
+                    className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                  >
+                    {matchingCorporateAccounts.length === 0 && <option value="">没有同币种法人账户</option>}
+                    {matchingCorporateAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name} / {account.currency}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">报销日期</span>
+                  <input
+                    required
+                    type="date"
+                    value={reimbursementDate}
+                    onChange={(event) => setReimbursementDate(event.target.value)}
+                    className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                  />
+                </label>
+              </div>
+
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">备注</span>
+                <textarea
+                  value={memo}
+                  onChange={(event) => setMemo(event.target.value)}
+                  className="min-h-[82px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                  placeholder="选填"
+                />
+              </label>
+            </>
+          )}
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !canSubmit}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "生成中" : "生成报销"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ActionNotice({
   notice,
   onClose,
@@ -2837,6 +3071,7 @@ function createEmptyFinanceApiState(): FinanceApiState {
     cashRequests: createEmptyFinanceListState(),
     cashInbound: createEmptyFinanceListState(),
     accountLedger: createEmptyFinanceListState(),
+    reimbursements: createEmptyFinanceListState(),
   };
 }
 
@@ -3249,6 +3484,126 @@ function mapAccountTransactionToRow(record: AccountTransactionRecord): DataRow {
       },
     ],
   };
+}
+
+function mapReimbursementRecordToRow(record: ReimbursementRecord): DataRow {
+  const status = getReimbursementStatusView(record.status);
+  const amount = formatApiCurrencyAmount(record.currency, record.amountJpy, record.amountCny);
+
+  return {
+    id: `reimbursement-${record.id}`,
+    title: record.expenseRecord.title,
+    subtitle: `${record.advanceAccount.name} -> ${record.corporateAccount.name}`,
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "reimbursement", id: record.id },
+    readOnlyActions: record.status !== "completed",
+    reimbursement: { status: record.status },
+    cells: {
+      advanceAccount: record.advanceAccount.name,
+      expense: record.expenseRecord.title,
+      amount,
+      fromAccount: record.corporateAccount.name,
+    },
+    detail: [
+      {
+        title: "报销记录",
+        lines: [
+          { label: "关联支出", value: record.expenseRecord.title },
+          { label: "报销日期", value: formatApiDate(record.reimbursementDate) },
+          { label: "报销金额", value: amount },
+          { label: "法人出金账户", value: `${record.corporateAccount.name} / ${record.corporateAccount.code}` },
+          { label: "垫付入金账户", value: `${record.advanceAccount.name} / ${record.advanceAccount.code}` },
+          { label: "状态", value: status.label },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+      {
+        title: "流水联动",
+        lines: [
+          { label: "法人出金流水", value: `${record.corporateTransactionId} / ${getAccountTransactionStatusView(record.corporateTransaction.status).label}` },
+          { label: "垫付入金流水", value: `${record.advanceTransactionId} / ${getAccountTransactionStatusView(record.advanceTransaction.status).label}` },
+          { label: "作废时间", value: record.voidedAt ? formatApiDate(record.voidedAt) : "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function buildReimbursementsPage(basePage: PageConfig, reimbursementApi: FinanceListState): PageConfig {
+  if (reimbursementApi.status !== "ready") {
+    return basePage;
+  }
+
+  const completedCount = reimbursementApi.rows.filter((row) => row.status === "已完成").length;
+  const voidedCount = reimbursementApi.rows.filter((row) => row.status === "已作废").length;
+  const jpyTotal = reimbursementApi.rows.reduce((total, row) => {
+    const amountText = String(row.cells.amount ?? "");
+    const numeric = Number(amountText.replace(/[^\d.-]/g, ""));
+    return amountText.includes("¥") && Number.isFinite(numeric) && row.status === "已完成" ? total + numeric : total;
+  }, 0);
+
+  return {
+    ...basePage,
+    description: "真实 dev API 报销列表；从垫付支出生成法人出金和垫付入金，已完成报销可作废",
+    batchAction: undefined,
+    selectable: false,
+    metrics: [
+      { label: "报销记录", value: `${reimbursementApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: WalletCards },
+      { label: "已完成", value: `${completedCount} 条`, sub: "双边流水已生成", tone: "emerald", icon: CheckCircle2 },
+      { label: "已作废", value: `${voidedCount} 条`, sub: "双边流水已冲销", tone: "slate", icon: RotateCcw },
+      { label: "JPY 完成额", value: money.jpy(jpyTotal), sub: "当前列表合计", tone: "cyan", icon: Landmark },
+    ],
+    rows: reimbursementApi.rows,
+  };
+}
+
+function getReimbursementStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "completed") {
+    return { label: "已完成", tone: "emerald" };
+  }
+
+  if (status === "voided") {
+    return { label: "已作废", tone: "slate" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
+function getReimbursementCandidateAdvanceTransaction(candidate: ReimbursementCandidateExpenseRecord) {
+  return (
+    candidate.accountTransactions.find(
+      (transaction) =>
+        transaction.direction === "out" &&
+        transaction.status === "active" &&
+        transaction.account.type === "advance" &&
+        transaction.account.status === "active",
+    ) ?? null
+  );
+}
+
+function getReimbursementCandidateAmount(candidate: ReimbursementCandidateExpenseRecord) {
+  const transaction = getReimbursementCandidateAdvanceTransaction(candidate);
+
+  if (transaction) {
+    return formatApiCurrencyAmount(transaction.currency, transaction.amountJpy, transaction.amountCny);
+  }
+
+  return formatApiCurrencyAmount(candidate.originalCurrency, candidate.originalAmountJpy, candidate.originalAmountCny);
+}
+
+function getMatchingCorporateAccounts(accounts: AccountRecord[], currency: string) {
+  return accounts.filter((account) => account.status === "active" && account.type === "corporate" && account.currency === currency);
+}
+
+function getDefaultReimbursementCorporateAccountId(
+  accounts: AccountRecord[],
+  candidate: ReimbursementCandidateExpenseRecord,
+) {
+  const transaction = getReimbursementCandidateAdvanceTransaction(candidate);
+  const currency = transaction?.currency ?? candidate.originalCurrency;
+
+  return getMatchingCorporateAccounts(accounts, currency)[0]?.id ?? "";
 }
 
 function getFinancialRecordStatusView(recordStatus: string, cashStatus: string): { label: string; tone: Tone } {
@@ -5476,6 +5831,9 @@ export default function App() {
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
   const [isCashRequestSubmitting, setIsCashRequestSubmitting] = useState(false);
   const [cashRequestError, setCashRequestError] = useState<string | null>(null);
+  const [reimbursementDialog, setReimbursementDialog] = useState<ReimbursementDialogState | null>(null);
+  const [isReimbursementSubmitting, setIsReimbursementSubmitting] = useState(false);
+  const [reimbursementMutationError, setReimbursementMutationError] = useState<string | null>(null);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
@@ -5516,6 +5874,10 @@ export default function App() {
 
     if (activeKey === "account-ledger" && baseActivePage) {
       return buildAccountLedgerPage(baseActivePage, financeApi.accountLedger);
+    }
+
+    if (activeKey === "reimbursements" && baseActivePage) {
+      return buildReimbursementsPage(baseActivePage, financeApi.reimbursements);
     }
 
     return baseActivePage;
@@ -5747,6 +6109,11 @@ export default function App() {
         rows: current.accountLedger.rows,
         total: current.accountLedger.total,
       },
+      reimbursements: {
+        status: "loading",
+        rows: current.reimbursements.rows,
+        total: current.reimbursements.total,
+      },
     }));
 
     void Promise.all([
@@ -5755,8 +6122,9 @@ export default function App() {
       listCashRequests(authSession.accessToken),
       listCashInboundEvents(authSession.accessToken),
       listAccountTransactions(authSession.accessToken),
+      listReimbursements(authSession.accessToken),
     ])
-      .then(([incomeRecords, expenseRecords, cashRequests, cashInboundEvents, accountTransactions]) => {
+      .then(([incomeRecords, expenseRecords, cashRequests, cashInboundEvents, accountTransactions, reimbursements]) => {
         if (!isMounted) {
           return;
         }
@@ -5787,6 +6155,11 @@ export default function App() {
             rows: accountTransactions.items.map(mapAccountTransactionToRow),
             total: accountTransactions.total,
           },
+          reimbursements: {
+            status: "ready",
+            rows: reimbursements.items.map(mapReimbursementRecordToRow),
+            total: reimbursements.total,
+          },
         });
       })
       .catch((error) => {
@@ -5801,6 +6174,7 @@ export default function App() {
           cashRequests: { status: "error", rows: [], total: 0, message },
           cashInbound: { status: "error", rows: [], total: 0, message },
           accountLedger: { status: "error", rows: [], total: 0, message },
+          reimbursements: { status: "error", rows: [], total: 0, message },
         });
       });
 
@@ -5834,6 +6208,31 @@ export default function App() {
   const openFinanceCreate = (kind: "income" | "expense") => {
     setFinanceMutationError(null);
     setFinanceDialog({ kind });
+  };
+
+  const openReimbursementCreate = async () => {
+    if (!authSession) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再新增报销。" });
+      return;
+    }
+
+    setReimbursementMutationError(null);
+    setReimbursementDialog({ isLoading: true, candidates: [], accounts: [] });
+
+    try {
+      const [candidateExpenses, accounts] = await Promise.all([
+        listReimbursementCandidateExpenses(authSession.accessToken),
+        listAccounts(authSession.accessToken),
+      ]);
+      setReimbursementDialog({
+        isLoading: false,
+        candidates: candidateExpenses.items,
+        accounts: accounts.items,
+      });
+    } catch (error) {
+      setReimbursementMutationError(formatApiError(error));
+      setReimbursementDialog({ isLoading: false, candidates: [], accounts: [] });
+    }
   };
 
   const submitStudentForm = async (input: StudentWriteInput) => {
@@ -5938,6 +6337,33 @@ export default function App() {
         setDetailRow(null);
         setFinanceReloadKey((current) => current + 1);
         setActionNotice({ tone: "emerald", text: "Cash 入站已冲销，对应账户流水已冲销。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
+      return;
+    }
+
+    if (actionKey === "reimbursement.void") {
+      if (!authSession || row.apiRef?.resource !== "reimbursement") {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
+        return;
+      }
+
+      const memo = window.prompt(
+        `确认作废报销「${row.title}」？这会冲销法人出金和垫付入金两条流水。请输入原因（可留空）：`,
+        "测试作废报销",
+      );
+      if (memo === null) {
+        return;
+      }
+
+      try {
+        await voidReimbursement(authSession.accessToken, row.apiRef.id, {
+          memo: normalizeOptionalFormValue(memo),
+        });
+        setDetailRow(null);
+        setFinanceReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "报销已作废，关联账户流水已冲销。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
@@ -6099,6 +6525,32 @@ export default function App() {
     }
   };
 
+  const submitReimbursementForm = async (input: ReimbursementFormInput) => {
+    if (!authSession) {
+      setReimbursementMutationError("请先使用真实 API 登录后再生成报销。");
+      return;
+    }
+
+    setIsReimbursementSubmitting(true);
+    setReimbursementMutationError(null);
+
+    try {
+      await createReimbursementFromExpense(authSession.accessToken, input.expenseRecordId, {
+        corporateAccountId: input.corporateAccountId,
+        reimbursementDate: input.reimbursementDate,
+        memo: input.memo,
+      });
+      setReimbursementDialog(null);
+      setDetailRow(null);
+      setFinanceReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: "报销已生成，法人账户和垫付账户流水已创建。" });
+    } catch (error) {
+      setReimbursementMutationError(formatApiError(error));
+    } finally {
+      setIsReimbursementSubmitting(false);
+    }
+  };
+
   const setSelected = (next: Set<string>) => {
     setSelectedByPage((current) => ({ ...current, [activeKey]: next }));
   };
@@ -6133,6 +6585,7 @@ export default function App() {
     setTeacherDialog(null);
     setFinanceDialog(null);
     setCashRequestDialog(null);
+    setReimbursementDialog(null);
   };
 
   const pageForTopBar =
@@ -6197,6 +6650,8 @@ export default function App() {
                       ? () => openFinanceCreate("income")
                     : activeKey === "expense-records"
                       ? () => openFinanceCreate("expense")
+                    : activeKey === "reimbursements"
+                      ? openReimbursementCreate
                   : undefined
             }
           />
@@ -6252,6 +6707,15 @@ export default function App() {
           error={cashRequestError}
           onClose={() => setCashRequestDialog(null)}
           onSubmit={submitCashRequestForm}
+        />
+      )}
+      {reimbursementDialog && (
+        <ReimbursementFormModal
+          state={reimbursementDialog}
+          isSubmitting={isReimbursementSubmitting}
+          error={reimbursementMutationError}
+          onClose={() => setReimbursementDialog(null)}
+          onSubmit={submitReimbursementForm}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />

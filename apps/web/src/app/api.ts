@@ -329,6 +329,83 @@ export interface AccountTransactionRecord {
   expenseRecord: { id: string; sourceType: string; title: string; recordStatus: string; cashStatus: string } | null;
 }
 
+export interface ReimbursementRecord {
+  id: string;
+  expenseRecordId: string;
+  corporateAccountId: string;
+  advanceAccountId: string;
+  corporateTransactionId: string;
+  advanceTransactionId: string;
+  reimbursementDate: string;
+  currency: "JPY" | "CNY";
+  amountJpy: ApiAmountValue;
+  amountCny: ApiAmountValue;
+  status: string;
+  memo: string | null;
+  voidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expenseRecord: {
+    id: string;
+    sourceType: string;
+    title: string;
+    originalCurrency: "JPY" | "CNY";
+    recordStatus: string;
+    cashStatus: string;
+  };
+  corporateAccount: RelatedAccountRecord;
+  advanceAccount: RelatedAccountRecord;
+  corporateTransaction: {
+    id: string;
+    direction: "in" | "out";
+    currency: "JPY" | "CNY";
+    amountJpy: ApiAmountValue;
+    amountCny: ApiAmountValue;
+    status: string;
+  };
+  advanceTransaction: {
+    id: string;
+    direction: "in" | "out";
+    currency: "JPY" | "CNY";
+    amountJpy: ApiAmountValue;
+    amountCny: ApiAmountValue;
+    status: string;
+  };
+}
+
+export interface ReimbursementCandidateExpenseRecord {
+  id: string;
+  sourceType: string;
+  title: string;
+  originalCurrency: "JPY" | "CNY";
+  originalAmountJpy: ApiAmountValue;
+  originalAmountCny: ApiAmountValue;
+  recordStatus: string;
+  cashStatus: string;
+  memo: string | null;
+  accountTransactions: Array<{
+    id: string;
+    accountId: string;
+    direction: "in" | "out";
+    currency: "JPY" | "CNY";
+    amountJpy: ApiAmountValue;
+    amountCny: ApiAmountValue;
+    status: string;
+    account: RelatedAccountRecord & { status: string };
+  }>;
+  reimbursementRecord: { id: string; status: string } | null;
+}
+
+export interface CreateReimbursementInput {
+  corporateAccountId: string;
+  reimbursementDate: string;
+  memo?: string | null;
+}
+
+export interface VoidReimbursementInput {
+  memo?: string | null;
+}
+
 interface ApiHealthResponse {
   service: string;
   status: "ok";
@@ -635,6 +712,38 @@ export function confirmCashRequest(accessToken: string, cashRequestId: string, i
     incomeRecord: IncomeRecord | null;
     expenseRecord: ExpenseRecord | null;
   }>(`/cash/requests/${cashRequestId}/confirm`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function listReimbursements(accessToken: string) {
+  return requestJson<ListResponse<ReimbursementRecord>>("/reimbursements?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listReimbursementCandidateExpenses(accessToken: string) {
+  return requestJson<ListResponse<ReimbursementCandidateExpenseRecord>>("/reimbursements/candidates/expenses?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function createReimbursementFromExpense(
+  accessToken: string,
+  expenseRecordId: string,
+  input: CreateReimbursementInput,
+) {
+  return requestJson<{ reimbursement: ReimbursementRecord }>(`/reimbursements/from-expense/${expenseRecordId}`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function voidReimbursement(accessToken: string, reimbursementId: string, input: VoidReimbursementInput = {}) {
+  return requestJson<{ reimbursement: ReimbursementRecord }>(`/reimbursements/${reimbursementId}/void`, {
     method: "POST",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),

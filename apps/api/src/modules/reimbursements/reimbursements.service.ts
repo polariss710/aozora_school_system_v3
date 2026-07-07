@@ -21,6 +21,7 @@ import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
 import {
   CreateReimbursementBody,
+  ListReimbursementCandidateExpensesQuery,
   ListReimbursementsQuery,
   VoidReimbursementBody,
 } from "./reimbursements.types";
@@ -93,6 +94,10 @@ const expenseForReimbursementSelect = {
     where: {
       direction: AccountTransactionDirection.out,
       status: AccountTransactionStatus.active,
+      account: {
+        type: AccountType.advance,
+        status: RecordStatus.active,
+      },
     },
     select: {
       id: true,
@@ -149,6 +154,47 @@ export class ReimbursementsService {
     const reimbursement = await this.findReimbursement(id);
 
     return { reimbursement };
+  }
+
+  async listCandidateExpenses(query: ListReimbursementCandidateExpensesQuery) {
+    const keyword = this.normalizeOptionalString(query.keyword);
+    const limit = this.normalizeLimit(query.limit);
+    const where: Prisma.ExpenseRecordWhereInput = {
+      recordStatus: ExpenseRecordStatus.pending,
+      cashStatus: CashRequestStatus.account_transaction_created,
+      reimbursementRecord: null,
+      accountTransactions: {
+        some: {
+          direction: AccountTransactionDirection.out,
+          status: AccountTransactionStatus.active,
+          account: {
+            type: AccountType.advance,
+            status: RecordStatus.active,
+          },
+        },
+      },
+      ...(keyword
+        ? {
+            OR: [
+              { title: { contains: keyword, mode: "insensitive" } },
+              { memo: { contains: keyword, mode: "insensitive" } },
+              { businessEntity: { name: { contains: keyword, mode: "insensitive" } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.expenseRecord.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }],
+        take: limit,
+        select: expenseForReimbursementSelect,
+      }),
+      this.prisma.expenseRecord.count({ where }),
+    ]);
+
+    return { items, total, limit };
   }
 
   async createFromExpense(

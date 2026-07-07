@@ -7,6 +7,11 @@ export type ListReimbursementsQuery = {
   limit?: unknown;
 };
 
+export type ListReimbursementCandidateExpensesQuery = {
+  keyword?: unknown;
+  limit?: unknown;
+};
+
 export type CreateReimbursementBody = {
   corporateAccountId?: unknown;
   reimbursementDate?: unknown;

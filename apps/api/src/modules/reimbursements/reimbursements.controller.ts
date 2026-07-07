@@ -16,6 +16,7 @@ import { AuthenticatedUser } from "../users/users.types";
 import { ReimbursementsService } from "./reimbursements.service";
 import {
   CreateReimbursementBody,
+  ListReimbursementCandidateExpensesQuery,
   ListReimbursementsQuery,
   VoidReimbursementBody,
 } from "./reimbursements.types";
@@ -32,6 +33,12 @@ export class ReimbursementsController {
   @RequirePermissions("reimbursements.manage")
   listReimbursements(@Query() query: ListReimbursementsQuery) {
     return this.reimbursementsService.listReimbursements(query);
+  }
+
+  @Get("candidates/expenses")
+  @RequirePermissions("reimbursements.manage")
+  listCandidateExpenses(@Query() query: ListReimbursementCandidateExpensesQuery) {
+    return this.reimbursementsService.listCandidateExpenses(query);
   }
 
   @Get(":id")
