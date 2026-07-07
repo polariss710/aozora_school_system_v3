@@ -63,6 +63,7 @@ import {
   listStudents,
   listTeachers,
   loginWithPassword,
+  rejectCashInboundEvent,
   restoreStudent,
   restoreTeacher,
   submitExpenseCashRequest,
@@ -144,7 +145,7 @@ interface DataRow {
   detail: DetailSection[];
   cashPreview?: CashPreview;
   apiRef?: {
-    resource: "student" | "teacher" | "income" | "expense" | "cashRequest";
+    resource: "student" | "teacher" | "income" | "expense" | "cashRequest" | "cashInbound";
     id: string;
   };
   studentRecord?: StudentRecord;
@@ -164,6 +165,9 @@ interface DataRow {
     status: string;
     direction: "income" | "expense";
   };
+  cashInbound?: {
+    status: string;
+  };
 }
 
 type DrawerActionVariant = "primary" | "secondary" | "quiet" | "danger" | "warning";
@@ -176,6 +180,7 @@ type DrawerActionKey =
   | "teacher.restore"
   | "cash.submit"
   | "cash.withdraw"
+  | "cashInbound.reject"
   | "income.void"
   | "expense.void";
 
@@ -956,6 +961,23 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     return [
       {
         title: "Cash 请求操作",
+        actions,
+      },
+    ];
+  }
+
+  if (row.apiRef?.resource === "cashInbound") {
+    const canRejectInbound = row.cashInbound?.status === "account_transaction_created";
+    const actions: DrawerAction[] = canRejectInbound
+      ? [
+          { label: "拒绝入站事件", icon: X, variant: "danger", key: "cashInbound.reject" },
+          { label: "查看操作记录", icon: History, variant: "quiet" },
+        ]
+      : [{ label: "查看操作记录", icon: History, variant: "quiet" }];
+
+    return [
+      {
+        title: "Cash 入站操作",
         actions,
       },
     ];
@@ -2892,7 +2914,7 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
 
   return {
     ...basePage,
-    description: "真实 dev API Cash 入站事件列表；创建和拒绝入站事件后续接入",
+    description: "真实 dev API Cash 入站事件列表；已入账事件可拒绝，创建入站事件后续接入",
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -2948,7 +2970,9 @@ function mapCashInboundEventToRow(record: CashInboundEventRecord): DataRow {
     subtitle: `Cash 入站事件 / ${record.externalCashEventId}`,
     status: status.label,
     tone: status.tone,
-    readOnlyActions: true,
+    apiRef: { resource: "cashInbound", id: record.id },
+    readOnlyActions: record.status !== "account_transaction_created",
+    cashInbound: { status: record.status },
     cells: {
       type: eventType,
       object: `${record.corporateAccount.name} (${record.corporateAccount.currency})`,
@@ -5869,6 +5893,33 @@ export default function App() {
         setDetailRow(null);
         setFinanceReloadKey((current) => current + 1);
         setActionNotice({ tone: "emerald", text: "Cash 请求已撤回，来源记录已释放。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
+      return;
+    }
+
+    if (actionKey === "cashInbound.reject") {
+      if (!authSession || row.apiRef?.resource !== "cashInbound") {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
+        return;
+      }
+
+      const reason = window.prompt(
+        `确认拒绝 Cash 入站事件「${row.title}」？这会冲销对应账户流水，并把关联收入退回 Cash 已确认。请输入原因（可留空）：`,
+        "测试拒绝入站",
+      );
+      if (reason === null) {
+        return;
+      }
+
+      try {
+        await rejectCashInboundEvent(authSession.accessToken, row.apiRef.id, {
+          reason: normalizeOptionalFormValue(reason),
+        });
+        setDetailRow(null);
+        setFinanceReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "Cash 入站事件已拒绝，对应账户流水已冲销。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }

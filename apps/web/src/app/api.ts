@@ -189,6 +189,10 @@ export interface ConfirmCashRequestInput {
   externalCashEventId?: string | null;
 }
 
+export interface RejectCashInboundEventInput {
+  reason?: string | null;
+}
+
 export interface CashRequestRecord {
   id: string;
   direction: "income" | "expense";
@@ -590,6 +594,14 @@ export function listCashRequests(accessToken: string) {
 export function listCashInboundEvents(accessToken: string) {
   return requestJson<ListResponse<CashInboundEventRecord>>("/cash-inbound/events?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function rejectCashInboundEvent(accessToken: string, cashInboundEventId: string, input: RejectCashInboundEventInput = {}) {
+  return requestJson<{ event: CashInboundEventRecord }>(`/cash-inbound/events/${cashInboundEventId}/reject`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
   });
 }
 
