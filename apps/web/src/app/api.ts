@@ -234,6 +234,42 @@ export interface CashRequestRecord {
   } | null;
 }
 
+export interface CashInboundEventRecord {
+  id: string;
+  externalCashEventId: string;
+  eventType: string;
+  corporateAccountId: string;
+  accountTransactionId: string;
+  eventDate: string;
+  sourceCurrency: "JPY" | "CNY" | null;
+  sourceAmountJpy: ApiAmountValue;
+  sourceAmountCny: ApiAmountValue;
+  targetCurrency: "JPY" | "CNY";
+  targetAmountJpy: ApiAmountValue;
+  targetAmountCny: ApiAmountValue;
+  exchangeRate: ApiAmountValue;
+  feeCurrency: "JPY" | "CNY" | null;
+  feeAmountJpy: ApiAmountValue;
+  feeAmountCny: ApiAmountValue;
+  linkedIncomeRecordIds: string[];
+  status: string;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  corporateAccount: RelatedAccountRecord;
+  accountTransaction: {
+    id: string;
+    accountId: string;
+    direction: "in" | "out";
+    currency: "JPY" | "CNY";
+    amountJpy: ApiAmountValue;
+    amountCny: ApiAmountValue;
+    status: string;
+    externalEventId: string | null;
+    idempotencyKey: string | null;
+  };
+}
+
 export interface ExpenseRecord {
   id: string;
   sourceType: string;
@@ -547,6 +583,12 @@ export function submitExpenseCashRequest(accessToken: string, expenseRecordId: s
 
 export function listCashRequests(accessToken: string) {
   return requestJson<ListResponse<CashRequestRecord>>("/cash/requests?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listCashInboundEvents(accessToken: string) {
+  return requestJson<ListResponse<CashInboundEventRecord>>("/cash-inbound/events?limit=100", {
     headers: authorizedHeaders(accessToken),
   });
 }
