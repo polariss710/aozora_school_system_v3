@@ -54,6 +54,7 @@ import {
   listAccountTransactions,
   listAccounts,
   listBusinessEntities,
+  listCashRequests,
   listExpenseRecords,
   listExternalWorkplaces,
   listIncomeRecords,
@@ -76,6 +77,7 @@ import type {
   AccountTransactionRecord,
   AuthSession,
   BusinessEntityRecord,
+  CashRequestRecord,
   ExpenseRecord,
   ExternalWorkplaceRecord,
   IncomeRecord,
@@ -254,6 +256,7 @@ type FinanceListState =
 interface FinanceApiState {
   incomeRecords: FinanceListState;
   expenseRecords: FinanceListState;
+  cashRequests: FinanceListState;
   accountLedger: FinanceListState;
 }
 
@@ -391,6 +394,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { label: "收入记录", key: "income-records" },
       { label: "支出记录", key: "expense-records" },
+      { label: "Cash 请求", key: "cash-requests" },
       { label: "Cash 入站", key: "cash-inbound" },
       { label: "账户流水", key: "account-ledger" },
       { label: "报销管理", key: "reimbursements" },
@@ -2764,6 +2768,7 @@ function createEmptyFinanceApiState(): FinanceApiState {
   return {
     incomeRecords: createEmptyFinanceListState(),
     expenseRecords: createEmptyFinanceListState(),
+    cashRequests: createEmptyFinanceListState(),
     accountLedger: createEmptyFinanceListState(),
   };
 }
@@ -2822,6 +2827,33 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
   };
 }
 
+function buildCashRequestsPage(basePage: PageConfig, cashRequestApi: FinanceListState): PageConfig {
+  if (cashRequestApi.status !== "ready") {
+    return basePage;
+  }
+
+  const requestedCount = cashRequestApi.rows.filter((row) => row.status === "Cash 待确认").length;
+  const confirmedCount = cashRequestApi.rows.filter((row) => row.status === "Cash 已确认").length;
+  const blockedCount = cashRequestApi.rows.filter((row) =>
+    ["Cash 已拒绝", "需要复核", "Cash 已撤回"].includes(row.status),
+  ).length;
+
+  return {
+    ...basePage,
+    description: "真实 dev API Cash 请求列表；撤回、拒绝和确认动作后续接入",
+    primaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    metrics: [
+      { label: "Cash 请求", value: `${cashRequestApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: Send },
+      { label: "待确认", value: `${requestedCount} 条`, sub: "已提交 Cash", tone: "amber", icon: Clock },
+      { label: "已确认", value: `${confirmedCount} 条`, sub: "等待后续入账链路", tone: "emerald", icon: CheckCircle2 },
+      { label: "需处理", value: `${blockedCount} 条`, sub: "拒绝 / 撤回 / 复核", tone: "rose", icon: ShieldCheck },
+    ],
+    rows: cashRequestApi.rows,
+  };
+}
+
 function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceListState): PageConfig {
   if (accountLedgerApi.status !== "ready") {
     return basePage;
@@ -2844,6 +2876,61 @@ function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceL
       { label: "已冲销", value: `${reversedCount} 条`, sub: "反向保留记录", tone: "slate", icon: RotateCcw },
     ],
     rows: accountLedgerApi.rows,
+  };
+}
+
+function mapCashRequestToRow(record: CashRequestRecord): DataRow {
+  const status = getCashRequestStatusView(record.status);
+  const direction = record.direction === "income" ? "收入" : "支出";
+  const sourceTitle = record.incomeRecord?.title ?? record.expenseRecord?.title ?? "未关联来源记录";
+  const expectedAmount = formatApiCurrencyAmount(record.expectedCurrency, record.expectedAmountJpy, record.expectedAmountCny);
+  const requestedAmount = formatApiCurrencyAmount(
+    record.requestedCurrency,
+    record.requestedAmountJpy,
+    record.requestedAmountCny,
+  );
+
+  return {
+    id: `cash-request-${record.id}`,
+    title: sourceTitle,
+    subtitle: `${direction} Cash 请求 / ${getCashRequestSourceLabel(record.sourceType)}`,
+    status: status.label,
+    tone: status.tone,
+    readOnlyActions: true,
+    cells: {
+      direction,
+      source: sourceTitle,
+      requestedAmount,
+      cashAccount: record.cashAccountCode ?? "-",
+      createdAt: formatApiDate(record.createdAt),
+    },
+    detail: [
+      {
+        title: "Cash 请求",
+        lines: [
+          { label: "方向", value: direction },
+          { label: "来源记录", value: sourceTitle },
+          { label: "预期金额", value: expectedAmount },
+          { label: "请求金额", value: requestedAmount },
+          { label: "Cash 账户", value: record.cashAccountCode ?? "-" },
+          { label: "汇率", value: record.exchangeRate === null ? "-" : String(record.exchangeRate) },
+          { label: "取舍方式", value: getConversionMethodLabel(record.conversionMethod) },
+          { label: "拒绝原因", value: record.rejectionReason ?? "-" },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "请求 ID", value: record.id },
+          { label: "sourceType", value: record.sourceType },
+          { label: "sourceId", value: record.sourceId ?? "-" },
+          { label: "incomeRecordId", value: record.incomeRecordId ?? "-" },
+          { label: "expenseRecordId", value: record.expenseRecordId ?? "-" },
+          { label: "externalCashRequestId", value: record.externalCashRequestId ?? "-" },
+          { label: "externalCashEventId", value: record.externalCashEventId ?? "-" },
+        ],
+      },
+    ],
   };
 }
 
@@ -3043,6 +3130,34 @@ function getFinancialRecordStatusView(recordStatus: string, cashStatus: string):
   return { label: "待提交 Cash", tone: "amber" };
 }
 
+function getCashRequestStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "cash_requested") {
+    return { label: "Cash 待确认", tone: "amber" };
+  }
+
+  if (status === "cash_confirmed") {
+    return { label: "Cash 已确认", tone: "emerald" };
+  }
+
+  if (status === "account_transaction_created") {
+    return { label: "已生成流水", tone: "emerald" };
+  }
+
+  if (status === "cash_rejected") {
+    return { label: "Cash 已拒绝", tone: "rose" };
+  }
+
+  if (status === "cash_withdrawn") {
+    return { label: "Cash 已撤回", tone: "slate" };
+  }
+
+  if (status === "needs_manual_review") {
+    return { label: "需要复核", tone: "rose" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
 function canVoidManualFinanceRecord(sourceType: string, recordStatus: string, cashStatus: string) {
   const isManualRecord = sourceType === "manual_income" || sourceType === "manual_expense";
   const isPending = recordStatus === "pending";
@@ -3094,6 +3209,20 @@ function getExpenseSourceLabel(sourceType: string) {
   };
 
   return labels[sourceType] ?? sourceType;
+}
+
+function getCashRequestSourceLabel(sourceType: string) {
+  return getIncomeSourceLabel(sourceType) === sourceType ? getExpenseSourceLabel(sourceType) : getIncomeSourceLabel(sourceType);
+}
+
+function getConversionMethodLabel(method: string | null) {
+  const labels: Record<string, string> = {
+    "half-up": "四舍五入",
+    ceil: "进位",
+    floor: "舍去",
+  };
+
+  return method ? labels[method] ?? method : "-";
 }
 
 function getAccountTransactionSourceLabel(sourceType: string) {
@@ -4672,6 +4801,46 @@ const pages: Record<string, PageConfig> = {
       },
     ],
   },
+  "cash-requests": {
+    key: "cash-requests",
+    group: "财务 / Cash",
+    title: "Cash 请求",
+    description: "集中查看收入和支出提交到 Cash 的确认请求",
+    primaryAction: "刷新请求",
+    icon: Send,
+    metrics: [
+      { label: "Cash 请求", value: "5 条", sub: "收入 + 支出", tone: "sky", icon: Send },
+      { label: "待确认", value: "3 条", sub: "等待 Cash 回写", tone: "amber", icon: Clock },
+      { label: "已确认", value: "1 条", sub: "后续可入账", tone: "emerald", icon: CheckCircle2 },
+      { label: "需处理", value: "1 条", sub: "拒绝 / 撤回 / 复核", tone: "rose", icon: ShieldCheck },
+    ],
+    filters: [commonFilters.month, { label: "方向", options: ["收入", "支出"] }, commonFilters.status],
+    columns: [
+      { key: "direction", label: "方向" },
+      { key: "source", label: "来源记录", wide: true },
+      { key: "requestedAmount", label: "请求金额", align: "right" },
+      { key: "cashAccount", label: "Cash 账户" },
+      { key: "createdAt", label: "提交日" },
+      { key: "status", label: "状态" },
+    ],
+    rows: [
+      {
+        id: "cash-request-demo-1",
+        title: "王小明 7月学费",
+        subtitle: "收入 Cash 请求",
+        status: "Cash 待确认",
+        tone: "amber",
+        cells: {
+          direction: "收入",
+          source: "王小明 7月学费",
+          requestedAmount: money.jpy(72000),
+          cashAccount: "alipay-main",
+          createdAt: "2026-07-07",
+        },
+        detail: [{ title: "Cash 请求", lines: [{ label: "说明", value: "真实 API 登录后显示后端请求队列" }] }],
+      },
+    ],
+  },
   "cash-inbound": {
     key: "cash-inbound",
     group: "财务 / Cash",
@@ -5164,6 +5333,10 @@ export default function App() {
       return buildExpenseRecordsPage(baseActivePage, financeApi.expenseRecords);
     }
 
+    if (activeKey === "cash-requests" && baseActivePage) {
+      return buildCashRequestsPage(baseActivePage, financeApi.cashRequests);
+    }
+
     if (activeKey === "account-ledger" && baseActivePage) {
       return buildAccountLedgerPage(baseActivePage, financeApi.accountLedger);
     }
@@ -5382,6 +5555,11 @@ export default function App() {
         rows: current.expenseRecords.rows,
         total: current.expenseRecords.total,
       },
+      cashRequests: {
+        status: "loading",
+        rows: current.cashRequests.rows,
+        total: current.cashRequests.total,
+      },
       accountLedger: {
         status: "loading",
         rows: current.accountLedger.rows,
@@ -5392,9 +5570,10 @@ export default function App() {
     void Promise.all([
       listIncomeRecords(authSession.accessToken),
       listExpenseRecords(authSession.accessToken),
+      listCashRequests(authSession.accessToken),
       listAccountTransactions(authSession.accessToken),
     ])
-      .then(([incomeRecords, expenseRecords, accountTransactions]) => {
+      .then(([incomeRecords, expenseRecords, cashRequests, accountTransactions]) => {
         if (!isMounted) {
           return;
         }
@@ -5409,6 +5588,11 @@ export default function App() {
             status: "ready",
             rows: expenseRecords.items.map(mapExpenseRecordToRow),
             total: expenseRecords.total,
+          },
+          cashRequests: {
+            status: "ready",
+            rows: cashRequests.items.map(mapCashRequestToRow),
+            total: cashRequests.total,
           },
           accountLedger: {
             status: "ready",
@@ -5426,6 +5610,7 @@ export default function App() {
         setFinanceApi({
           incomeRecords: { status: "error", rows: [], total: 0, message },
           expenseRecords: { status: "error", rows: [], total: 0, message },
+          cashRequests: { status: "error", rows: [], total: 0, message },
           accountLedger: { status: "error", rows: [], total: 0, message },
         });
       });

@@ -177,9 +177,47 @@ export interface SubmitCashRequestInput {
 
 export interface CashRequestRecord {
   id: string;
-  status: string;
   direction: "income" | "expense";
+  sourceType: string;
+  sourceId: string | null;
+  incomeRecordId: string | null;
+  expenseRecordId: string | null;
+  status: string;
+  expectedCurrency: "JPY" | "CNY";
+  expectedAmountJpy: ApiAmountValue;
+  expectedAmountCny: ApiAmountValue;
+  carryoverAmountCny: ApiAmountValue;
   requestedCurrency: "JPY" | "CNY";
+  requestedAmountJpy: ApiAmountValue;
+  requestedAmountCny: ApiAmountValue;
+  exchangeRate: ApiAmountValue;
+  exchangeRateSource: string | null;
+  conversionMethod: string | null;
+  cashAccountCode: string | null;
+  externalCashRequestId: string | null;
+  externalCashEventId: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  incomeRecord: {
+    id: string;
+    title: string;
+    recordStatus: string;
+    cashStatus: string;
+    originalCurrency: "JPY" | "CNY";
+    originalAmountJpy: ApiAmountValue;
+    originalAmountCny: ApiAmountValue;
+    carryoverAmountCny: ApiAmountValue;
+  } | null;
+  expenseRecord: {
+    id: string;
+    title: string;
+    recordStatus: string;
+    cashStatus: string;
+    originalCurrency: "JPY" | "CNY";
+    originalAmountJpy: ApiAmountValue;
+    originalAmountCny: ApiAmountValue;
+  } | null;
 }
 
 export interface ExpenseRecord {
@@ -491,6 +529,12 @@ export function submitExpenseCashRequest(accessToken: string, expenseRecordId: s
       body: JSON.stringify(input),
     },
   );
+}
+
+export function listCashRequests(accessToken: string) {
+  return requestJson<ListResponse<CashRequestRecord>>("/cash/requests?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
 }
 
 export function listAccountTransactions(accessToken: string) {
