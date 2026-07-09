@@ -123,6 +123,12 @@ interface RelatedTeacherRecord {
   name: string;
 }
 
+interface RelatedSubjectRecord {
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface RelatedAccountRecord {
   id: string;
   code: string;
@@ -406,6 +412,276 @@ export interface VoidReimbursementInput {
   memo?: string | null;
 }
 
+export interface StudentPlannedLessonRecord {
+  id: string;
+  studentId: string;
+  teacherId: string;
+  subjectId: string;
+  businessEntityId: string;
+  yearMonth: string;
+  weekAnchorDate: string;
+  lessonNo: number | null;
+  plannedStartTime: string | null;
+  plannedEndTime: string | null;
+  durationHours: ApiAmountValue;
+  plannedFeeJpy: ApiAmountValue;
+  content: string | null;
+  memo: string | null;
+  status: string;
+  sourceType: string;
+  sourceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  student: RelatedStudentRecord;
+  teacher: RelatedTeacherRecord;
+  subject: RelatedSubjectRecord;
+  businessEntity: RelatedBusinessEntityRecord;
+  actualLesson: {
+    id: string;
+    actualDate: string;
+    status: string;
+  } | null;
+}
+
+export interface StudentActualLessonRecord {
+  id: string;
+  plannedLessonId: string | null;
+  studentId: string;
+  teacherId: string;
+  subjectId: string;
+  businessEntityId: string;
+  yearMonth: string;
+  actualDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  durationHours: ApiAmountValue;
+  content: string | null;
+  memo: string | null;
+  status: string;
+  teacherWageEligible: boolean;
+  sourceType: string;
+  sourceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  plannedLesson: {
+    id: string;
+    yearMonth: string;
+    weekAnchorDate: string;
+    lessonNo: number | null;
+    status: string;
+  } | null;
+  student: RelatedStudentRecord;
+  teacher: RelatedTeacherRecord;
+  subject: RelatedSubjectRecord;
+  businessEntity: RelatedBusinessEntityRecord;
+}
+
+export interface GenerateActualLessonInput {
+  actualDate: string;
+  teacherId?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  durationHours?: number | null;
+  content?: string | null;
+  memo?: string | null;
+  teacherWageEligible?: boolean;
+}
+
+export interface TuitionBillRecord {
+  id: string;
+  studentId: string;
+  yearMonth: string;
+  plannedLessonCount: number;
+  plannedAmountJpy: ApiAmountValue;
+  carryoverAmountCny: ApiAmountValue;
+  status: string;
+  calculationSnapshot: unknown;
+  incomeRecordId: string | null;
+  generatedAt: string;
+  student: RelatedStudentRecord;
+  incomeRecord: {
+    id: string;
+    recordStatus: string;
+    cashStatus: string;
+    originalCurrency: "JPY" | "CNY";
+    originalAmountJpy: ApiAmountValue;
+    originalAmountCny: ApiAmountValue;
+  } | null;
+}
+
+export interface StudentSettlementRecord {
+  id: string;
+  studentId: string;
+  yearMonth: string;
+  plannedLessonCount: number;
+  billableLessonCount: number;
+  cancelledLessonCount: number;
+  actualLessonCount: number;
+  plannedAmountJpy: ApiAmountValue;
+  billableAmountJpy: ApiAmountValue;
+  receivedAmountJpy: ApiAmountValue;
+  receivedAmountCny: ApiAmountValue;
+  previousCarryoverAmountCny: ApiAmountValue;
+  settlementExchangeRate: ApiAmountValue;
+  adjustmentAmountCny: ApiAmountValue;
+  carryoverAmountCny: ApiAmountValue;
+  status: string;
+  calculationSnapshot: unknown;
+  lockedAt: string;
+  revokedAt: string | null;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  student: RelatedStudentRecord;
+}
+
+export interface TeacherWageRuleRecord {
+  id: string;
+  teacherId: string;
+  businessEntityId: string;
+  hourlyRateJpy: ApiAmountValue;
+  status: "active" | "inactive" | "archived";
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  teacher: RelatedTeacherRecord;
+  businessEntity: RelatedBusinessEntityRecord;
+}
+
+export interface TeacherWageSnapshotRecord {
+  id: string;
+  teacherId: string;
+  yearMonth: string;
+  businessEntityId: string;
+  lessonCount: number;
+  totalLessonHours: ApiAmountValue;
+  baseWageJpy: ApiAmountValue;
+  transportationFeeJpy: ApiAmountValue;
+  classroomFeeJpy: ApiAmountValue;
+  manualAdjustmentJpy: ApiAmountValue;
+  totalWageJpy: ApiAmountValue;
+  status: string;
+  adjustmentStatus: string;
+  calculationSnapshot: unknown;
+  expenseRecordId: string | null;
+  lockedAt: string;
+  revokedAt: string | null;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  teacher: RelatedTeacherRecord;
+  businessEntity: RelatedBusinessEntityRecord;
+  details: Array<{
+    id: string;
+    actualLessonId: string;
+    actualDate: string;
+    durationHours: ApiAmountValue;
+    hourlyRateJpy: ApiAmountValue;
+    lessonWageJpy: ApiAmountValue;
+    teacherWageEligible: boolean;
+    includedInWage: boolean;
+    studentNameSnapshot: string;
+    subjectNameSnapshot: string;
+    contentSnapshot: string | null;
+  }>;
+}
+
+export interface ExternalWorkLessonRecord {
+  id: string;
+  workplaceId: string;
+  yearMonth: string;
+  lessonType: "planned" | "actual";
+  plannedLessonId: string | null;
+  lessonDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  durationHours: ApiAmountValue;
+  instructorName: string;
+  lessonTitle: string;
+  hourlyRateJpy: ApiAmountValue;
+  transportationFeeJpy: ApiAmountValue;
+  lessonWageJpy: ApiAmountValue;
+  status: string;
+  content: string | null;
+  memo: string | null;
+  sourceType: string;
+  sourceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workplace: {
+    id: string;
+    code: string;
+    name: string;
+  };
+  actualLesson: { id: string; status: string } | null;
+  plannedLesson: { id: string; status: string } | null;
+}
+
+export interface ExternalWorkSettlementRecord {
+  id: string;
+  workplaceId: string;
+  yearMonth: string;
+  lessonCount: number;
+  totalLessonHours: ApiAmountValue;
+  lessonWageJpy: ApiAmountValue;
+  transportationFeeJpy: ApiAmountValue;
+  adjustmentAmountJpy: ApiAmountValue;
+  totalAmountJpy: ApiAmountValue;
+  status: string;
+  calculationSnapshot: unknown;
+  incomeRecordId: string | null;
+  lockedAt: string;
+  revokedAt: string | null;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workplace: {
+    id: string;
+    code: string;
+    name: string;
+  };
+  incomeRecord: {
+    id: string;
+    recordStatus: string;
+    cashStatus: string;
+    originalCurrency: "JPY" | "CNY";
+    originalAmountJpy: ApiAmountValue;
+  } | null;
+  details: Array<{
+    id: string;
+    actualLessonId: string;
+    lessonDate: string;
+    startTime: string | null;
+    endTime: string | null;
+    durationHours: ApiAmountValue;
+    instructorNameSnapshot: string;
+    lessonTitleSnapshot: string;
+    hourlyRateJpy: ApiAmountValue;
+    lessonWageJpy: ApiAmountValue;
+    transportationFeeJpy: ApiAmountValue;
+    contentSnapshot: string | null;
+  }>;
+}
+
+export interface AuditEventRecord {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  riskLevel: string;
+  reason: string | null;
+  beforeSnapshot: unknown;
+  afterSnapshot: unknown;
+  metadata: unknown;
+  requestId: string | null;
+  createdAt: string;
+  actorUser: {
+    id: string;
+    email: string;
+    displayName: string;
+  } | null;
+}
+
 interface ApiHealthResponse {
   service: string;
   status: "ok";
@@ -592,6 +868,99 @@ export function listSubjects(accessToken: string) {
 
 export function listExternalWorkplaces(accessToken: string) {
   return requestJson<ItemsResponse<ExternalWorkplaceRecord>>("/settings/external-workplaces", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listPlannedLessons(accessToken: string) {
+  return requestJson<ListResponse<StudentPlannedLessonRecord>>("/lessons/planned?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listActualLessons(accessToken: string) {
+  return requestJson<ListResponse<StudentActualLessonRecord>>("/lessons/actual?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function generateActualLesson(
+  accessToken: string,
+  plannedLessonId: string,
+  input: GenerateActualLessonInput,
+) {
+  return requestJson<{ plannedLesson: StudentPlannedLessonRecord; actualLesson: StudentActualLessonRecord }>(
+    `/lessons/planned/${plannedLessonId}/generate-actual`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function cancelPlannedLesson(accessToken: string, plannedLessonId: string) {
+  return requestJson<{ plannedLesson: StudentPlannedLessonRecord }>(`/lessons/planned/${plannedLessonId}/cancel`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function restorePlannedLesson(accessToken: string, plannedLessonId: string) {
+  return requestJson<{ plannedLesson: StudentPlannedLessonRecord }>(`/lessons/planned/${plannedLessonId}/restore`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function markPlannedLessonMakeupPending(accessToken: string, plannedLessonId: string) {
+  return requestJson<{ plannedLesson: StudentPlannedLessonRecord }>(
+    `/lessons/planned/${plannedLessonId}/mark-makeup-pending`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+    },
+  );
+}
+
+export function listTuitionBills(accessToken: string) {
+  return requestJson<ListResponse<TuitionBillRecord>>("/tuition-bills?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listStudentSettlements(accessToken: string) {
+  return requestJson<ListResponse<StudentSettlementRecord>>("/settlements/student?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listTeacherWageRules(accessToken: string) {
+  return requestJson<ListResponse<TeacherWageRuleRecord>>("/wages/rules?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listTeacherWageSnapshots(accessToken: string) {
+  return requestJson<ListResponse<TeacherWageSnapshotRecord>>("/wages/teacher?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listExternalWorkLessons(accessToken: string) {
+  return requestJson<ListResponse<ExternalWorkLessonRecord>>("/external-work/lessons?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listExternalWorkSettlements(accessToken: string) {
+  return requestJson<ListResponse<ExternalWorkSettlementRecord>>("/external-work/settlements?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listAuditEvents(accessToken: string) {
+  return requestJson<ListResponse<AuditEventRecord>>("/audit/events?limit=100", {
     headers: authorizedHeaders(accessToken),
   });
 }

@@ -251,6 +251,33 @@ v3 优先围绕以下业务链路设计。
 - 用户不能手动输入最终 CNY 到账金额；提交 Cash 时只能使用实时汇率、手动输入汇率，或选择使用通知金额，最终金额由后端按 tuition bill snapshot、汇率、币种、结转规则计算 / 确认。
 - 保留低频补充学费收入能力：手动新增收入、选择 Cash 账户、Cash 联动，用于月底临时加课导致月度结算课时费赤字的场景；该能力不替代 tuition bill snapshot 主链路，必须经过后端校验和审计。
 
+学费收据 / 領収書口径：
+
+- 收据是 Cash 已确认收入的派生凭证，不是独立手填业务单据。
+- 第一阶段一张收据只绑定一条已 Cash 确认收入记录；后续可扩展为一张收据绑定多笔收款。
+- 收据入口必须来自收入记录列表或收入详情，不能提供自由填写金额的独立入口。
+- 未 Cash 确认、已作废 / 已冲销、无学生归属、非学费类收入，默认不允许生成学费收据。
+- 收据金额必须来自后端确认的实际收款金额，例如 confirmed amount / actual received amount，不允许前端根据 JPY、汇率、结转金额重新计算。
+- 前端只允许传 `income_record_id` 以及语言、打印格式、备注文本等展示选项；前端不得传最终收据金额作为业务事实。
+- 收据日期默认使用 Cash 确认收款日期，不使用 PDF 生成日期作为收款事实。
+- 收据项目默认来自收入分类，例如“学费”；收据对象默认来自收入记录绑定的学生。
+- 收据描述可包含业务归属月，例如“2026年7月 学费”。
+- 后端必须校验 income record 存在、状态允许、未作废、来源 / 分类允许开具收据、学生归属存在、确认金额存在、当前用户有权限查看 / 生成该收入的收据。
+- 阶段 1 可重复生成 PDF，但内容必须始终来自同一条已确认收入记录；阶段 2 如引入 `receipt_records`，生成后内容以 snapshot 为准，避免学生名称或收入备注变化影响旧收据。
+- 未来如果支持部分付款，收据应基于实际 Cash 收款金额开具，不基于账单应收金额开具；账单应收与实际收款必须通过核销 / 分配关系连接。
+
+V2 实际落地补充：
+
+- V2 最终采用轻量主链路入口方案，不做完整 receipt records 台账。
+- V2 已移除 Beta 侧边栏中的自由“領収書生成”入口；收据页面仍保留，但不能作为手动入口直接使用。
+- V2 只能从收入记录一览或收入详情进入收据页面，跳转参数为 `income_record_id`。
+- V2 收据页只读取该 `income_record_id` 对应的已确认收入和 Cash linkage；金额使用 Cash 确认后的实际到账金额和币种。
+- V2 前端不允许手动输入或修改收据金额。
+- V2 不创建 `receipt_records` 表，不保存收据编号，不记录开具历史，不做作废 / 重开。
+- V2 显示“生成收据”按钮的条件：`income.status = received`、`income.income_category = tuition` 或 `source_type = student_tuition_bill`、存在 `student_id`、存在最新 Cash income linkage event、`sync_status = synced`、`payment_amount > 0`、`payment_currency` 存在。
+- V3 可以继承 V2 的核心限制：收据只能从已 Cash 确认收入生成，不能自由手填金额；但不能把 V2 的无落库收据视图当成最终模型。
+- V3 正式管理收据时，应新增 `receipt_records` / `receipt_issues` 等表，保存生成时快照：`student_name`、`amount`、`currency`、`item_name`、`issued_at`、source income ids、cash transaction ids、`receipt_no`、voided / reissued 状态等。
+
 老师侧：
 
 ```text

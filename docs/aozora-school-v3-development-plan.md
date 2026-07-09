@@ -984,6 +984,32 @@ V2 v10.3.52 对照结论：
 - V2 的手动实际到账金额、已落库通知金额、缺失通知金额的历史记录，迁移到 V3 时应作为 legacy / audit 信息处理，不反向重算或回填。
 - V2 在 `v10.3.47` 之前没有通知金额字段；迁移时应标记 `notice_amount_missing` / `notice_exchange_rate_missing`，不要用当前汇率回填历史通知金额。
 
+学费收据 / 領収書：
+
+- V3 收据不作为独立手填工具实现，应作为 Cash 已确认收入的派生凭证。
+- 第一阶段入口放在收入记录列表 / 收入详情，只对符合条件的学费收入显示“生成收据”。
+- 第一阶段仅支持 `income_record_id -> PDF receipt`，不允许前端传入最终收据金额，不允许前端重新计算收据金额。
+- 收据页面 / PDF API 读取 income record 后自动填充学生名称、收款日期、实际确认金额、币种、项目、业务月份和备注。
+- 收据日期默认使用 Cash 确认收款日期；PDF 生成日期只能作为打印 / 导出元信息。
+- 后端 API 必须校验收入记录存在、已 Cash 确认、未作废 / 未冲销、学费类或 `allow_receipt = true`、存在学生归属、存在 confirmed amount / actual received amount，并校验当前用户权限。
+- 生成收据按钮的第一阶段显示条件应收紧到主链路事实：收入状态已收款 / received，收入分类为 tuition 或来源为 `student_tuition_bill`，存在学生归属，存在最新 Cash income linkage event，linkage `sync_status = synced`，`payment_amount > 0`，`payment_currency` 存在。
+- 阶段 1 不做复杂收据台账，可重复生成 PDF，但内容必须始终来自同一条已确认收入记录。
+- 阶段 2 增加 `receipt_records`，记录 `receipt_no`、`income_record_id`、`issued_at`、`issued_by`、`snapshot_amount`、`snapshot_student_name`、`snapshot_item`、`pdf_metadata`，支持历史查看和重新下载。生成后展示以 snapshot 为准。
+- 阶段 3 支持作废 / 重开、一张收据对应多笔 Cash 收款、部分付款、预收款、多月合并付款、收据编号规则和审计日志。
+- 如果未来支持部分付款，收据必须基于实际 Cash 收款金额，而不是账单应收金额；账单应收和实际收款通过核销 / 分配关系连接。
+
+V2 实际落地对照：
+
+- V2 最终采用轻量主链路入口方案，不做完整 `receipt_records` 台账。
+- V2 已移除 Beta 侧边栏自由“領収書生成”入口；收据页面仍保留，但不能直接手动进入使用。
+- V2 只能从收入记录一览或收入详情点击“生成收据”进入，跳转参数为 `income_record_id`。
+- V2 收据页只读取该 `income_record_id` 对应的已确认收入和 Cash linkage。
+- V2 收据金额使用 Cash 确认后的实际到账金额和币种；前端不允许手动输入或修改收据金额。
+- V2 不创建 `receipt_records` 表，不保存收据编号，不记录开具历史，不做作废 / 重开。
+- V2 的实现是稳定运营阶段的最小化过渡方案，主要价值是把入口和金额来源锁到主链路。
+- V3 可以继承 V2 的入口限制和金额来源限制，但不要把 V2 的无落库收据视图当成最终模型。
+- V3 正式收据管理应新增 `receipt_records` / `receipt_issues` 类表，并保存生成时快照：学生名称、金额、币种、项目名、开具时间、source income ids、Cash transaction ids、收据编号、作废 / 重开状态等。
+
 低频补充学费收入：
 
 - v3 需要保留 v2 当前已实施的手动新增收入 + 选择 Cash 账户 + Cash 联动能力，作为学费收入主链路的补充。

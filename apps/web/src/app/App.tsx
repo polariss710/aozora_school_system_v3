@@ -45,6 +45,7 @@ import {
   archiveStudent,
   archiveTeacher,
   apiBaseUrl,
+  cancelPlannedLesson,
   createReimbursementFromExpense,
   createManualExpense,
   createManualIncome,
@@ -54,19 +55,31 @@ import {
   isApiRequestError,
   listAccountTransactions,
   listAccounts,
+  listAuditEvents,
   listBusinessEntities,
   listCashInboundEvents,
   listCashRequests,
   listExpenseRecords,
+  listExternalWorkLessons,
+  listExternalWorkSettlements,
   listExternalWorkplaces,
   listIncomeRecords,
+  listActualLessons,
+  listPlannedLessons,
   listReimbursementCandidateExpenses,
   listReimbursements,
+  listStudentSettlements,
   listSubjects,
   listStudents,
   listTeachers,
+  listTeacherWageRules,
+  listTeacherWageSnapshots,
+  listTuitionBills,
   loginWithPassword,
+  generateActualLesson,
+  markPlannedLessonMakeupPending,
   rejectCashInboundEvent,
+  restorePlannedLesson,
   restoreStudent,
   restoreTeacher,
   submitExpenseCashRequest,
@@ -82,24 +95,34 @@ import type {
   ApiHealthSnapshot,
   AccountRecord,
   AccountTransactionRecord,
+  AuditEventRecord,
   AuthSession,
   BusinessEntityRecord,
   CashInboundEventRecord,
   CashRequestRecord,
   CreateReimbursementInput,
   ExpenseRecord,
+  ExternalWorkLessonRecord,
+  ExternalWorkSettlementRecord,
   ExternalWorkplaceRecord,
+  GenerateActualLessonInput,
   IncomeRecord,
   ManualExpenseInput,
   ManualIncomeInput,
   ReimbursementCandidateExpenseRecord,
   ReimbursementRecord,
+  StudentActualLessonRecord,
+  StudentPlannedLessonRecord,
   SubmitCashRequestInput,
+  StudentSettlementRecord,
   StudentRecord,
   StudentWriteInput,
   SubjectRecord,
   TeacherRecord,
+  TeacherWageRuleRecord,
+  TeacherWageSnapshotRecord,
   TeacherWriteInput,
+  TuitionBillRecord,
 } from "./api";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
@@ -152,7 +175,21 @@ interface DataRow {
   detail: DetailSection[];
   cashPreview?: CashPreview;
   apiRef?: {
-    resource: "student" | "teacher" | "income" | "expense" | "cashRequest" | "cashInbound" | "reimbursement";
+    resource:
+      | "student"
+      | "teacher"
+      | "income"
+      | "expense"
+      | "cashRequest"
+      | "cashInbound"
+      | "reimbursement"
+      | "tuitionBill"
+      | "studentSettlement"
+      | "teacherWageRule"
+      | "teacherWageSnapshot"
+      | "externalWorkLesson"
+      | "externalWorkSettlement"
+      | "auditEvent";
     id: string;
   };
   studentRecord?: StudentRecord;
@@ -310,6 +347,29 @@ interface FinanceApiState {
   cashInbound: FinanceListState;
   accountLedger: FinanceListState;
   reimbursements: FinanceListState;
+}
+
+type ApiItemsState<T> =
+  | { status: "idle" | "loading"; items: T[]; total: number; message?: string }
+  | { status: "ready"; items: T[]; total: number; message?: string }
+  | { status: "error"; items: T[]; total: number; message: string };
+
+type StudentChainListState<T> = ApiItemsState<T>;
+
+interface StudentChainApiState {
+  plannedLessons: StudentChainListState<StudentPlannedLessonRecord>;
+  actualLessons: StudentChainListState<StudentActualLessonRecord>;
+  tuitionBills: FinanceListState;
+  settlements: FinanceListState;
+}
+
+interface WorkflowApiState {
+  wageRules: FinanceListState;
+  wageSnapshots: FinanceListState;
+  wageImports: FinanceListState;
+  externalLessons: ApiItemsState<ExternalWorkLessonRecord>;
+  externalSettlements: FinanceListState;
+  auditEvents: FinanceListState;
 }
 
 const toneClasses: Record<
@@ -3075,6 +3135,1289 @@ function createEmptyFinanceApiState(): FinanceApiState {
   };
 }
 
+function createEmptyApiItemsState<T>(): ApiItemsState<T> {
+  return { status: "idle", items: [], total: 0 };
+}
+
+function createEmptyStudentChainListState<T>(): StudentChainListState<T> {
+  return createEmptyApiItemsState<T>();
+}
+
+function createEmptyStudentChainApiState(): StudentChainApiState {
+  return {
+    plannedLessons: createEmptyStudentChainListState<StudentPlannedLessonRecord>(),
+    actualLessons: createEmptyStudentChainListState<StudentActualLessonRecord>(),
+    tuitionBills: createEmptyFinanceListState(),
+    settlements: createEmptyFinanceListState(),
+  };
+}
+
+function createEmptyWorkflowApiState(): WorkflowApiState {
+  return {
+    wageRules: createEmptyFinanceListState(),
+    wageSnapshots: createEmptyFinanceListState(),
+    wageImports: createEmptyFinanceListState(),
+    externalLessons: createEmptyApiItemsState<ExternalWorkLessonRecord>(),
+    externalSettlements: createEmptyFinanceListState(),
+    auditEvents: createEmptyFinanceListState(),
+  };
+}
+
+function buildLessonManagementPage(basePage: PageConfig, studentChainApi: StudentChainApiState): PageConfig {
+  const plannedState = studentChainApi.plannedLessons;
+  const actualState = studentChainApi.actualLessons;
+  const isReady = plannedState.status === "ready" && actualState.status === "ready";
+  const isError = plannedState.status === "error" || actualState.status === "error";
+
+  if (plannedState.status === "idle" && actualState.status === "idle") {
+    return basePage;
+  }
+
+  if (!isReady) {
+    return {
+      ...basePage,
+      description: isError
+        ? `真实 dev API 课时读取失败：${plannedState.message ?? actualState.message ?? "请稍后重试"}`
+        : "正在读取真实 dev API 课时列表；第一层只读展示",
+      primaryAction: undefined,
+      secondaryAction: undefined,
+      metrics: [
+        {
+          label: "预定课时",
+          value: isError ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: isError ? "rose" : "amber",
+          icon: CalendarDays,
+        },
+        { label: "实际课时", value: "-", sub: "等待接口返回", tone: "slate", icon: ClipboardCheck },
+        { label: "待生成实际", value: "-", sub: "第二层接入动作", tone: "slate", icon: Clock },
+        { label: "跨月补课", value: "-", sub: "读取后统计", tone: "slate", icon: RefreshCw },
+      ],
+      rows: [],
+    };
+  }
+
+  const pendingActualCount = plannedState.items.filter(
+    (lesson) => !lesson.actualLesson && ["scheduled", "makeup_pending"].includes(lesson.status),
+  ).length;
+  const makeupCount = plannedState.items.filter((lesson) =>
+    ["makeup_pending", "makeup_completed"].includes(lesson.status),
+  ).length;
+
+  return {
+    ...basePage,
+    description: "真实 dev API 课时列表；第一层只读展示预定课时和实际课时对应关系",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    metrics: [
+      { label: "预定课时", value: `${plannedState.total}`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
+      { label: "实际课时", value: `${actualState.total}`, sub: "已生成或已完成", tone: "emerald", icon: ClipboardCheck },
+      { label: "待生成实际", value: `${pendingActualCount}`, sub: "第二层再接动作", tone: "amber", icon: Clock },
+      { label: "跨月补课", value: `${makeupCount}`, sub: "待补课 / 补课完成", tone: "cyan", icon: RefreshCw },
+    ],
+    rows: [],
+  };
+}
+
+function getLessonPairsForPage(studentChainApi: StudentChainApiState) {
+  if (studentChainApi.plannedLessons.status === "ready" && studentChainApi.actualLessons.status === "ready") {
+    return buildLessonPairsFromApi(studentChainApi.plannedLessons.items, studentChainApi.actualLessons.items);
+  }
+
+  if (studentChainApi.plannedLessons.status === "error" || studentChainApi.actualLessons.status === "error") {
+    return [];
+  }
+
+  return lessonPairs;
+}
+
+function buildLessonPairsFromApi(
+  plannedLessons: StudentPlannedLessonRecord[],
+  actualLessons: StudentActualLessonRecord[],
+): LessonPair[] {
+  const actualById = new Map(actualLessons.map((lesson) => [lesson.id, lesson]));
+  const actualByPlannedId = new Map(
+    actualLessons.flatMap((lesson) => (lesson.plannedLessonId ? [[lesson.plannedLessonId, lesson] as const] : [])),
+  );
+  const plannedIds = new Set(plannedLessons.map((lesson) => lesson.id));
+
+  const plannedPairs = plannedLessons.map((planned) => {
+    const actual = actualByPlannedId.get(planned.id) ?? (planned.actualLesson ? actualById.get(planned.actualLesson.id) : undefined);
+
+    return {
+      id: `lesson-pair-${planned.id}`,
+      relation: getLessonRelationLabel(planned, actual),
+      actionHint: getLessonActionHint(planned, actual),
+      planned: mapPlannedLessonToCard(planned),
+      actual: actual ? mapActualLessonToCard(actual) : undefined,
+      plannedRecord: planned,
+      actualRecord: actual,
+    };
+  });
+
+  const actualOnlyPairs = actualLessons
+    .filter((actual) => !actual.plannedLessonId || !plannedIds.has(actual.plannedLessonId))
+    .map((actual) => ({
+      id: `lesson-actual-only-${actual.id}`,
+      relation: "无预定课时",
+      actionHint: "这条实际课时未关联预定课时；第二层会补修正和查看来源入口。",
+      planned: mapActualLessonToPlannedPlaceholder(actual),
+      actual: mapActualLessonToCard(actual),
+      actualRecord: actual,
+    }));
+
+  return [...plannedPairs, ...actualOnlyPairs];
+}
+
+function mapPlannedLessonToCard(record: StudentPlannedLessonRecord): LessonCardData {
+  const status = getPlannedLessonStatusView(record.status);
+  const duration = formatDurationHours(record.durationHours);
+  const lessonNo = record.lessonNo === null ? "未编号" : `第${record.lessonNo}回`;
+
+  return {
+    date: formatApiDate(record.weekAnchorDate),
+    dateSub: `${lessonNo} · ${formatTimeRange(record.plannedStartTime, record.plannedEndTime)}`,
+    student: record.student.name,
+    teacher: record.teacher.name,
+    subject: record.subject.name,
+    duration,
+    amount: formatApiJpyAmount(record.plannedFeeJpy),
+    businessEntity: record.businessEntity.name,
+    content: record.content ?? record.memo ?? "-",
+    status: status.label,
+    tone: status.tone,
+  };
+}
+
+function mapActualLessonToCard(record: StudentActualLessonRecord): LessonCardData {
+  const status = getActualLessonStatusView(record.status);
+
+  return {
+    date: formatApiDate(record.actualDate),
+    dateSub: formatTimeRange(record.startTime, record.endTime),
+    student: record.student.name,
+    teacher: record.teacher.name,
+    subject: record.subject.name,
+    duration: formatDurationHours(record.durationHours),
+    amount: record.teacherWageEligible ? "工资待算" : "不计工资",
+    businessEntity: record.businessEntity.name,
+    content: record.content ?? record.memo ?? "-",
+    status: status.label,
+    tone: status.tone,
+  };
+}
+
+function mapActualLessonToPlannedPlaceholder(record: StudentActualLessonRecord): LessonCardData {
+  return {
+    date: formatApiDate(record.actualDate),
+    dateSub: "无关联预定课时",
+    student: record.student.name,
+    teacher: record.teacher.name,
+    subject: record.subject.name,
+    duration: "-",
+    amount: "-",
+    businessEntity: record.businessEntity.name,
+    content: "仅有实际课时记录",
+    status: "无预定",
+    tone: "slate",
+  };
+}
+
+function getLessonRelationLabel(
+  planned: StudentPlannedLessonRecord,
+  actual?: StudentActualLessonRecord,
+) {
+  if (actual) {
+    return "已对应实际课时";
+  }
+
+  if (planned.status === "makeup_pending") {
+    return "待补课";
+  }
+
+  if (planned.status === "cancelled") {
+    return "已取消";
+  }
+
+  return "无对应实际课时";
+}
+
+function getLessonActionHint(
+  planned: StudentPlannedLessonRecord,
+  actual?: StudentActualLessonRecord,
+) {
+  if (actual) {
+    return "已关联实际课时；后续会继续接入编辑、取消和工资联动。";
+  }
+
+  if (planned.status === "cancelled") {
+    return "取消记录保留用于审计；如误取消，可以恢复为待生成实际。";
+  }
+
+  if (planned.status === "makeup_pending") {
+    return "待补课课时可在补课完成后生成实际；学生费用仍归属原预定月份。";
+  }
+
+  return "可以从预定课时生成实际课时、取消预定，或先标记为待补课。";
+}
+
+function getPlannedLessonStatusView(status: string): { label: string; tone: Tone } {
+  const views: Record<string, { label: string; tone: Tone }> = {
+    scheduled: { label: "待生成实际", tone: "amber" },
+    actual_created: { label: "已对应", tone: "emerald" },
+    makeup_pending: { label: "待补课", tone: "cyan" },
+    makeup_completed: { label: "补课完成", tone: "emerald" },
+    cancelled: { label: "已取消", tone: "rose" },
+  };
+
+  return views[status] ?? { label: status, tone: "slate" };
+}
+
+function getActualLessonStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "completed") {
+    return { label: "已上课", tone: "emerald" };
+  }
+
+  if (status === "cancelled") {
+    return { label: "已取消", tone: "rose" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
+function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      tuitionApi.status === "error"
+        ? `真实 dev API 学费账单读取失败：${tuitionApi.message}`
+        : "真实 dev API 学费账单列表；第一层只读展示，生成收入和作废会在第二层接入",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    columns: [
+      { key: "plannedCount", label: "预定课时", align: "right" },
+      { key: "plannedAmount", label: "预定课时金额", align: "right" },
+      { key: "carryover", label: "CNY 结转", align: "right" },
+      { key: "income", label: "收入记录" },
+      { key: "status", label: "状态" },
+    ],
+    rows: tuitionApi.rows,
+  };
+
+  if (tuitionApi.status === "idle") {
+    return basePage;
+  }
+
+  if (tuitionApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "账单读取",
+          value: tuitionApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: tuitionApi.status === "error" ? "rose" : "amber",
+          icon: ReceiptText,
+        },
+        { label: "已生成", value: "-", sub: "等待接口返回", tone: "slate", icon: FileText },
+        { label: "收入已生成", value: "-", sub: "第二层接入动作", tone: "slate", icon: ReceiptText },
+        { label: "已作废", value: "-", sub: "读取后统计", tone: "slate", icon: RotateCcw },
+      ],
+    };
+  }
+
+  const generatedCount = tuitionApi.rows.filter((row) => row.status === "已生成").length;
+  const incomeCreatedCount = tuitionApi.rows.filter((row) => row.status === "收入已生成").length;
+  const activeJpyTotal = tuitionApi.rows.reduce((total, row) => {
+    if (row.status === "已作废") {
+      return total;
+    }
+
+    const amountText = String(row.cells.plannedAmount ?? "");
+    const numeric = Number(amountText.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(numeric) ? total + numeric : total;
+  }, 0);
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "账单记录", value: `${tuitionApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: ReceiptText },
+      { label: "已生成", value: `${generatedCount} 条`, sub: "待生成收入", tone: "amber", icon: Clock },
+      { label: "收入已生成", value: `${incomeCreatedCount} 条`, sub: "已进入收入链路", tone: "emerald", icon: CheckCircle2 },
+      { label: "JPY 应收", value: money.jpy(activeJpyTotal), sub: "未作废账单合计", tone: "cyan", icon: Banknote },
+    ],
+  };
+}
+
+function mapTuitionBillToRow(record: TuitionBillRecord): DataRow {
+  const status = getTuitionBillStatusView(record.status);
+  const plannedAmount = formatApiJpyAmount(record.plannedAmountJpy);
+  const carryover = formatApiCnyAmount(record.carryoverAmountCny);
+  const incomeStatus = record.incomeRecord ? getCashStatusLabel(record.incomeRecord.cashStatus) : "未生成收入";
+
+  return {
+    id: `bill-${record.id}`,
+    title: record.student.name,
+    subtitle: `${formatYearMonth(record.yearMonth)}学费账单`,
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "tuitionBill", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      plannedCount: `${record.plannedLessonCount} 节`,
+      plannedAmount,
+      carryover,
+      income: incomeStatus,
+    },
+    detail: [
+      {
+        title: "学费账单",
+        lines: [
+          { label: "学生", value: record.student.name },
+          { label: "业务月份", value: formatYearMonth(record.yearMonth) },
+          { label: "预定课时数", value: `${record.plannedLessonCount} 节` },
+          { label: "预定课时金额", value: plannedAmount },
+          { label: "CNY 结转", value: carryover },
+          { label: "状态", value: status.label },
+          { label: "生成时间", value: formatApiDate(record.generatedAt) },
+        ],
+      },
+      {
+        title: "收入联动",
+        lines: [
+          { label: "收入记录", value: record.incomeRecordId ?? "-" },
+          { label: "Cash 状态", value: incomeStatus },
+          {
+            label: "收入金额",
+            value: record.incomeRecord
+              ? formatApiCurrencyAmount(
+                  record.incomeRecord.originalCurrency,
+                  record.incomeRecord.originalAmountJpy,
+                  record.incomeRecord.originalAmountCny,
+                )
+              : "-",
+          },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "账单 ID", value: record.id },
+          { label: "studentId", value: record.studentId },
+        ],
+      },
+    ],
+  };
+}
+
+function getTuitionBillStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "generated") {
+    return { label: "已生成", tone: "amber" };
+  }
+
+  if (status === "income_created") {
+    return { label: "收入已生成", tone: "emerald" };
+  }
+
+  if (status === "voided") {
+    return { label: "已作废", tone: "slate" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
+function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      settlementApi.status === "error"
+        ? `真实 dev API 月度结算读取失败：${settlementApi.message}`
+        : "真实 dev API 学生月度结算列表；第一层只读展示，锁定和撤销会在第二层接入",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    columns: [
+      { key: "lessonCount", label: "课时", align: "right" },
+      { key: "billableAmount", label: "应收课时费", align: "right" },
+      { key: "received", label: "已收金额", align: "right" },
+      { key: "carryover", label: "下月结转", align: "right" },
+      { key: "status", label: "状态" },
+    ],
+    rows: settlementApi.rows,
+  };
+
+  if (settlementApi.status === "idle") {
+    return basePage;
+  }
+
+  if (settlementApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "结算读取",
+          value: settlementApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: settlementApi.status === "error" ? "rose" : "amber",
+          icon: ClipboardCheck,
+        },
+        { label: "已锁定", value: "-", sub: "等待接口返回", tone: "slate", icon: LockKeyhole },
+        { label: "已撤销", value: "-", sub: "读取后统计", tone: "slate", icon: RotateCcw },
+        { label: "CNY 结转", value: "-", sub: "读取后统计", tone: "slate", icon: RefreshCw },
+      ],
+    };
+  }
+
+  const lockedCount = settlementApi.rows.filter((row) => row.status === "已锁定").length;
+  const revokedCount = settlementApi.rows.filter((row) => row.status === "已撤销").length;
+  const carryoverTotal = settlementApi.rows.reduce((total, row) => {
+    if (row.status === "已撤销") {
+      return total;
+    }
+
+    const amountText = String(row.cells.carryover ?? "");
+    const numeric = Number(amountText.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(numeric) ? total + numeric : total;
+  }, 0);
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "结算记录", value: `${settlementApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: ClipboardCheck },
+      { label: "已锁定", value: `${lockedCount} 条`, sub: "可进入下月账单", tone: "emerald", icon: LockKeyhole },
+      { label: "已撤销", value: `${revokedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
+      { label: "CNY 结转", value: money.cny(carryoverTotal), sub: "未撤销合计", tone: "cyan", icon: RefreshCw },
+    ],
+  };
+}
+
+function mapStudentSettlementToRow(record: StudentSettlementRecord): DataRow {
+  const status = getStudentSettlementStatusView(record.status);
+  const billableAmount = formatApiJpyAmount(record.billableAmountJpy);
+  const received = formatReceivedAmounts(record.receivedAmountJpy, record.receivedAmountCny);
+  const previousCarryover = formatApiCnyAmount(record.previousCarryoverAmountCny);
+  const adjustment = formatApiCnyAmount(record.adjustmentAmountCny);
+  const carryover = formatApiCnyAmount(record.carryoverAmountCny);
+
+  return {
+    id: `settlement-${record.id}`,
+    title: record.student.name,
+    subtitle: `${formatYearMonth(record.yearMonth)}学生月度结算`,
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "studentSettlement", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      lessonCount: `${record.billableLessonCount}/${record.plannedLessonCount} 节`,
+      billableAmount,
+      received,
+      carryover,
+    },
+    detail: [
+      {
+        title: "结算口径",
+        lines: [
+          { label: "学生", value: record.student.name },
+          { label: "业务月份", value: formatYearMonth(record.yearMonth) },
+          { label: "预定课时", value: `${record.plannedLessonCount} 节` },
+          { label: "计费课时", value: `${record.billableLessonCount} 节` },
+          { label: "取消课时", value: `${record.cancelledLessonCount} 节` },
+          { label: "实际课时", value: `${record.actualLessonCount} 节` },
+          { label: "应收课时费", value: billableAmount },
+        ],
+      },
+      {
+        title: "收款和结转",
+        lines: [
+          { label: "已收金额", value: received },
+          { label: "上月结转", value: previousCarryover },
+          { label: "调整金额", value: adjustment },
+          { label: "下月结转", value: carryover },
+          { label: "结算汇率", value: record.settlementExchangeRate === null ? "-" : String(record.settlementExchangeRate) },
+        ],
+      },
+      {
+        title: "状态",
+        lines: [
+          { label: "状态", value: status.label },
+          { label: "锁定时间", value: formatApiDate(record.lockedAt) },
+          { label: "撤销时间", value: record.revokedAt ? formatApiDate(record.revokedAt) : "-" },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "结算 ID", value: record.id },
+          { label: "studentId", value: record.studentId },
+        ],
+      },
+    ],
+  };
+}
+
+function getStudentSettlementStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "locked") {
+    return { label: "已锁定", tone: "emerald" };
+  }
+
+  if (status === "revoked") {
+    return { label: "已撤销", tone: "slate" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
+function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      wageRuleApi.status === "error"
+        ? `真实 dev API 工资规则读取失败：${wageRuleApi.message}`
+        : "真实 dev API 工资规则列表；第一层只读展示，新增和编辑会在第二层接入",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    columns: [
+      { key: "teacher", label: "老师" },
+      { key: "entity", label: "业务归属" },
+      { key: "rate", label: "课时单价", align: "right" },
+      { key: "memo", label: "备注", wide: true },
+      { key: "status", label: "状态" },
+    ],
+    rows: wageRuleApi.rows,
+  };
+
+  if (wageRuleApi.status === "idle") {
+    return basePage;
+  }
+
+  if (wageRuleApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "规则读取",
+          value: wageRuleApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: wageRuleApi.status === "error" ? "rose" : "amber",
+          icon: FileText,
+        },
+        { label: "生效中", value: "-", sub: "等待接口返回", tone: "slate", icon: CheckCircle2 },
+        { label: "停用", value: "-", sub: "读取后统计", tone: "slate", icon: LockKeyhole },
+        { label: "归档", value: "-", sub: "读取后统计", tone: "slate", icon: RotateCcw },
+      ],
+    };
+  }
+
+  const activeCount = wageRuleApi.rows.filter((row) => row.status === "生效中").length;
+  const inactiveCount = wageRuleApi.rows.filter((row) => row.status === "停用").length;
+  const archivedCount = wageRuleApi.rows.filter((row) => row.status === "归档").length;
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "工资规则", value: `${wageRuleApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: FileText },
+      { label: "生效中", value: `${activeCount} 条`, sub: "参与工资快照", tone: "emerald", icon: CheckCircle2 },
+      { label: "停用", value: `${inactiveCount} 条`, sub: "暂不参与计算", tone: "amber", icon: Clock },
+      { label: "归档", value: `${archivedCount} 条`, sub: "保留历史追踪", tone: "slate", icon: LockKeyhole },
+    ],
+  };
+}
+
+function mapTeacherWageRuleToRow(record: TeacherWageRuleRecord): DataRow {
+  const status = getWageRuleStatusView(record.status);
+  const rate = formatApiJpyAmount(record.hourlyRateJpy);
+
+  return {
+    id: `rule-${record.id}`,
+    title: `${record.teacher.name} / ${record.businessEntity.name}`,
+    subtitle: "老师工资规则",
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "teacherWageRule", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      teacher: record.teacher.name,
+      entity: record.businessEntity.name,
+      rate,
+      memo: record.memo ?? "-",
+    },
+    detail: [
+      {
+        title: "工资规则",
+        lines: [
+          { label: "老师", value: record.teacher.name },
+          { label: "业务归属", value: record.businessEntity.name },
+          { label: "课时单价", value: rate },
+          { label: "状态", value: status.label },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "规则 ID", value: record.id },
+          { label: "teacherId", value: record.teacherId },
+          { label: "businessEntityId", value: record.businessEntityId },
+        ],
+      },
+    ],
+  };
+}
+
+function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      wageSnapshotApi.status === "error"
+        ? `真实 dev API 工资结算读取失败：${wageSnapshotApi.message}`
+        : "真实 dev API 工资快照列表；第一层只读展示，锁定、调整和生成支出会在第二层接入",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    rows: wageSnapshotApi.rows,
+  };
+
+  if (wageSnapshotApi.status === "idle") {
+    return basePage;
+  }
+
+  if (wageSnapshotApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "快照读取",
+          value: wageSnapshotApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: wageSnapshotApi.status === "error" ? "rose" : "amber",
+          icon: GraduationCap,
+        },
+        { label: "已锁定", value: "-", sub: "等待接口返回", tone: "slate", icon: LockKeyhole },
+        { label: "调整已确认", value: "-", sub: "读取后统计", tone: "slate", icon: CheckCircle2 },
+        { label: "已生成支出", value: "-", sub: "读取后统计", tone: "slate", icon: ReceiptText },
+      ],
+    };
+  }
+
+  const lockedCount = wageSnapshotApi.rows.filter((row) => row.status === "已锁定").length;
+  const adjustmentConfirmedCount = wageSnapshotApi.rows.filter((row) => row.status === "调整已确认").length;
+  const expenseCreatedCount = wageSnapshotApi.rows.filter((row) => row.status === "已生成支出").length;
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "工资快照", value: `${wageSnapshotApi.total} 份`, sub: "老师 + 月份 + 业务归属", tone: "sky", icon: FileText },
+      { label: "已锁定", value: `${lockedCount} 份`, sub: "等待调整或导出", tone: "amber", icon: LockKeyhole },
+      { label: "调整已确认", value: `${adjustmentConfirmedCount} 份`, sub: "可生成支出", tone: "cyan", icon: CheckCircle2 },
+      { label: "已生成支出", value: `${expenseCreatedCount} 份`, sub: "进入支出链路", tone: "emerald", icon: ReceiptText },
+    ],
+  };
+}
+
+function mapTeacherWageSnapshotToRow(record: TeacherWageSnapshotRecord): DataRow {
+  const status = getTeacherWageSnapshotStatusView(record.status);
+  const adjustments =
+    (parseApiAmount(record.transportationFeeJpy) ?? 0) +
+    (parseApiAmount(record.classroomFeeJpy) ?? 0) +
+    (parseApiAmount(record.manualAdjustmentJpy) ?? 0);
+
+  return {
+    id: `wage-${record.id}`,
+    title: record.teacher.name,
+    subtitle: `${formatYearMonth(record.yearMonth)}工资快照`,
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "teacherWageSnapshot", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      entity: record.businessEntity.name,
+      lessons: `${record.lessonCount} 节 / ${formatDurationHours(record.totalLessonHours)}`,
+      adjustments: money.jpy(adjustments),
+      amount: formatApiJpyAmount(record.totalWageJpy),
+    },
+    detail: buildTeacherWageSnapshotDetail(record, status.label),
+  };
+}
+
+function buildTeacherWageSnapshotDetail(record: TeacherWageSnapshotRecord, statusLabel: string): DetailSection[] {
+  return [
+    {
+      title: "工资快照",
+      lines: [
+        { label: "老师", value: record.teacher.name },
+        { label: "业务归属", value: record.businessEntity.name },
+        { label: "业务月份", value: formatYearMonth(record.yearMonth) },
+        { label: "课时数", value: `${record.lessonCount} 节` },
+        { label: "课时时长", value: formatDurationHours(record.totalLessonHours) },
+        { label: "基础工资", value: formatApiJpyAmount(record.baseWageJpy) },
+        { label: "交通费", value: formatApiJpyAmount(record.transportationFeeJpy) },
+        { label: "教室费", value: formatApiJpyAmount(record.classroomFeeJpy) },
+        { label: "手动调整", value: formatApiJpyAmount(record.manualAdjustmentJpy) },
+        { label: "工资合计", value: formatApiJpyAmount(record.totalWageJpy) },
+      ],
+    },
+    {
+      title: "状态",
+      lines: [
+        { label: "快照状态", value: statusLabel },
+        { label: "调整状态", value: getWageAdjustmentStatusLabel(record.adjustmentStatus) },
+        { label: "支出记录", value: record.expenseRecordId ?? "-" },
+        { label: "锁定时间", value: formatApiDate(record.lockedAt) },
+        { label: "撤销时间", value: record.revokedAt ? formatApiDate(record.revokedAt) : "-" },
+        { label: "备注", value: record.memo ?? "-" },
+      ],
+    },
+    {
+      title: "课时明细",
+      lines: [
+        { label: "明细条数", value: `${record.details.length} 条` },
+        {
+          label: "前 3 条",
+          value:
+            record.details
+              .slice(0, 3)
+              .map((detail) => `${formatApiDate(detail.actualDate)} ${detail.studentNameSnapshot}/${detail.subjectNameSnapshot}`)
+              .join("；") || "-",
+        },
+      ],
+    },
+  ];
+}
+
+function buildWageImportPage(basePage: PageConfig, wageImportApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      wageImportApi.status === "error"
+        ? `真实 dev API 勤务表状态读取失败：${wageImportApi.message}`
+        : "真实 dev API 工资快照的勤务表导出/导入状态；第一层只读展示",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    rows: wageImportApi.rows,
+  };
+
+  if (wageImportApi.status === "idle") {
+    return basePage;
+  }
+
+  if (wageImportApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "勤务表读取",
+          value: wageImportApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: wageImportApi.status === "error" ? "rose" : "amber",
+          icon: Download,
+        },
+        { label: "已导出", value: "-", sub: "等待接口返回", tone: "slate", icon: Download },
+        { label: "已导入", value: "-", sub: "读取后统计", tone: "slate", icon: FileCheck2 },
+        { label: "调整已确认", value: "-", sub: "读取后统计", tone: "slate", icon: CheckCircle2 },
+      ],
+    };
+  }
+
+  const exportedCount = wageImportApi.rows.filter((row) => row.status === "已导出").length;
+  const importedCount = wageImportApi.rows.filter((row) => row.status === "已导入待确认").length;
+  const confirmedCount = wageImportApi.rows.filter((row) => row.status === "调整已确认").length;
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "勤务表快照", value: `${wageImportApi.total} 份`, sub: "来自工资快照", tone: "sky", icon: Download },
+      { label: "已导出", value: `${exportedCount} 份`, sub: "等待老师回填", tone: "cyan", icon: Download },
+      { label: "已导入待确认", value: `${importedCount} 份`, sub: "费用已写回", tone: "amber", icon: RefreshCw },
+      { label: "调整已确认", value: `${confirmedCount} 份`, sub: "可生成支出", tone: "emerald", icon: CheckCircle2 },
+    ],
+  };
+}
+
+function mapTeacherWageSnapshotToImportRow(record: TeacherWageSnapshotRecord): DataRow {
+  const status = getWageImportStatusView(record.adjustmentStatus);
+
+  return {
+    id: `import-${record.id}`,
+    title: record.teacher.name,
+    subtitle: `${formatYearMonth(record.yearMonth)}勤务表`,
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "teacherWageSnapshot", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      exported: ["exported", "imported", "manual_adjusted", "confirmed"].includes(record.adjustmentStatus)
+        ? formatApiDate(record.updatedAt)
+        : "-",
+      returned: ["imported", "manual_adjusted", "confirmed"].includes(record.adjustmentStatus) ? formatApiDate(record.updatedAt) : "-",
+      transport: formatApiJpyAmount(record.transportationFeeJpy),
+      classroom: formatApiJpyAmount(record.classroomFeeJpy),
+    },
+    detail: buildTeacherWageSnapshotDetail(record, getTeacherWageSnapshotStatusView(record.status).label),
+  };
+}
+
+function getTeacherWageSnapshotStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "locked") {
+    return { label: "已锁定", tone: "amber" };
+  }
+
+  if (status === "adjustment_confirmed") {
+    return { label: "调整已确认", tone: "cyan" };
+  }
+
+  if (status === "expense_created") {
+    return { label: "已生成支出", tone: "emerald" };
+  }
+
+  if (status === "revoked") {
+    return { label: "已撤销", tone: "slate" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
+function getWageImportStatusView(status: string): { label: string; tone: Tone } {
+  const views: Record<string, { label: string; tone: Tone }> = {
+    none: { label: "未导出", tone: "slate" },
+    exported: { label: "已导出", tone: "cyan" },
+    imported: { label: "已导入待确认", tone: "amber" },
+    manual_adjusted: { label: "手动调整", tone: "amber" },
+    confirmed: { label: "调整已确认", tone: "emerald" },
+  };
+
+  return views[status] ?? { label: status, tone: "slate" };
+}
+
+function getWageAdjustmentStatusLabel(status: string) {
+  return getWageImportStatusView(status).label;
+}
+
+function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: ApiItemsState<ExternalWorkLessonRecord>): PageConfig {
+  if (externalLessonApi.status === "idle") {
+    return basePage;
+  }
+
+  if (externalLessonApi.status !== "ready") {
+    return {
+      ...basePage,
+      description:
+        externalLessonApi.status === "error"
+          ? `真实 dev API 打工课时读取失败：${externalLessonApi.message}`
+          : "正在读取真实 dev API 打工课时列表；第一层只读展示",
+      primaryAction: undefined,
+      metrics: [
+        {
+          label: "打工课时",
+          value: externalLessonApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: externalLessonApi.status === "error" ? "rose" : "amber",
+          icon: BookOpen,
+        },
+        { label: "预定课时", value: "-", sub: "等待接口返回", tone: "slate", icon: CalendarDays },
+        { label: "实际课时", value: "-", sub: "等待接口返回", tone: "slate", icon: CheckCircle2 },
+        { label: "已取消", value: "-", sub: "读取后统计", tone: "slate", icon: RotateCcw },
+      ],
+      rows: [],
+    };
+  }
+
+  const plannedCount = externalLessonApi.items.filter((lesson) => lesson.lessonType === "planned").length;
+  const actualCount = externalLessonApi.items.filter((lesson) => lesson.lessonType === "actual").length;
+  const pendingActualCount = externalLessonApi.items.filter(
+    (lesson) => lesson.lessonType === "planned" && !lesson.actualLesson && lesson.status === "scheduled",
+  ).length;
+  const cancelledCount = externalLessonApi.items.filter((lesson) => lesson.status === "cancelled").length;
+
+  return {
+    ...basePage,
+    description: "真实 dev API 打工课时列表；第一层只读展示预定和实际课时对应关系",
+    primaryAction: undefined,
+    metrics: [
+      { label: "预定课时", value: `${plannedCount} 节`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
+      { label: "实际课时", value: `${actualCount} 节`, sub: "用于打工结算", tone: "emerald", icon: CheckCircle2 },
+      { label: "待生成实际", value: `${pendingActualCount} 节`, sub: "第二层再接动作", tone: "amber", icon: Clock },
+      { label: "已取消", value: `${cancelledCount} 节`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
+    ],
+    rows: [],
+  };
+}
+
+function getExternalWorkPairsForPage(workflowApi: WorkflowApiState) {
+  if (workflowApi.externalLessons.status === "ready") {
+    return buildExternalWorkPairsFromApi(workflowApi.externalLessons.items);
+  }
+
+  if (workflowApi.externalLessons.status === "error") {
+    return [];
+  }
+
+  return externalWorkPairs;
+}
+
+function buildExternalWorkPairsFromApi(lessons: ExternalWorkLessonRecord[]): ExternalWorkPair[] {
+  const plannedLessons = lessons.filter((lesson) => lesson.lessonType === "planned");
+  const actualLessons = lessons.filter((lesson) => lesson.lessonType === "actual");
+  const actualByPlannedId = new Map(
+    actualLessons.flatMap((lesson) => (lesson.plannedLessonId ? [[lesson.plannedLessonId, lesson] as const] : [])),
+  );
+  const plannedIds = new Set(plannedLessons.map((lesson) => lesson.id));
+
+  const plannedPairs = plannedLessons.map((planned) => {
+    const actual = actualByPlannedId.get(planned.id);
+
+    return {
+      id: `external-pair-${planned.id}`,
+      relation: actual ? "已对应实际课时" : getExternalLessonRelationLabel(planned.status),
+      locked: true,
+      planned: mapExternalWorkLessonToCard(planned),
+      actual: actual ? mapExternalWorkLessonToCard(actual) : undefined,
+      detailRow: mapExternalWorkLessonToRow(actual ?? planned),
+    };
+  });
+
+  const actualOnlyPairs = actualLessons
+    .filter((actual) => !actual.plannedLessonId || !plannedIds.has(actual.plannedLessonId))
+    .map((actual) => ({
+      id: `external-actual-only-${actual.id}`,
+      relation: "无预定课时",
+      locked: true,
+      planned: mapExternalWorkActualToPlannedPlaceholder(actual),
+      actual: mapExternalWorkLessonToCard(actual),
+      detailRow: mapExternalWorkLessonToRow(actual),
+    }));
+
+  return [...plannedPairs, ...actualOnlyPairs];
+}
+
+function mapExternalWorkLessonToCard(record: ExternalWorkLessonRecord): ExternalWorkLessonData {
+  const status = getExternalWorkLessonStatusView(record.status);
+
+  return {
+    date: formatApiDate(record.lessonDate),
+    dateSub: formatTimeRange(record.startTime, record.endTime),
+    workplace: record.workplace.name,
+    instructor: record.instructorName,
+    duration: formatDurationHours(record.durationHours),
+    wage: formatApiJpyAmount(record.lessonWageJpy),
+    transportation: formatApiJpyAmount(record.transportationFeeJpy),
+    content: record.content ?? record.lessonTitle ?? record.memo ?? "-",
+    status: status.label,
+    tone: status.tone,
+  };
+}
+
+function mapExternalWorkActualToPlannedPlaceholder(record: ExternalWorkLessonRecord): ExternalWorkLessonData {
+  return {
+    ...mapExternalWorkLessonToCard(record),
+    dateSub: "无关联预定课时",
+    wage: "-",
+    transportation: "-",
+    content: "仅有实际课时记录",
+    status: "无预定",
+    tone: "slate",
+  };
+}
+
+function mapExternalWorkLessonToRow(record: ExternalWorkLessonRecord): DataRow {
+  const status = getExternalWorkLessonStatusView(record.status);
+
+  return {
+    id: `external-lesson-${record.id}`,
+    title: record.lessonTitle,
+    subtitle: `${record.workplace.name} / ${record.instructorName}`,
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "externalWorkLesson", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      workplace: record.workplace.name,
+      instructor: record.instructorName,
+      duration: formatDurationHours(record.durationHours),
+      wage: formatApiJpyAmount(record.lessonWageJpy),
+    },
+    detail: [
+      {
+        title: "打工课时",
+        lines: [
+          { label: "机构", value: record.workplace.name },
+          { label: "授课人", value: record.instructorName },
+          { label: "日期", value: formatApiDate(record.lessonDate) },
+          { label: "时间", value: formatTimeRange(record.startTime, record.endTime) },
+          { label: "类型", value: record.lessonType === "planned" ? "预定" : "实际" },
+          { label: "状态", value: status.label },
+          { label: "课题", value: record.lessonTitle },
+          { label: "内容", value: record.content ?? "-" },
+        ],
+      },
+      {
+        title: "金额",
+        lines: [
+          { label: "时长", value: formatDurationHours(record.durationHours) },
+          { label: "课时单价", value: formatApiJpyAmount(record.hourlyRateJpy) },
+          { label: "课时工资", value: formatApiJpyAmount(record.lessonWageJpy) },
+          { label: "交通费", value: formatApiJpyAmount(record.transportationFeeJpy) },
+        ],
+      },
+    ],
+  };
+}
+
+function getExternalLessonRelationLabel(status: string) {
+  if (status === "cancelled") {
+    return "已取消";
+  }
+
+  return "无对应实际课时";
+}
+
+function getExternalWorkLessonStatusView(status: string): { label: string; tone: Tone } {
+  const views: Record<string, { label: string; tone: Tone }> = {
+    scheduled: { label: "待生成实际", tone: "amber" },
+    actual_created: { label: "已对应", tone: "emerald" },
+    completed: { label: "已完成", tone: "emerald" },
+    cancelled: { label: "已取消", tone: "rose" },
+  };
+
+  return views[status] ?? { label: status, tone: "slate" };
+}
+
+function buildExternalWorkSettlementsPage(basePage: PageConfig, settlementApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      settlementApi.status === "error"
+        ? `真实 dev API 打工结算读取失败：${settlementApi.message}`
+        : "真实 dev API 打工结算列表；第一层只读展示，锁定、撤销和生成收入会在第二层接入",
+    primaryAction: undefined,
+    secondaryAction: undefined,
+    batchAction: undefined,
+    selectable: false,
+    rows: settlementApi.rows,
+  };
+
+  if (settlementApi.status === "idle") {
+    return basePage;
+  }
+
+  if (settlementApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "结算读取",
+          value: settlementApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: settlementApi.status === "error" ? "rose" : "amber",
+          icon: BriefcaseBusiness,
+        },
+        { label: "已锁定", value: "-", sub: "等待接口返回", tone: "slate", icon: LockKeyhole },
+        { label: "已生成收入", value: "-", sub: "读取后统计", tone: "slate", icon: ReceiptText },
+        { label: "已撤销", value: "-", sub: "读取后统计", tone: "slate", icon: RotateCcw },
+      ],
+    };
+  }
+
+  const lockedCount = settlementApi.rows.filter((row) => row.status === "已锁定").length;
+  const incomeCreatedCount = settlementApi.rows.filter((row) => row.status === "收入已生成").length;
+  const revokedCount = settlementApi.rows.filter((row) => row.status === "已撤销").length;
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "打工结算", value: `${settlementApi.total} 组`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
+      { label: "已锁定", value: `${lockedCount} 组`, sub: "可生成收入", tone: "emerald", icon: LockKeyhole },
+      { label: "收入已生成", value: `${incomeCreatedCount} 组`, sub: "进入收入链路", tone: "cyan", icon: ReceiptText },
+      { label: "已撤销", value: `${revokedCount} 组`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
+    ],
+  };
+}
+
+function mapExternalWorkSettlementToRow(record: ExternalWorkSettlementRecord): DataRow {
+  const status = getExternalWorkSettlementStatusView(record.status);
+
+  return {
+    id: `external-settlement-${record.id}`,
+    title: `${record.workplace.name} / ${formatYearMonth(record.yearMonth)}`,
+    subtitle: "打工结算快照",
+    status: status.label,
+    tone: status.tone,
+    apiRef: { resource: "externalWorkSettlement", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      workplace: record.workplace.name,
+      lessons: `${record.lessonCount} 节 / ${formatDurationHours(record.totalLessonHours)}`,
+      amount: formatApiJpyAmount(record.totalAmountJpy),
+      income: record.incomeRecord ? getCashStatusLabel(record.incomeRecord.cashStatus) : "未生成收入",
+    },
+    detail: [
+      {
+        title: "打工结算",
+        lines: [
+          { label: "机构", value: record.workplace.name },
+          { label: "业务月份", value: formatYearMonth(record.yearMonth) },
+          { label: "课时数", value: `${record.lessonCount} 节` },
+          { label: "总时长", value: formatDurationHours(record.totalLessonHours) },
+          { label: "课时工资", value: formatApiJpyAmount(record.lessonWageJpy) },
+          { label: "交通费", value: formatApiJpyAmount(record.transportationFeeJpy) },
+          { label: "调整金额", value: formatApiJpyAmount(record.adjustmentAmountJpy) },
+          { label: "结算金额", value: formatApiJpyAmount(record.totalAmountJpy) },
+        ],
+      },
+      {
+        title: "状态",
+        lines: [
+          { label: "状态", value: status.label },
+          { label: "收入记录", value: record.incomeRecordId ?? "-" },
+          { label: "Cash 状态", value: record.incomeRecord ? getCashStatusLabel(record.incomeRecord.cashStatus) : "-" },
+          { label: "锁定时间", value: formatApiDate(record.lockedAt) },
+          { label: "撤销时间", value: record.revokedAt ? formatApiDate(record.revokedAt) : "-" },
+          { label: "备注", value: record.memo ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function getExternalWorkSettlementStatusView(status: string): { label: string; tone: Tone } {
+  if (status === "locked") {
+    return { label: "已锁定", tone: "emerald" };
+  }
+
+  if (status === "income_created") {
+    return { label: "收入已生成", tone: "cyan" };
+  }
+
+  if (status === "revoked") {
+    return { label: "已撤销", tone: "slate" };
+  }
+
+  return { label: status, tone: "slate" };
+}
+
+function buildAuditPage(basePage: PageConfig, auditApi: FinanceListState): PageConfig {
+  const readonlyBasePage: PageConfig = {
+    ...basePage,
+    description:
+      auditApi.status === "error"
+        ? `真实 dev API 审计事件读取失败：${auditApi.message}`
+        : "真实 dev API 审计事件列表；第一层只读展示关键业务操作记录",
+    batchAction: undefined,
+    selectable: false,
+    rows: auditApi.rows,
+  };
+
+  if (auditApi.status === "idle") {
+    return basePage;
+  }
+
+  if (auditApi.status !== "ready") {
+    return {
+      ...readonlyBasePage,
+      metrics: [
+        {
+          label: "审计读取",
+          value: auditApi.status === "error" ? "失败" : "读取中",
+          sub: "来自 dev API",
+          tone: auditApi.status === "error" ? "rose" : "amber",
+          icon: History,
+        },
+        { label: "高风险", value: "-", sub: "等待接口返回", tone: "slate", icon: ShieldCheck },
+        { label: "关键动作", value: "-", sub: "读取后统计", tone: "slate", icon: LockKeyhole },
+        { label: "今日操作", value: "-", sub: "读取后统计", tone: "slate", icon: Clock },
+      ],
+    };
+  }
+
+  const highRiskCount = auditApi.rows.filter((row) => ["高", "严重"].includes(row.status)).length;
+  const lockLikeCount = auditApi.rows.filter((row) => String(row.cells.action ?? "").includes("lock")).length;
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCount = auditApi.rows.filter((row) => String(row.cells.time ?? "").startsWith(today)).length;
+
+  return {
+    ...readonlyBasePage,
+    metrics: [
+      { label: "审计事件", value: `${auditApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: History },
+      { label: "高风险", value: `${highRiskCount} 条`, sub: "高 / 严重", tone: "rose", icon: ShieldCheck },
+      { label: "锁定类动作", value: `${lockLikeCount} 条`, sub: "action 包含 lock", tone: "emerald", icon: LockKeyhole },
+      { label: "今日操作", value: `${todayCount} 条`, sub: today, tone: "cyan", icon: Clock },
+    ],
+  };
+}
+
+function mapAuditEventToRow(record: AuditEventRecord): DataRow {
+  const risk = getAuditRiskView(record.riskLevel);
+  const operator = record.actorUser?.displayName ?? record.actorUser?.email ?? "系统";
+
+  return {
+    id: `audit-${record.id}`,
+    title: record.action,
+    subtitle: `${record.targetType} / ${record.targetId ?? "-"}`,
+    status: risk.label,
+    tone: risk.tone,
+    apiRef: { resource: "auditEvent", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      operator,
+      time: formatApiDateTime(record.createdAt),
+      action: record.action,
+      target: `${record.targetType} / ${record.targetId ?? "-"}`,
+    },
+    detail: [
+      {
+        title: "审计事件",
+        lines: [
+          { label: "操作人", value: operator },
+          { label: "动作", value: record.action },
+          { label: "对象类型", value: record.targetType },
+          { label: "对象 ID", value: record.targetId ?? "-" },
+          { label: "风险等级", value: risk.label },
+          { label: "原因", value: record.reason ?? "-" },
+          { label: "时间", value: formatApiDateTime(record.createdAt) },
+        ],
+      },
+      {
+        title: "追踪",
+        lines: [
+          { label: "事件 ID", value: record.id },
+          { label: "requestId", value: record.requestId ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function getAuditRiskView(riskLevel: string): { label: string; tone: Tone } {
+  const views: Record<string, { label: string; tone: Tone }> = {
+    low: { label: "低", tone: "slate" },
+    medium: { label: "中", tone: "amber" },
+    high: { label: "高", tone: "rose" },
+    critical: { label: "严重", tone: "rose" },
+  };
+
+  return views[riskLevel] ?? { label: riskLevel, tone: "slate" };
+}
+
+function getWageRuleStatusView(status: "active" | "inactive" | "archived"): { label: string; tone: Tone } {
+  if (status === "active") {
+    return { label: "生效中", tone: "emerald" };
+  }
+
+  if (status === "inactive") {
+    return { label: "停用", tone: "amber" };
+  }
+
+  return { label: "归档", tone: "slate" };
+}
+
 function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListState): PageConfig {
   if (incomeApi.status !== "ready") {
     return basePage;
@@ -3781,6 +5124,37 @@ function formatApiCurrencyAmount(
   return currency === "CNY" ? money.cny(amount) : money.jpy(amount);
 }
 
+function formatApiJpyAmount(value: number | string | null | undefined) {
+  const amount = parseApiAmount(value);
+
+  return amount === null ? "JPY -" : money.jpy(amount);
+}
+
+function formatApiCnyAmount(value: number | string | null | undefined) {
+  const amount = parseApiAmount(value);
+
+  return amount === null ? "CNY -" : money.cny(amount);
+}
+
+function formatReceivedAmounts(
+  amountJpy: number | string | null | undefined,
+  amountCny: number | string | null | undefined,
+) {
+  const jpy = parseApiAmount(amountJpy);
+  const cny = parseApiAmount(amountCny);
+  const parts = [];
+
+  if (jpy && jpy !== 0) {
+    parts.push(money.jpy(jpy));
+  }
+
+  if (cny && cny !== 0) {
+    parts.push(money.cny(cny));
+  }
+
+  return parts.length > 0 ? parts.join(" / ") : `${money.jpy(0)} / ${money.cny(0)}`;
+}
+
 function parseApiAmount(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -3793,6 +5167,42 @@ function parseApiAmount(value: number | string | null | undefined) {
 
 function formatApiDate(value: string) {
   return value.slice(0, 10);
+}
+
+function formatApiDateTime(value: string) {
+  return value.replace("T", " ").slice(0, 16);
+}
+
+function formatYearMonth(value: string) {
+  const [year, month] = value.split("-");
+
+  return year && month ? `${year}年${month}月` : value;
+}
+
+function formatDurationHours(value: number | string | null | undefined) {
+  const amount = parseApiAmount(value);
+
+  if (amount === null) {
+    return "-";
+  }
+
+  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(2)}H`;
+}
+
+function formatTimeRange(start: string | null, end: string | null) {
+  if (start && end) {
+    return `${start}-${end}`;
+  }
+
+  if (start) {
+    return `${start}开始`;
+  }
+
+  if (end) {
+    return `${end}结束`;
+  }
+
+  return "未指定具体时间";
 }
 
 interface LessonCardData {
@@ -3815,13 +5225,19 @@ interface LessonPair {
   actual?: LessonCardData;
   relation: string;
   actionHint: string;
+  plannedRecord?: StudentPlannedLessonRecord;
+  actualRecord?: StudentActualLessonRecord;
 }
+
+type LessonActionKey = "generateActual" | "cancelPlanned" | "markMakeupPending" | "restorePlanned";
+
+type LessonActualDialogState = { pair: LessonPair };
 
 const lessonManagementPage: PageConfig = {
   key: "lesson-management",
   group: "学生链路",
   title: "课时管理",
-  description: "预定课时和实际课时左右对应处理；右侧用于生成实际、取消或登记补课完成",
+  description: "预定课时和实际课时左右对应处理；右侧用于生成实际、取消或标记待补课",
   primaryAction: "新增预定课时",
   secondaryAction: "批量生成预定课时",
   icon: CalendarDays,
@@ -3955,117 +5371,236 @@ function LessonFactCard({
 }) {
   if (!lesson) {
     return (
-      <div className="flex min-h-[76px] flex-col justify-center rounded-lg border border-dashed border-border bg-white px-3.5 py-2.5">
+      <div className="flex h-[76px] min-w-0 flex-col justify-center overflow-hidden rounded-lg border border-dashed border-border bg-white px-3.5 py-2.5">
         <div className="text-xs font-medium text-muted-foreground">{label}</div>
         <div className="mt-1 text-sm font-semibold text-foreground">尚无实际课时</div>
-        <div className="mt-0.5 truncate text-xs text-muted-foreground">{emptyHint}</div>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground" title={emptyHint}>
+          {emptyHint}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-[152px] flex-col rounded-lg border border-border bg-white px-3.5 py-3">
+    <div className="flex h-[178px] min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-white px-3.5 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">{label}</span>
+            <span className="shrink-0 text-xs font-medium text-muted-foreground">{label}</span>
             <StatusPill label={lesson.status} tone={lesson.tone} />
           </div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-base font-semibold text-foreground">{lesson.date}</span>
-            <span className="truncate text-xs text-muted-foreground">{lesson.dateSub}</span>
+          <div className="mt-1 flex min-w-0 items-baseline gap-2">
+            <span className="shrink-0 text-base font-semibold text-foreground">{lesson.date}</span>
+            <span className="truncate text-xs text-muted-foreground" title={lesson.dateSub}>
+              {lesson.dateSub}
+            </span>
           </div>
         </div>
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-1.5 text-sm">
-        <div>
+      <div className="mt-3 grid min-w-0 grid-cols-3 gap-x-4 gap-y-1.5 text-sm">
+        <div className="min-w-0">
           <div className="text-xs text-muted-foreground">学生</div>
-          <div className="font-medium text-foreground">{lesson.student}</div>
+          <div className="truncate font-medium text-foreground" title={lesson.student}>
+            {lesson.student}
+          </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-muted-foreground">老师</div>
-          <div className="font-medium text-foreground">{lesson.teacher}</div>
+          <div className="truncate font-medium text-foreground" title={lesson.teacher}>
+            {lesson.teacher}
+          </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-muted-foreground">科目</div>
-          <div className="font-medium text-foreground">{lesson.subject}</div>
+          <div className="truncate font-medium text-foreground" title={lesson.subject}>
+            {lesson.subject}
+          </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-muted-foreground">业务归属</div>
-          <div className="font-medium text-foreground">{lesson.businessEntity}</div>
+          <div className="truncate font-medium text-foreground" title={lesson.businessEntity}>
+            {lesson.businessEntity}
+          </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-muted-foreground">时长</div>
-          <div className="font-medium text-foreground">{lesson.duration}</div>
+          <div className="truncate font-medium text-foreground" title={lesson.duration}>
+            {lesson.duration}
+          </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-muted-foreground">金额</div>
-          <div className="font-mono font-semibold text-foreground">{lesson.amount}</div>
+          <div className="truncate font-mono font-semibold text-foreground" title={lesson.amount}>
+            {lesson.amount}
+          </div>
         </div>
       </div>
-      <div className="mt-auto truncate border-t border-border/60 pt-2 text-xs text-muted-foreground">内容：{lesson.content}</div>
+      <div className="mt-auto truncate border-t border-border/60 pt-2 text-xs text-muted-foreground" title={lesson.content}>
+        内容：{lesson.content}
+      </div>
     </div>
   );
 }
 
-function LessonActionPanel({ pair, compact = false }: { pair: LessonPair; compact?: boolean }) {
+function getLessonActionAvailability(pair: LessonPair) {
+  const planned = pair.plannedRecord;
+  const status = planned?.status;
+  const hasActual = Boolean(pair.actualRecord || planned?.actualLesson);
+  const isCompleted = status === "actual_created" || status === "makeup_completed";
+  const canActOnPlanned = Boolean(planned) && !hasActual && !isCompleted;
+
+  return {
+    canGenerateActual: canActOnPlanned && status !== "cancelled",
+    canCancel: canActOnPlanned && status !== "cancelled",
+    canMarkMakeupPending: canActOnPlanned && status === "scheduled",
+    canRestore: canActOnPlanned && (status === "cancelled" || status === "makeup_pending"),
+  };
+}
+
+function lessonActionButtonClass(
+  variant: "primary" | "danger" | "cyan" | "neutral",
+  disabled: boolean,
+) {
+  const base =
+    "inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45";
+  const variants = {
+    primary: "bg-[#1687D9] text-white hover:bg-[#0f75bd] disabled:hover:bg-[#1687D9]",
+    danger: "border border-rose-100 bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:hover:bg-rose-50",
+    cyan: "border border-cyan-100 bg-cyan-50 text-cyan-600 hover:bg-cyan-100 disabled:hover:bg-cyan-50",
+    neutral: "border border-border bg-white text-foreground hover:bg-muted disabled:hover:bg-white",
+  };
+
+  return `${base} ${variants[variant]}${disabled ? "" : " shadow-sm shadow-black/5"}`;
+}
+
+function LessonActionPanel({
+  pair,
+  compact = false,
+  onLessonAction,
+  isSubmitting = false,
+}: {
+  pair: LessonPair;
+  compact?: boolean;
+  onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
+  isSubmitting?: boolean;
+}) {
+  const actions = getLessonActionAvailability(pair);
+  const disabledTitle = pair.plannedRecord ? "当前状态不能执行该动作" : "demo 数据没有后端记录";
+  const canCall = Boolean(onLessonAction) && !isSubmitting;
+  const plannedStatus = pair.plannedRecord?.status;
+  const showGenerateButton = !pair.plannedRecord || plannedStatus !== "cancelled";
+  const generateLabel = plannedStatus === "makeup_pending" ? "登记补课完成" : "生成实际";
+  const restoreLabel = plannedStatus === "makeup_pending" ? "撤销待补课" : "恢复预定";
+  const callAction = (actionKey: LessonActionKey) => {
+    if (!canCall) {
+      return;
+    }
+
+    onLessonAction?.(actionKey, pair);
+  };
+
   return (
-    <div className={`rounded-lg border border-border bg-white px-3.5 ${compact ? "py-2.5" : "py-3"}`}>
+    <div className={`h-full overflow-hidden rounded-lg border border-border bg-white px-3.5 ${compact ? "py-2.5" : "py-3"}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-xs font-medium text-muted-foreground">实际课时操作区</div>
+          <div className="text-xs font-medium text-muted-foreground">实际课时操作</div>
           <div className="mt-0.5 truncate text-sm font-semibold text-foreground">{pair.relation}</div>
         </div>
-        <button className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-white px-2.5 text-xs font-medium text-foreground transition hover:bg-muted">
-          <Eye className="h-3.5 w-3.5" />
-          查看详情
-        </button>
+        <StatusPill label={pair.plannedRecord ? "dev API" : "demo"} tone={pair.plannedRecord ? "emerald" : "slate"} />
       </div>
       {!compact && <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{pair.actionHint}</p>}
       <div className={`${compact ? "mt-2" : "mt-3"} flex flex-wrap gap-2`}>
-        <button
-          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd]"
-        >
-          <ClipboardCheck className="h-3.5 w-3.5" />
-          生成实际
-        </button>
-        <button
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-3 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
-        >
-          <X className="h-3.5 w-3.5" />
-          取消
-        </button>
-        <button
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-cyan-200 bg-cyan-50 px-3 text-xs font-medium text-cyan-700 transition hover:bg-cyan-100"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          补课完成
-        </button>
+        {showGenerateButton && (
+          <button
+            type="button"
+            disabled={!canCall || !actions.canGenerateActual}
+            title={actions.canGenerateActual ? "按预定课时生成实际课时" : disabledTitle}
+            onClick={() => callAction("generateActual")}
+            className={lessonActionButtonClass("primary", !canCall || !actions.canGenerateActual)}
+          >
+            <ClipboardCheck className="h-3.5 w-3.5" />
+            {isSubmitting ? "处理中" : generateLabel}
+          </button>
+        )}
+        {actions.canCancel && (
+          <button
+            type="button"
+            disabled={!canCall}
+            title="取消这条预定课时"
+            onClick={() => callAction("cancelPlanned")}
+            className={lessonActionButtonClass("danger", !canCall)}
+          >
+            <X className="h-3.5 w-3.5" />
+            取消
+          </button>
+        )}
+        {actions.canMarkMakeupPending && (
+          <button
+            type="button"
+            disabled={!canCall}
+            title="标记为待补课"
+            onClick={() => callAction("markMakeupPending")}
+            className={lessonActionButtonClass("cyan", !canCall)}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            标记待补课
+          </button>
+        )}
+        {actions.canRestore && (
+          <button
+            type="button"
+            disabled={!canCall}
+            title={plannedStatus === "makeup_pending" ? "撤销待补课并恢复为待生成实际" : "恢复为待生成实际"}
+            onClick={() => callAction("restorePlanned")}
+            className={lessonActionButtonClass("neutral", !canCall)}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {restoreLabel}
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function LessonActualColumn({ pair }: { pair: LessonPair }) {
+function LessonActualColumn({
+  pair,
+  onLessonAction,
+  isSubmitting,
+}: {
+  pair: LessonPair;
+  onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
+  isSubmitting?: boolean;
+}) {
   if (pair.actual) {
     return <LessonFactCard label="实际课时" lesson={pair.actual} />;
   }
 
   return (
-    <div className="grid min-h-[152px] grid-rows-[76px_1fr] gap-2">
+    <div className="grid h-[178px] grid-rows-[76px_1fr] gap-2">
       <LessonFactCard label="实际课时" emptyHint={`关联：${pair.relation}`} />
-      <LessonActionPanel pair={pair} compact />
+      <LessonActionPanel pair={pair} compact onLessonAction={onLessonAction} isSubmitting={isSubmitting} />
     </div>
   );
 }
 
-function LessonManagementPage() {
+function LessonManagementPage({
+  page,
+  pairs,
+  onLessonAction,
+  lessonActionSubmittingId,
+}: {
+  page: PageConfig;
+  pairs: LessonPair[];
+  onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
+  lessonActionSubmittingId?: string | null;
+}) {
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
-      <PageHeader page={lessonManagementPage} />
-      <FilterPanel filters={lessonManagementPage.filters} />
+      <PageHeader page={page} />
+      <FilterPanel filters={page.filters} />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {lessonManagementPage.metrics.map((metric) => (
+        {page.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -4094,15 +5629,240 @@ function LessonManagementPage() {
             <span>预定课时</span>
             <span>实际课时 / 生成实际课时区</span>
           </div>
-          {lessonPairs.map((pair) => (
-            <div className="grid items-start gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
-              <LessonFactCard label="预定课时" lesson={pair.planned} />
-              <LessonActualColumn pair={pair} />
+          {pairs.length > 0 ? (
+            pairs.map((pair) => (
+              <div className="grid items-stretch gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
+                <LessonFactCard label="预定课时" lesson={pair.planned} />
+                <LessonActualColumn
+                  pair={pair}
+                  onLessonAction={onLessonAction}
+                  isSubmitting={lessonActionSubmittingId === pair.id}
+                />
+              </div>
+            ))
+          ) : (
+            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+              暂无课时记录
             </div>
-          ))}
+          )}
         </div>
       </section>
     </main>
+  );
+}
+
+function normalizeTimeInputValue(value: string | null) {
+  return value ? value.slice(0, 5) : "";
+}
+
+function LessonActualFormModal({
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: LessonActualDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: GenerateActualLessonInput) => void;
+}) {
+  const planned = state.pair.plannedRecord;
+  const defaultDuration = planned ? parseApiAmount(planned.durationHours) : null;
+  const isMakeup = planned?.status === "makeup_pending";
+  const [actualDate, setActualDate] = useState(planned ? formatApiDate(planned.weekAnchorDate) : "");
+  const [startTime, setStartTime] = useState(normalizeTimeInputValue(planned?.plannedStartTime ?? null));
+  const [endTime, setEndTime] = useState(normalizeTimeInputValue(planned?.plannedEndTime ?? null));
+  const [durationHours, setDurationHours] = useState(defaultDuration === null ? "" : String(defaultDuration));
+  const [content, setContent] = useState(planned?.content ?? "");
+  const [memo, setMemo] = useState(planned?.memo ?? "");
+  const [teacherWageEligible, setTeacherWageEligible] = useState(true);
+  const actualMonth = actualDate.slice(0, 7);
+  const durationNumber = Number(durationHours);
+  const isActualDateInPlannedMonth = Boolean(planned && actualMonth === planned.yearMonth);
+  const modeLabel = isMakeup ? (isActualDateInPlannedMonth ? "本月补课" : "跨月补课") : "普通实际课时";
+  const canSubmit =
+    Boolean(planned) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(actualDate) &&
+    Number.isFinite(durationNumber) &&
+    durationNumber > 0 &&
+    (isMakeup || isActualDateInPlannedMonth);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!canSubmit) {
+      return;
+    }
+
+    onSubmit({
+      actualDate,
+      teacherId: planned?.teacherId ?? null,
+      startTime: normalizeOptionalFormValue(startTime),
+      endTime: normalizeOptionalFormValue(endTime),
+      durationHours: durationNumber,
+      content: normalizeOptionalFormValue(content),
+      memo: normalizeOptionalFormValue(memo),
+      teacherWageEligible,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(680px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{isMakeup ? "登记补课完成" : "生成实际课时"}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {planned
+                ? `${planned.student.name} / ${planned.subject.name} / 原业务月 ${planned.yearMonth}`
+                : "请选择来自 dev API 的预定课时"}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-3 text-xs md:grid-cols-3">
+            <div className="min-w-0">
+              <div className="text-muted-foreground">老师</div>
+              <div className="truncate font-medium text-foreground" title={planned?.teacher.name}>
+                {planned?.teacher.name ?? "-"}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-muted-foreground">预定时间</div>
+              <div className="truncate font-medium text-foreground">
+                {planned
+                  ? `${formatApiDate(planned.weekAnchorDate)} ${formatTimeRange(planned.plannedStartTime, planned.plannedEndTime)}`
+                  : "-"}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-muted-foreground">处理类型</div>
+              <div className="font-medium text-foreground">{modeLabel}</div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_96px]">
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">实际日期</span>
+              <input
+                required
+                type="date"
+                value={actualDate}
+                onChange={(event) => setActualDate(event.target.value)}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              />
+            </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">开始</span>
+              <input
+                type="time"
+                value={startTime}
+                onChange={(event) => setStartTime(event.target.value)}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              />
+            </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">结束</span>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(event) => setEndTime(event.target.value)}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              />
+            </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">时长</span>
+              <input
+                required
+                min="0.25"
+                step="0.25"
+                type="number"
+                value={durationHours}
+                onChange={(event) => setDurationHours(event.target.value)}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              />
+            </label>
+          </div>
+
+          {!isMakeup && planned && !isActualDateInPlannedMonth && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              普通实际课时的实际日期需要留在原业务月。跨月完成时，请先标记为待补课后再登记补课完成。
+            </div>
+          )}
+
+          {isMakeup && (
+            <div className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+              当前为{modeLabel}。学生费用仍归属原业务月，老师工资按实际日期所在月份归属。
+            </div>
+          )}
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">实际内容</span>
+            <textarea
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              className="min-h-[76px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="例如：EJU 日语阅读 / 作文讲评"
+            />
+          </label>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea
+              value={memo}
+              onChange={(event) => setMemo(event.target.value)}
+              className="min-h-[64px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="选填"
+            />
+          </label>
+
+          <div className="rounded-md border border-border bg-muted/10 px-3 py-2">
+            <label className="flex items-center gap-2 text-xs text-foreground">
+              <input
+                type="checkbox"
+                checked={teacherWageEligible}
+                onChange={(event) => setTeacherWageEligible(event.target.checked)}
+                className="h-4 w-4 rounded border-border text-[#1687D9] focus:ring-[#1687D9]"
+              />
+              <span className="font-medium">计入老师工资快照</span>
+            </label>
+            <p className="mt-1 pl-6 text-xs leading-5 text-muted-foreground">
+              正式上课和补课通常保持开启；仅在试听、不计薪或纯记录课时时关闭。
+            </p>
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !canSubmit}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "保存中" : "保存实际课时"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -4399,13 +6159,21 @@ function ExternalWorkActualColumn({
   );
 }
 
-function ExternalWorkLessonsPage({ onOpenDetail }: { onOpenDetail: (row: DataRow) => void }) {
+function ExternalWorkLessonsPage({
+  page,
+  pairs,
+  onOpenDetail,
+}: {
+  page: PageConfig;
+  pairs: ExternalWorkPair[];
+  onOpenDetail: (row: DataRow) => void;
+}) {
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
-      <PageHeader page={externalWorkLessonsPage} />
-      <FilterPanel filters={externalWorkLessonsPage.filters} />
+      <PageHeader page={page} />
+      <FilterPanel filters={page.filters} />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {externalWorkLessonsPage.metrics.map((metric) => (
+        {page.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -4427,12 +6195,18 @@ function ExternalWorkLessonsPage({ onOpenDetail }: { onOpenDetail: (row: DataRow
             <span>外部预定课时</span>
             <span>外部实际课时 / 生成实际课时区</span>
           </div>
-          {externalWorkPairs.map((pair) => (
-            <div className="grid gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
-              <ExternalWorkFactCard label="预定课时" lesson={pair.planned} />
-              <ExternalWorkActualColumn pair={pair} onOpenDetail={onOpenDetail} />
+          {pairs.length > 0 ? (
+            pairs.map((pair) => (
+              <div className="grid gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
+                <ExternalWorkFactCard label="预定课时" lesson={pair.planned} />
+                <ExternalWorkActualColumn pair={pair} onOpenDetail={onOpenDetail} />
+              </div>
+            ))
+          ) : (
+            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+              暂无外部课时记录
             </div>
-          ))}
+          )}
         </div>
       </section>
     </main>
@@ -5823,6 +7597,13 @@ export default function App() {
     counts: emptySettingsCounts,
     businessEntities: [],
   });
+  const [studentChainApi, setStudentChainApi] = useState<StudentChainApiState>(createEmptyStudentChainApiState);
+  const [studentChainReloadKey, setStudentChainReloadKey] = useState(0);
+  const [lessonActionSubmittingId, setLessonActionSubmittingId] = useState<string | null>(null);
+  const [lessonActualDialog, setLessonActualDialog] = useState<LessonActualDialogState | null>(null);
+  const [isLessonActualSubmitting, setIsLessonActualSubmitting] = useState(false);
+  const [lessonActualError, setLessonActualError] = useState<string | null>(null);
+  const [workflowApi, setWorkflowApi] = useState<WorkflowApiState>(createEmptyWorkflowApiState);
   const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
   const [financeReloadKey, setFinanceReloadKey] = useState(0);
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
@@ -5842,7 +7623,7 @@ export default function App() {
   const [showCashModal, setShowCashModal] = useState(false);
   const [showSettlementBatchModal, setShowSettlementBatchModal] = useState(false);
 
-  const baseActivePage = pages[activeKey];
+  const baseActivePage = activeKey === "lesson-management" ? lessonManagementPage : pages[activeKey];
   const activePage = useMemo(() => {
     if (activeKey === "students" && baseActivePage) {
       return buildStudentsPage(baseActivePage, studentApi);
@@ -5854,6 +7635,42 @@ export default function App() {
 
     if (activeKey === "settings" && baseActivePage) {
       return buildSettingsPage(baseActivePage, settingsApi);
+    }
+
+    if (activeKey === "lesson-management" && baseActivePage) {
+      return buildLessonManagementPage(baseActivePage, studentChainApi);
+    }
+
+    if (activeKey === "tuition-bills" && baseActivePage) {
+      return buildTuitionBillsPage(baseActivePage, studentChainApi.tuitionBills);
+    }
+
+    if (activeKey === "student-settlements" && baseActivePage) {
+      return buildStudentSettlementsPage(baseActivePage, studentChainApi.settlements);
+    }
+
+    if (activeKey === "teacher-rules" && baseActivePage) {
+      return buildWageRulesPage(baseActivePage, workflowApi.wageRules);
+    }
+
+    if (activeKey === "teacher-wages" && baseActivePage) {
+      return buildTeacherWagesPage(baseActivePage, workflowApi.wageSnapshots);
+    }
+
+    if (activeKey === "wage-import" && baseActivePage) {
+      return buildWageImportPage(baseActivePage, workflowApi.wageImports);
+    }
+
+    if (activeKey === "external-lessons" && baseActivePage) {
+      return buildExternalWorkLessonsPage(baseActivePage, workflowApi.externalLessons);
+    }
+
+    if (activeKey === "external-settlements" && baseActivePage) {
+      return buildExternalWorkSettlementsPage(baseActivePage, workflowApi.externalSettlements);
+    }
+
+    if (activeKey === "audit" && baseActivePage) {
+      return buildAuditPage(baseActivePage, workflowApi.auditEvents);
     }
 
     if (activeKey === "income-records" && baseActivePage) {
@@ -5881,7 +7698,9 @@ export default function App() {
     }
 
     return baseActivePage;
-  }, [activeKey, baseActivePage, studentApi, teacherApi, settingsApi, financeApi]);
+  }, [activeKey, baseActivePage, studentApi, teacherApi, settingsApi, studentChainApi, workflowApi, financeApi]);
+  const activeLessonPairs = useMemo(() => getLessonPairsForPage(studentChainApi), [studentChainApi]);
+  const activeExternalWorkPairs = useMemo(() => getExternalWorkPairsForPage(workflowApi), [workflowApi]);
   const selected = selectedByPage[activeKey] ?? new Set<string>();
   const selectedRows = useMemo(() => {
     if (!activePage) {
@@ -6077,6 +7896,197 @@ export default function App() {
 
   useEffect(() => {
     if (!authSession) {
+      setStudentChainApi(createEmptyStudentChainApiState());
+      return;
+    }
+
+    let isMounted = true;
+
+    setStudentChainApi((current) => ({
+      plannedLessons: {
+        status: "loading",
+        items: current.plannedLessons.items,
+        total: current.plannedLessons.total,
+      },
+      actualLessons: {
+        status: "loading",
+        items: current.actualLessons.items,
+        total: current.actualLessons.total,
+      },
+      tuitionBills: {
+        status: "loading",
+        rows: current.tuitionBills.rows,
+        total: current.tuitionBills.total,
+      },
+      settlements: {
+        status: "loading",
+        rows: current.settlements.rows,
+        total: current.settlements.total,
+      },
+    }));
+
+    void Promise.all([
+      listPlannedLessons(authSession.accessToken),
+      listActualLessons(authSession.accessToken),
+      listTuitionBills(authSession.accessToken),
+      listStudentSettlements(authSession.accessToken),
+    ])
+      .then(([plannedLessons, actualLessons, tuitionBills, settlements]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setStudentChainApi({
+          plannedLessons: {
+            status: "ready",
+            items: plannedLessons.items,
+            total: plannedLessons.total,
+          },
+          actualLessons: {
+            status: "ready",
+            items: actualLessons.items,
+            total: actualLessons.total,
+          },
+          tuitionBills: {
+            status: "ready",
+            rows: tuitionBills.items.map(mapTuitionBillToRow),
+            total: tuitionBills.total,
+          },
+          settlements: {
+            status: "ready",
+            rows: settlements.items.map(mapStudentSettlementToRow),
+            total: settlements.total,
+          },
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Student chain API request failed";
+        setStudentChainApi({
+          plannedLessons: { status: "error", items: [], total: 0, message },
+          actualLessons: { status: "error", items: [], total: 0, message },
+          tuitionBills: { status: "error", rows: [], total: 0, message },
+          settlements: { status: "error", rows: [], total: 0, message },
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession, studentChainReloadKey]);
+
+  useEffect(() => {
+    if (!authSession) {
+      setWorkflowApi(createEmptyWorkflowApiState());
+      return;
+    }
+
+    let isMounted = true;
+
+    setWorkflowApi((current) => ({
+      wageRules: {
+        status: "loading",
+        rows: current.wageRules.rows,
+        total: current.wageRules.total,
+      },
+      wageSnapshots: {
+        status: "loading",
+        rows: current.wageSnapshots.rows,
+        total: current.wageSnapshots.total,
+      },
+      wageImports: {
+        status: "loading",
+        rows: current.wageImports.rows,
+        total: current.wageImports.total,
+      },
+      externalLessons: {
+        status: "loading",
+        items: current.externalLessons.items,
+        total: current.externalLessons.total,
+      },
+      externalSettlements: {
+        status: "loading",
+        rows: current.externalSettlements.rows,
+        total: current.externalSettlements.total,
+      },
+      auditEvents: {
+        status: "loading",
+        rows: current.auditEvents.rows,
+        total: current.auditEvents.total,
+      },
+    }));
+
+    void Promise.all([
+      listTeacherWageRules(authSession.accessToken),
+      listTeacherWageSnapshots(authSession.accessToken),
+      listExternalWorkLessons(authSession.accessToken),
+      listExternalWorkSettlements(authSession.accessToken),
+      listAuditEvents(authSession.accessToken),
+    ])
+      .then(([wageRules, wageSnapshots, externalLessons, externalSettlements, auditEvents]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setWorkflowApi({
+          wageRules: {
+            status: "ready",
+            rows: wageRules.items.map(mapTeacherWageRuleToRow),
+            total: wageRules.total,
+          },
+          wageSnapshots: {
+            status: "ready",
+            rows: wageSnapshots.items.map(mapTeacherWageSnapshotToRow),
+            total: wageSnapshots.total,
+          },
+          wageImports: {
+            status: "ready",
+            rows: wageSnapshots.items.map(mapTeacherWageSnapshotToImportRow),
+            total: wageSnapshots.total,
+          },
+          externalLessons: {
+            status: "ready",
+            items: externalLessons.items,
+            total: externalLessons.total,
+          },
+          externalSettlements: {
+            status: "ready",
+            rows: externalSettlements.items.map(mapExternalWorkSettlementToRow),
+            total: externalSettlements.total,
+          },
+          auditEvents: {
+            status: "ready",
+            rows: auditEvents.items.map(mapAuditEventToRow),
+            total: auditEvents.total,
+          },
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Workflow API request failed";
+        setWorkflowApi({
+          wageRules: { status: "error", rows: [], total: 0, message },
+          wageSnapshots: { status: "error", rows: [], total: 0, message },
+          wageImports: { status: "error", rows: [], total: 0, message },
+          externalLessons: { status: "error", items: [], total: 0, message },
+          externalSettlements: { status: "error", rows: [], total: 0, message },
+          auditEvents: { status: "error", rows: [], total: 0, message },
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession) {
       setFinanceApi(createEmptyFinanceApiState());
       return;
     }
@@ -6232,6 +8242,88 @@ export default function App() {
     } catch (error) {
       setReimbursementMutationError(formatApiError(error));
       setReimbursementDialog({ isLoading: false, candidates: [], accounts: [] });
+    }
+  };
+
+  const handleLessonAction = async (actionKey: LessonActionKey, pair: LessonPair) => {
+    if (!authSession || !pair.plannedRecord) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的预定课时。" });
+      return;
+    }
+
+    const planned = pair.plannedRecord;
+    let successMessage = "";
+
+    if (actionKey === "generateActual") {
+      setLessonActualError(null);
+      setLessonActualDialog({ pair });
+      return;
+    }
+
+    if (actionKey === "cancelPlanned") {
+      const confirmed = window.confirm(`确认取消「${planned.student.name}」${formatApiDate(planned.weekAnchorDate)} 的预定课时？`);
+      if (!confirmed) {
+        return;
+      }
+      successMessage = "预定课时已取消。";
+    } else if (actionKey === "markMakeupPending") {
+      const confirmed = window.confirm(`确认把「${planned.student.name}」${formatApiDate(planned.weekAnchorDate)} 的预定课时标记为待补课？`);
+      if (!confirmed) {
+        return;
+      }
+      successMessage = "预定课时已标记为待补课。";
+    } else {
+      const confirmed = window.confirm(`确认恢复「${planned.student.name}」${formatApiDate(planned.weekAnchorDate)} 的预定课时？`);
+      if (!confirmed) {
+        return;
+      }
+      successMessage = "预定课时已恢复。";
+    }
+
+    setLessonActionSubmittingId(pair.id);
+    try {
+      if (actionKey === "cancelPlanned") {
+        await cancelPlannedLesson(authSession.accessToken, planned.id);
+      } else if (actionKey === "markMakeupPending") {
+        await markPlannedLessonMakeupPending(authSession.accessToken, planned.id);
+      } else {
+        await restorePlannedLesson(authSession.accessToken, planned.id);
+      }
+
+      setStudentChainReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: successMessage });
+    } catch (error) {
+      setActionNotice({ tone: "rose", text: formatApiError(error) });
+    } finally {
+      setLessonActionSubmittingId(null);
+    }
+  };
+
+  const submitLessonActualForm = async (input: GenerateActualLessonInput) => {
+    if (!authSession || !lessonActualDialog?.pair.plannedRecord) {
+      setLessonActualError("请先使用真实 API 登录，并选择来自 dev API 的预定课时。");
+      return;
+    }
+
+    const pair = lessonActualDialog.pair;
+    const planned = pair.plannedRecord;
+    setIsLessonActualSubmitting(true);
+    setLessonActionSubmittingId(pair.id);
+    setLessonActualError(null);
+
+    try {
+      await generateActualLesson(authSession.accessToken, planned.id, input);
+      setLessonActualDialog(null);
+      setStudentChainReloadKey((current) => current + 1);
+      setActionNotice({
+        tone: "emerald",
+        text: planned.status === "makeup_pending" ? "补课实际课时已生成。" : "实际课时已生成。",
+      });
+    } catch (error) {
+      setLessonActualError(formatApiError(error));
+    } finally {
+      setIsLessonActualSubmitting(false);
+      setLessonActionSubmittingId(null);
     }
   };
 
@@ -6589,15 +8681,15 @@ export default function App() {
     setFinanceDialog(null);
     setCashRequestDialog(null);
     setReimbursementDialog(null);
+    setLessonActionSubmittingId(null);
+    setLessonActualDialog(null);
+    setLessonActualError(null);
   };
 
-  const pageForTopBar =
-    activeKey === "lesson-management"
-      ? lessonManagementPage
-      : activePage ?? {
-          group: "工作台",
-          title: "首页",
-        };
+  const pageForTopBar = activePage ?? {
+    group: "工作台",
+    title: "首页",
+  };
   const currentUser = authSession?.user ?? {
     displayName: "系统管理员",
     email: "polariss710@gmail.com",
@@ -6623,10 +8715,15 @@ export default function App() {
         />
         {activeKey === "dashboard" ? (
           <Dashboard onNavigate={navigate} />
-        ) : activeKey === "lesson-management" ? (
-          <LessonManagementPage />
-        ) : activeKey === "external-lessons" ? (
-          <ExternalWorkLessonsPage onOpenDetail={setDetailRow} />
+        ) : activeKey === "lesson-management" && activePage ? (
+          <LessonManagementPage
+            page={activePage}
+            pairs={activeLessonPairs}
+            onLessonAction={handleLessonAction}
+            lessonActionSubmittingId={lessonActionSubmittingId}
+          />
+        ) : activeKey === "external-lessons" && activePage ? (
+          <ExternalWorkLessonsPage page={activePage} pairs={activeExternalWorkPairs} onOpenDetail={setDetailRow} />
         ) : activeKey === "settings" && activePage ? (
           <SettingsPage
             page={activePage}
@@ -6643,9 +8740,7 @@ export default function App() {
             onToggleRow={toggleRow}
             onOpenDetail={setDetailRow}
             onPrimary={
-              activeKey === "student-settlements"
-                ? () => setShowSettlementBatchModal(true)
-                : activeKey === "students"
+              activeKey === "students"
                   ? openStudentCreate
                   : activeKey === "teachers"
                     ? openTeacherCreate
@@ -6719,6 +8814,18 @@ export default function App() {
           error={reimbursementMutationError}
           onClose={() => setReimbursementDialog(null)}
           onSubmit={submitReimbursementForm}
+        />
+      )}
+      {lessonActualDialog && (
+        <LessonActualFormModal
+          state={lessonActualDialog}
+          isSubmitting={isLessonActualSubmitting}
+          error={lessonActualError}
+          onClose={() => {
+            setLessonActualDialog(null);
+            setLessonActualError(null);
+          }}
+          onSubmit={submitLessonActualForm}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />
