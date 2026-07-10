@@ -30,12 +30,14 @@ const tuitionBillSelect = {
   id: true,
   studentId: true,
   yearMonth: true,
+  version: true,
   plannedLessonCount: true,
   plannedAmountJpy: true,
   carryoverAmountCny: true,
   status: true,
   calculationSnapshot: true,
   incomeRecordId: true,
+  replacesId: true,
   generatedAt: true,
   student: {
     select: {
@@ -111,7 +113,7 @@ export class TuitionBillingService {
     const [items, total] = await Promise.all([
       this.prisma.studentTuitionBill.findMany({
         where,
-        orderBy: [{ yearMonth: "desc" }, { student: { name: "asc" } }],
+        orderBy: [{ yearMonth: "desc" }, { student: { name: "asc" } }, { version: "desc" }],
         take: limit,
         select: tuitionBillSelect,
       }),
@@ -184,12 +186,17 @@ export class TuitionBillingService {
       throw new BadRequestException("Active student is required.");
     }
 
-    const existing = await this.prisma.studentTuitionBill.findUnique({
-      where: { studentId_yearMonth: { studentId, yearMonth } },
+    const latest = await this.prisma.studentTuitionBill.findFirst({
+      where: { studentId, yearMonth },
+      orderBy: { version: "desc" },
       select: tuitionBillSelect,
     });
 
-    if (existing?.status === TuitionBillStatus.income_created) {
+    const latestIncomeWasVoided =
+      latest?.status === TuitionBillStatus.income_created &&
+      latest.incomeRecord?.recordStatus === IncomeRecordStatus.voided;
+
+    if (latest?.status === TuitionBillStatus.income_created && !latestIncomeWasVoided) {
       throw new BadRequestException(
         "Tuition bill already generated income record.",
       );
@@ -274,43 +281,55 @@ export class TuitionBillingService {
           },
     };
 
+    if (
+      latest?.status === TuitionBillStatus.generated &&
+      this.isSameTuitionBillCalculation(latest, plannedLessons, carryoverAmountCny)
+    ) {
+      return { tuitionBill: latest };
+    }
+
+    const nextVersion = (latest?.version ?? 0) + 1;
+
     const tuitionBill = await this.prisma.$transaction(async (tx) => {
-      const saved = existing
-        ? await tx.studentTuitionBill.update({
-            where: { id: existing.id },
-            data: {
-              plannedLessonCount: plannedLessons.length,
-              plannedAmountJpy,
-              carryoverAmountCny,
-              status: TuitionBillStatus.generated,
-              calculationSnapshot,
-              generatedAt: new Date(),
-            },
-            select: tuitionBillSelect,
-          })
-        : await tx.studentTuitionBill.create({
-            data: {
-              studentId,
-              yearMonth,
-              plannedLessonCount: plannedLessons.length,
-              plannedAmountJpy,
-              carryoverAmountCny,
-              status: TuitionBillStatus.generated,
-              calculationSnapshot,
-            },
-            select: tuitionBillSelect,
-          });
+      if (latest?.status === TuitionBillStatus.generated) {
+        await tx.studentTuitionBill.update({
+          where: { id: latest.id },
+          data: { status: TuitionBillStatus.superseded },
+        });
+      }
+
+      if (latestIncomeWasVoided && latest) {
+        await tx.studentTuitionBill.update({
+          where: { id: latest.id },
+          data: { status: TuitionBillStatus.voided },
+        });
+      }
+
+      const saved = await tx.studentTuitionBill.create({
+        data: {
+          studentId,
+          yearMonth,
+          version: nextVersion,
+          plannedLessonCount: plannedLessons.length,
+          plannedAmountJpy,
+          carryoverAmountCny,
+          status: TuitionBillStatus.generated,
+          calculationSnapshot,
+          replacesId: latest?.id ?? null,
+        },
+        select: tuitionBillSelect,
+      });
 
       await this.auditService.recordEvent(
         {
           actorUserId,
-          action: existing
+          action: latest
             ? "tuition_bill.regenerate"
             : "tuition_bill.generate",
           targetType: "tuition_bill",
           targetId: saved.id,
           riskLevel: AuditRiskLevel.high,
-          beforeSnapshot: existing,
+          beforeSnapshot: latest,
           afterSnapshot: saved,
         },
         tx,
@@ -577,6 +596,25 @@ export class TuitionBillingService {
     return Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
       : [];
+  }
+
+  private isSameTuitionBillCalculation(
+    bill: TuitionBillSnapshot,
+    plannedLessons: Array<{ id: string; plannedFeeJpy: number }>,
+    carryoverAmountCny: Prisma.Decimal,
+  ) {
+    const plannedLessonIds = this.getSnapshotStringArray(
+      bill.calculationSnapshot,
+      "plannedLessonIds",
+    );
+
+    return (
+      bill.plannedLessonCount === plannedLessons.length &&
+      bill.plannedAmountJpy === plannedLessons.reduce((sum, lesson) => sum + lesson.plannedFeeJpy, 0) &&
+      bill.carryoverAmountCny.toString() === carryoverAmountCny.toString() &&
+      plannedLessonIds.length === plannedLessons.length &&
+      plannedLessonIds.every((id, index) => id === plannedLessons[index]?.id)
+    );
   }
 
   private formatDate(date: Date) {

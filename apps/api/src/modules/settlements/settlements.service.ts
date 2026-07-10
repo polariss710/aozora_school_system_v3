@@ -12,6 +12,7 @@ import {
   Prisma,
   RecordStatus,
   StudentSettlementStatus,
+  TuitionBillStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
@@ -363,13 +364,13 @@ export class SettlementsService {
             teacherWageEligible: true,
           },
         }),
-        this.prisma.studentTuitionBill.findUnique({
+        this.prisma.studentTuitionBill.findFirst({
           where: {
-            studentId_yearMonth: {
-              studentId: input.studentId,
-              yearMonth: input.yearMonth,
-            },
+            studentId: input.studentId,
+            yearMonth: input.yearMonth,
+            status: { in: [TuitionBillStatus.generated, TuitionBillStatus.income_created] },
           },
+          orderBy: { version: "desc" },
           select: {
             id: true,
             status: true,
@@ -539,13 +540,13 @@ export class SettlementsService {
     settlement: StudentSettlementSnapshot,
   ) {
     const nextYearMonth = this.addMonths(settlement.yearMonth, 1);
-    const downstreamBill = await this.prisma.studentTuitionBill.findUnique({
+    const downstreamBill = await this.prisma.studentTuitionBill.findFirst({
       where: {
-        studentId_yearMonth: {
-          studentId: settlement.studentId,
-          yearMonth: nextYearMonth,
-        },
+        studentId: settlement.studentId,
+        yearMonth: nextYearMonth,
+        status: { in: [TuitionBillStatus.generated, TuitionBillStatus.income_created] },
       },
+      orderBy: { version: "desc" },
       select: { id: true, status: true },
     });
 

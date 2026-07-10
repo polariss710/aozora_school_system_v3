@@ -1,6 +1,6 @@
 # Aozora School System v3 项目规则
 
-最后整理日期：2026-07-06
+最后整理日期：2026-07-11
 
 ## 1. 项目定位
 
@@ -33,6 +33,7 @@ v3 的定位：
 5. v2 继续作为稳定运营来源，不在 v3 中直接沿用所有历史页面和 legacy 表。
 6. v3 中不迁移不再需要的过渡期功能。
 7. v3 已初始化为 Git 仓库并推送到 GitHub；后续重要文档、代码、migration 和 seed 变更应单独提交。
+8. V2 / V3 学生链路与财务边界的差异，以 `docs/v2-v3-student-finance-alignment.md` 为当前对照清单；未完成真实 Cash 接口合同前，不把 dev API 的 Cash request 当作已完成外部联动。
 
 ## 3. 代码修改规则
 
@@ -245,6 +246,9 @@ v3 优先围绕以下业务链路设计。
 收入层落地口径：
 
 - tuition bill snapshot 是学生学费收入的业务快照。
+- 同一学生同一业务月份可以保留多个账单历史版本，但只能有一个当前有效的 `generated` / `income_created` 版本；版本通过 `version` 和 `replaces_id` 关联。
+- 账单基础课时或 locked carryover 发生变化时，旧账单标记为 `superseded` 或 `voided`，重新生成新账单；不能原地覆盖已产生的业务快照。
+- 学费收入作废时，原收入和原账单保留关联及审计信息；新账单/新收入必须绑定新版本。
 - pending income 是进入 Cash 前的收入单据状态。
 - Cash confirmation 后进入账户流水，并触发更强编辑保护。
 - 主学费应收不能由前端手工决定金额。
@@ -291,6 +295,10 @@ V2 实际落地补充：
 ```
 
 规则：老师工资来源应保持单一，基础来自实际课时。手动调整发生在 wage snapshot 之后、pending expense 之前，调整对象包括交通费、教室费、结算课时；结算课时调整用于决定某节实际课时是否计入老师工资，不修改学生课时事实。工资快照与支出记录粒度均为 `teacher_id + year_month + business_entity_id`。同一老师同月多个业务归属会在 School 侧生成多条工资快照和多条支出记录；v3 School 侧不做工资聚合，不建立 `teacher_wage_payments` / `teacher_wage_payment_items`。Cash 端负责按老师 / 月份 / 币种聚合确认，并逐条回写 School 对应支出记录。Cash confirmation 后进入账户流水并触发更强编辑保护。
+
+V2 v10.3.67 补充的老师工资生成粒度：工资快照业务唯一粒度应视为 `teacher_id + business_entity_id + settlement_month`，不能把“老师已存在某月工资”作为 `teacher + month` 全局 blocker。生成工资时应支持可选 `business_entity_id` scope；传入 `business_entity_id` 时，候选 actual / makeup_completed 课时、既有工资快照 blocker、既有工资明细 blocker、学生月度结算 locked 校验、工资规则匹配、汇总插入、明细插入都必须限定在该业务归属。未传 `business_entity_id` 时，保持批量行为，同一老师同月可按不同业务归属生成多个 wage snapshot。支付 / 支出 / Cash 链路仍发生在工资快照之后，工资生成动作本身不创建支出、Cash request 或账户流水。
+
+V2 v10.3.66 补充的 teacher_wage rejected Cash 回退口径：当老师工资支出已经提交 Cash，但 Cash 侧 reject 且没有生成 Cash transaction 时，School 端允许将该 teacher_wage expense 标记为 cancelled / voided，并保留 rejected Cash request metadata 作为审计。该历史支出不再作为 active canonical teacher_wage expense 阻塞工资快照撤销或重新生成。Cash approved / synced / paid、Cash pending，或已经存在 `cash_transaction_id` 的工资支出，不能直接作废，必须走冲销 / 修正规则。
 
 财务侧：
 
@@ -417,6 +425,8 @@ external work planned lesson
 - 学生月度结算支持锁定、撤销、重新锁定。
 - 老师工资结算支持 wage snapshot 生成、撤销、重新生成。
 - 工资快照生成支出记录后，撤销必须处理 wage snapshot 与 pending expense 的映射。
+- 工资快照撤销必须检查 active canonical teacher_wage expense；存在 active expense 时拒绝撤销。`cancelled` / `voided` 历史工资支出不阻塞撤销或重新生成。
+- teacher_wage expense 如处于 Cash rejected 且无 transaction 状态，可作废 School 侧支出并保留 rejected request metadata；Cash pending、Cash approved / synced / paid 或已有 `cash_transaction_id` 时不能直接作废。
 - 收入 / 支出生成后，应支持作废和重新生成。
 - Cash 请求被拒绝后，应支持撤销和重新生成。
 - Cash confirmed 或 account transaction created 后，不应简单删除或原地修改，应通过反向记录或修正记录处理。

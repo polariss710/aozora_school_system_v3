@@ -491,12 +491,14 @@ export interface TuitionBillRecord {
   id: string;
   studentId: string;
   yearMonth: string;
+  version: number;
   plannedLessonCount: number;
   plannedAmountJpy: ApiAmountValue;
   carryoverAmountCny: ApiAmountValue;
   status: string;
   calculationSnapshot: unknown;
   incomeRecordId: string | null;
+  replacesId: string | null;
   generatedAt: string;
   student: RelatedStudentRecord;
   incomeRecord: {
@@ -923,9 +925,55 @@ export function markPlannedLessonMakeupPending(accessToken: string, plannedLesso
   );
 }
 
+export function deleteFreshPlannedLesson(
+  accessToken: string,
+  plannedLessonId: string,
+  input: { expectedUpdatedAt: string; confirmDelete: true },
+) {
+  return requestJson<{ deletedPlannedLesson: { id: string } }>(
+    `/lessons/planned/${plannedLessonId}/delete-fresh`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function listTuitionBills(accessToken: string) {
   return requestJson<ListResponse<TuitionBillRecord>>("/tuition-bills?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export interface GenerateTuitionBillInput {
+  studentId: string;
+  yearMonth: string;
+}
+
+export function generateTuitionBill(accessToken: string, input: GenerateTuitionBillInput) {
+  return requestJson<{ tuitionBill: TuitionBillRecord }>("/tuition-bills/generate", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function generateTuitionBillIncome(accessToken: string, tuitionBillId: string) {
+  return requestJson<{ tuitionBill: TuitionBillRecord; incomeRecord: IncomeRecord }>(
+    `/tuition-bills/${tuitionBillId}/generate-income`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+    },
+  );
+}
+
+export function voidTuitionBill(accessToken: string, tuitionBillId: string, reason?: string | null) {
+  return requestJson<{ tuitionBill: TuitionBillRecord }>(`/tuition-bills/${tuitionBillId}/void`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ reason: reason ?? null }),
   });
 }
 

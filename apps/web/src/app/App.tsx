@@ -51,6 +51,7 @@ import {
   createManualIncome,
   createStudent,
   createTeacher,
+  deleteFreshPlannedLesson,
   fetchApiHealthSnapshot,
   isApiRequestError,
   listAccountTransactions,
@@ -76,6 +77,8 @@ import {
   listTeacherWageSnapshots,
   listTuitionBills,
   loginWithPassword,
+  generateTuitionBill,
+  generateTuitionBillIncome,
   generateActualLesson,
   markPlannedLessonMakeupPending,
   rejectCashInboundEvent,
@@ -89,6 +92,7 @@ import {
   voidExpenseRecord,
   voidIncomeRecord,
   voidReimbursement,
+  voidTuitionBill,
   withdrawCashRequest,
 } from "./api";
 import type {
@@ -106,6 +110,7 @@ import type {
   ExternalWorkSettlementRecord,
   ExternalWorkplaceRecord,
   GenerateActualLessonInput,
+  GenerateTuitionBillInput,
   IncomeRecord,
   ManualExpenseInput,
   ManualIncomeInput,
@@ -193,6 +198,7 @@ interface DataRow {
     id: string;
   };
   studentRecord?: StudentRecord;
+  tuitionBillRecord?: TuitionBillRecord;
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
@@ -228,6 +234,9 @@ type DrawerActionKey =
   | "cash.submit"
   | "cash.withdraw"
   | "cashInbound.reject"
+  | "tuitionBill.generate"
+  | "tuitionBill.generateIncome"
+  | "tuitionBill.void"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -293,6 +302,7 @@ type TeacherDialogState =
   | { mode: "edit"; row: DataRow };
 
 type FinanceDialogState = { kind: "income" | "expense" };
+type TuitionBillDialogState = { yearMonth: string };
 type CashRequestDialogState = { row: DataRow };
 type ReimbursementDialogState = {
   isLoading: boolean;
@@ -1102,7 +1112,9 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const actionKey = row.apiRef.resource === "income" ? "income.void" : "expense.void";
     const actions: DrawerAction[] = [];
     const canVoid = row.financeRecord
-      ? canVoidManualFinanceRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
+      ? row.financeRecord.kind === "income"
+        ? canVoidIncomeRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
+        : canVoidManualFinanceRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
       : false;
 
     if (row.financeRecord && canSubmitCashRequest(row.financeRecord.recordStatus, row.financeRecord.cashStatus)) {
@@ -1144,15 +1156,29 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   }
 
   if (row.id.startsWith("bill-")) {
-    if (row.status === "待提交 Cash") {
+    if (row.status === "已生成") {
       return [
         {
           title: "学费账单操作",
           actions: [
-            { label: "提交 Cash 请求", icon: Send, variant: "primary", hint: "由后端确认请求金额后提交 Cash" },
-            { label: "查看通知金额预览", icon: FileText, variant: "secondary" },
-            { label: "查看收入记录", icon: ReceiptText, variant: "secondary" },
-            { label: "作废账单", icon: X, variant: "danger" },
+            { label: "生成收入记录", icon: ReceiptText, variant: "primary", key: "tuitionBill.generateIncome" },
+            { label: "重新生成账单", icon: RefreshCw, variant: "secondary", key: "tuitionBill.generate" },
+            { label: "作废账单", icon: X, variant: "danger", key: "tuitionBill.void" },
+            { label: "查看来源课时", icon: CalendarDays, variant: "quiet" },
+            { label: "查看操作记录", icon: History, variant: "quiet" },
+          ],
+        },
+      ];
+    }
+
+    if (row.status === "已作废") {
+      return [
+        {
+          title: "学费账单操作",
+          actions: [
+            { label: "重新生成账单", icon: RefreshCw, variant: "primary", key: "tuitionBill.generate" },
+            { label: "查看来源课时", icon: CalendarDays, variant: "quiet" },
+            { label: "查看操作记录", icon: History, variant: "quiet" },
           ],
         },
       ];
@@ -1815,6 +1841,111 @@ function StudentFormModal({
           >
             {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
             {isSubmitting ? "保存中" : "保存"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function TuitionBillGenerateModal({
+  students,
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  students: StudentRecord[];
+  state: TuitionBillDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: GenerateTuitionBillInput) => void;
+}) {
+  const activeStudents = students.filter((student) => student.status === "active");
+  const [studentId, setStudentId] = useState(activeStudents[0]?.id ?? "");
+  const [yearMonth, setYearMonth] = useState(state.yearMonth);
+
+  useEffect(() => {
+    if (!studentId && activeStudents[0]) {
+      setStudentId(activeStudents[0].id);
+    }
+  }, [activeStudents, studentId]);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!studentId || !yearMonth) {
+      return;
+    }
+
+    onSubmit({ studentId, yearMonth });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(520px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">生成学费账单</h2>
+            <p className="mt-1 text-xs text-muted-foreground">账单金额由服务端读取正式预定课时和上月已锁定结转计算。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">学生</span>
+            <select
+              required
+              value={studentId}
+              onChange={(event) => setStudentId(event.target.value)}
+              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+            >
+              <option value="">请选择学生</option>
+              {activeStudents.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.name}{student.code ? `（${student.code}）` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">业务月份</span>
+            <input
+              required
+              type="month"
+              value={yearMonth}
+              onChange={(event) => setYearMonth(event.target.value)}
+              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+            />
+          </label>
+
+          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+            本操作只生成或更新账单快照，不会手动输入金额，也不会自动创建收入记录。
+          </div>
+
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>
+            取消
+          </ActionButton>
+          <button
+            type="submit"
+            disabled={isSubmitting || !studentId || !yearMonth}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ReceiptText className="h-3.5 w-3.5" />}
+            {isSubmitting ? "生成中" : "生成账单"}
           </button>
         </div>
       </form>
@@ -3391,8 +3522,8 @@ function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListStat
     description:
       tuitionApi.status === "error"
         ? `真实 dev API 学费账单读取失败：${tuitionApi.message}`
-        : "真实 dev API 学费账单列表；第一层只读展示，生成收入和作废会在第二层接入",
-    primaryAction: undefined,
+        : "真实 dev API 学费账单列表；金额来自后端账单快照，收入和作废动作受状态保护",
+    primaryAction: "生成账单",
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -3464,7 +3595,8 @@ function mapTuitionBillToRow(record: TuitionBillRecord): DataRow {
     status: status.label,
     tone: status.tone,
     apiRef: { resource: "tuitionBill", id: record.id },
-    readOnlyActions: true,
+    tuitionBillRecord: record,
+    readOnlyActions: false,
     cells: {
       plannedCount: `${record.plannedLessonCount} 节`,
       plannedAmount,
@@ -3477,6 +3609,7 @@ function mapTuitionBillToRow(record: TuitionBillRecord): DataRow {
         lines: [
           { label: "学生", value: record.student.name },
           { label: "业务月份", value: formatYearMonth(record.yearMonth) },
+          { label: "账单版本", value: `v${record.version}` },
           { label: "预定课时数", value: `${record.plannedLessonCount} 节` },
           { label: "预定课时金额", value: plannedAmount },
           { label: "CNY 结转", value: carryover },
@@ -3523,6 +3656,10 @@ function getTuitionBillStatusView(status: string): { label: string; tone: Tone }
 
   if (status === "voided") {
     return { label: "已作废", tone: "slate" };
+  }
+
+  if (status === "superseded") {
+    return { label: "已被替代", tone: "slate" };
   }
 
   return { label: status, tone: "slate" };
@@ -4671,7 +4808,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
   const businessEntityName = record.businessEntity?.name ?? "未设置业务归属";
   const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
   const cashStatus = getCashStatusLabel(record.cashStatus);
-  const canVoid = canVoidManualFinanceRecord(record.sourceType, record.recordStatus, record.cashStatus);
+  const canVoid = canVoidIncomeRecord(record.sourceType, record.recordStatus, record.cashStatus);
   const canSubmitCash = canSubmitCashRequest(record.recordStatus, record.cashStatus);
 
   return {
@@ -5029,6 +5166,15 @@ function canVoidManualFinanceRecord(sourceType: string, recordStatus: string, ca
   return isManualRecord && isPending && cashIsNotLocked;
 }
 
+function canVoidIncomeRecord(sourceType: string, recordStatus: string, cashStatus: string) {
+  const canVoidManual = canVoidManualFinanceRecord(sourceType, recordStatus, cashStatus);
+  const isTuitionIncome = sourceType === "student_tuition_bill";
+  const isPending = recordStatus === "pending";
+  const cashIsNotLocked = ["not_requested", "cash_rejected", "cash_withdrawn"].includes(cashStatus);
+
+  return canVoidManual || (isTuitionIncome && isPending && cashIsNotLocked);
+}
+
 function canSubmitCashRequest(recordStatus: string, cashStatus: string) {
   return recordStatus === "pending" && ["not_requested", "cash_rejected"].includes(cashStatus);
 }
@@ -5229,7 +5375,12 @@ interface LessonPair {
   actualRecord?: StudentActualLessonRecord;
 }
 
-type LessonActionKey = "generateActual" | "cancelPlanned" | "markMakeupPending" | "restorePlanned";
+type LessonActionKey =
+  | "generateActual"
+  | "cancelPlanned"
+  | "markMakeupPending"
+  | "restorePlanned"
+  | "deleteFreshPlanned";
 
 type LessonActualDialogState = { pair: LessonPair };
 
@@ -5454,6 +5605,7 @@ function getLessonActionAvailability(pair: LessonPair) {
     canCancel: canActOnPlanned && status !== "cancelled",
     canMarkMakeupPending: canActOnPlanned && status === "scheduled",
     canRestore: canActOnPlanned && (status === "cancelled" || status === "makeup_pending"),
+    canDeleteFresh: canActOnPlanned && status === "scheduled",
   };
 }
 
@@ -5532,6 +5684,18 @@ function LessonActionPanel({
           >
             <X className="h-3.5 w-3.5" />
             取消
+          </button>
+        )}
+        {actions.canDeleteFresh && (
+          <button
+            type="button"
+            disabled={!canCall}
+            title="仅删除全新且尚未进入任何下游链路的预定课时"
+            onClick={() => callAction("deleteFreshPlanned")}
+            className={lessonActionButtonClass("danger", !canCall)}
+          >
+            <X className="h-3.5 w-3.5" />
+            删除全新预定
           </button>
         )}
         {actions.canMarkMakeupPending && (
@@ -7599,6 +7763,9 @@ export default function App() {
   });
   const [studentChainApi, setStudentChainApi] = useState<StudentChainApiState>(createEmptyStudentChainApiState);
   const [studentChainReloadKey, setStudentChainReloadKey] = useState(0);
+  const [tuitionBillDialog, setTuitionBillDialog] = useState<TuitionBillDialogState | null>(null);
+  const [isTuitionBillSubmitting, setIsTuitionBillSubmitting] = useState(false);
+  const [tuitionBillMutationError, setTuitionBillMutationError] = useState<string | null>(null);
   const [lessonActionSubmittingId, setLessonActionSubmittingId] = useState<string | null>(null);
   const [lessonActualDialog, setLessonActualDialog] = useState<LessonActualDialogState | null>(null);
   const [isLessonActualSubmitting, setIsLessonActualSubmitting] = useState(false);
@@ -8220,6 +8387,32 @@ export default function App() {
     setFinanceDialog({ kind });
   };
 
+  const openTuitionBillCreate = () => {
+    setTuitionBillMutationError(null);
+    setTuitionBillDialog({ yearMonth: new Date().toISOString().slice(0, 7) });
+  };
+
+  const submitTuitionBillForm = async (input: GenerateTuitionBillInput) => {
+    if (!authSession) {
+      setTuitionBillMutationError("请先使用真实 API 登录后再生成账单。");
+      return;
+    }
+
+    setIsTuitionBillSubmitting(true);
+    setTuitionBillMutationError(null);
+
+    try {
+      await generateTuitionBill(authSession.accessToken, input);
+      setTuitionBillDialog(null);
+      setStudentChainReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: "学费账单已生成，金额来自后端账单快照。" });
+    } catch (error) {
+      setTuitionBillMutationError(formatApiError(error));
+    } finally {
+      setIsTuitionBillSubmitting(false);
+    }
+  };
+
   const openReimbursementCreate = async () => {
     if (!authSession) {
       setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再新增报销。" });
@@ -8257,6 +8450,30 @@ export default function App() {
     if (actionKey === "generateActual") {
       setLessonActualError(null);
       setLessonActualDialog({ pair });
+      return;
+    }
+
+    if (actionKey === "deleteFreshPlanned") {
+      const confirmed = window.confirm(
+        `确认永久删除「${planned.student.name}」${formatApiDate(planned.weekAnchorDate)} 的全新预定课时？\n\n仅限尚未生成实际、结算、工资或学费账单引用的记录；删除后不保留课时记录。`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setLessonActionSubmittingId(pair.id);
+      try {
+        await deleteFreshPlannedLesson(authSession.accessToken, planned.id, {
+          expectedUpdatedAt: planned.updatedAt,
+          confirmDelete: true,
+        });
+        setStudentChainReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "全新预定课时已删除。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      } finally {
+        setLessonActionSubmittingId(null);
+      }
       return;
     }
 
@@ -8370,6 +8587,72 @@ export default function App() {
     if (actionKey === "teacher.edit") {
       setTeacherMutationError(null);
       setTeacherDialog({ mode: "edit", row });
+      return;
+    }
+
+    if (
+      actionKey === "tuitionBill.generate" ||
+      actionKey === "tuitionBill.generateIncome" ||
+      actionKey === "tuitionBill.void"
+    ) {
+      if (!authSession || row.apiRef?.resource !== "tuitionBill" || !row.tuitionBillRecord) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的学费账单。" });
+        return;
+      }
+
+      const tuitionBill = row.tuitionBillRecord;
+
+      if (actionKey === "tuitionBill.generate") {
+        const confirmed = window.confirm(`确认重新生成「${tuitionBill.student.name}」${tuitionBill.yearMonth} 的学费账单？`);
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await generateTuitionBill(authSession.accessToken, {
+            studentId: tuitionBill.studentId,
+            yearMonth: tuitionBill.yearMonth,
+          });
+          setDetailRow(null);
+          setStudentChainReloadKey((current) => current + 1);
+          setActionNotice({ tone: "emerald", text: "学费账单已重新生成。" });
+        } catch (error) {
+          setActionNotice({ tone: "rose", text: formatApiError(error) });
+        }
+        return;
+      }
+
+      if (actionKey === "tuitionBill.generateIncome") {
+        const confirmed = window.confirm(`确认从「${tuitionBill.student.name}」${tuitionBill.yearMonth} 学费账单生成收入记录？`);
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await generateTuitionBillIncome(authSession.accessToken, tuitionBill.id);
+          setDetailRow(null);
+          setStudentChainReloadKey((current) => current + 1);
+          setFinanceReloadKey((current) => current + 1);
+          setActionNotice({ tone: "emerald", text: "收入记录已生成，下一步可提交 Cash 请求。" });
+        } catch (error) {
+          setActionNotice({ tone: "rose", text: formatApiError(error) });
+        }
+        return;
+      }
+
+      const reason = window.prompt(`确认作废「${tuitionBill.student.name}」${tuitionBill.yearMonth} 的学费账单？请输入原因（可留空）：`, "测试作废账单");
+      if (reason === null) {
+        return;
+      }
+
+      try {
+        await voidTuitionBill(authSession.accessToken, tuitionBill.id, normalizeOptionalFormValue(reason));
+        setDetailRow(null);
+        setStudentChainReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "学费账单已作废。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
       return;
     }
 
@@ -8489,6 +8772,9 @@ export default function App() {
 
         setDetailRow(null);
         setFinanceReloadKey((current) => current + 1);
+        if (actionKey === "income.void") {
+          setStudentChainReloadKey((current) => current + 1);
+        }
         setActionNotice({ tone: "emerald", text: "财务记录已作废。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
@@ -8612,6 +8898,7 @@ export default function App() {
       setCashRequestDialog(null);
       setDetailRow(null);
       setFinanceReloadKey((current) => current + 1);
+      setStudentChainReloadKey((current) => current + 1);
       setActionNotice({ tone: "emerald", text: "Cash 请求已提交。" });
     } catch (error) {
       setCashRequestError(formatApiError(error));
@@ -8678,6 +8965,7 @@ export default function App() {
     setShowSettlementBatchModal(false);
     setStudentDialog(null);
     setTeacherDialog(null);
+    setTuitionBillDialog(null);
     setFinanceDialog(null);
     setCashRequestDialog(null);
     setReimbursementDialog(null);
@@ -8744,6 +9032,8 @@ export default function App() {
                   ? openStudentCreate
                   : activeKey === "teachers"
                     ? openTeacherCreate
+                    : activeKey === "tuition-bills"
+                      ? openTuitionBillCreate
                     : activeKey === "income-records"
                       ? () => openFinanceCreate("income")
                     : activeKey === "expense-records"
@@ -8786,6 +9076,16 @@ export default function App() {
           error={teacherMutationError}
           onClose={() => setTeacherDialog(null)}
           onSubmit={submitTeacherForm}
+        />
+      )}
+      {tuitionBillDialog && (
+        <TuitionBillGenerateModal
+          students={studentApi.rows.flatMap((row) => (row.studentRecord ? [row.studentRecord] : []))}
+          state={tuitionBillDialog}
+          isSubmitting={isTuitionBillSubmitting}
+          error={tuitionBillMutationError}
+          onClose={() => setTuitionBillDialog(null)}
+          onSubmit={submitTuitionBillForm}
         />
       )}
       {financeDialog && (

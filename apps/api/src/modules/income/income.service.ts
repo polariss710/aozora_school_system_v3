@@ -212,8 +212,7 @@ export class IncomeService {
         await tx.studentTuitionBill.update({
           where: { id: before.sourceId },
           data: {
-            status: TuitionBillStatus.generated,
-            incomeRecordId: null,
+            status: TuitionBillStatus.voided,
           },
         });
       }

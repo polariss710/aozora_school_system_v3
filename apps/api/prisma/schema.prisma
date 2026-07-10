@@ -52,6 +52,7 @@ enum TuitionBillStatus {
   generated
   income_created
   voided
+  superseded
 }
 
 enum IncomeRecordStatus {
@@ -540,20 +541,26 @@ model StudentTuitionBill {
   id                  String            @id @default(uuid()) @db.Uuid
   studentId           String            @map("student_id") @db.Uuid
   yearMonth           String            @map("year_month") @db.VarChar(7)
+  version             Int               @default(1)
   plannedLessonCount  Int               @map("planned_lesson_count")
   plannedAmountJpy    Int               @map("planned_amount_jpy")
   carryoverAmountCny  Decimal           @default(0) @map("carryover_amount_cny") @db.Decimal(12, 2)
   status              TuitionBillStatus @default(generated)
   calculationSnapshot Json              @map("calculation_snapshot")
   incomeRecordId      String?           @unique @map("income_record_id") @db.Uuid
+  replacesId          String?           @map("replaces_id") @db.Uuid
   generatedAt         DateTime          @default(now()) @map("generated_at") @db.Timestamptz(6)
   createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  student      Student       @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  incomeRecord IncomeRecord? @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  student       Student             @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  incomeRecord  IncomeRecord?       @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  replaces      StudentTuitionBill? @relation("TuitionBillRevisions", fields: [replacesId], references: [id], onDelete: Restrict)
+  replacements StudentTuitionBill[] @relation("TuitionBillRevisions")
 
-  @@unique([studentId, yearMonth])
+  @@unique([studentId, yearMonth, version])
+  @@index([studentId, yearMonth, status])
+  @@index([replacesId])
   @@index([yearMonth])
   @@index([status])
   @@map("student_tuition_bills")
