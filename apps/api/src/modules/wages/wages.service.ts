@@ -9,6 +9,7 @@ import {
   AuditRiskLevel,
   Prisma,
   RecordStatus,
+  StudentSettlementStatus,
   TeacherWageAdjustmentStatus,
   TeacherWageSnapshotStatus,
 } from "@prisma/client";
@@ -48,6 +49,7 @@ const wageSnapshotSelect = {
   teacherId: true,
   yearMonth: true,
   businessEntityId: true,
+  version: true,
   lessonCount: true,
   totalLessonHours: true,
   baseWageJpy: true,
@@ -59,6 +61,7 @@ const wageSnapshotSelect = {
   adjustmentStatus: true,
   calculationSnapshot: true,
   expenseRecordId: true,
+  replacesId: true,
   lockedAt: true,
   revokedAt: true,
   memo: true,
@@ -212,7 +215,7 @@ export class WagesService {
     const [items, total] = await Promise.all([
       this.prisma.teacherWageSnapshot.findMany({
         where,
-        orderBy: [{ yearMonth: "desc" }, { teacher: { name: "asc" } }],
+        orderBy: [{ yearMonth: "desc" }, { teacher: { name: "asc" } }, { version: "desc" }],
         take: limit,
         select: wageSnapshotSelect,
       }),
@@ -244,28 +247,34 @@ export class WagesService {
       throw new BadRequestException(preview.blockingIssues.join(" "));
     }
 
-    const existing = await this.prisma.teacherWageSnapshot.findUnique({
-      where: {
-        teacherId_yearMonth_businessEntityId: key,
-      },
+    const latest = await this.prisma.teacherWageSnapshot.findFirst({
+      where: key,
+      orderBy: { version: "desc" },
       select: wageSnapshotSelect,
     });
 
-    if (existing?.status === TeacherWageSnapshotStatus.expense_created) {
+    if (latest && latest.status !== TeacherWageSnapshotStatus.revoked) {
+      if (latest.status === TeacherWageSnapshotStatus.expense_created || latest.expenseRecordId) {
+        throw new BadRequestException("Wage snapshot already generated expense.");
+      }
+
+      throw new BadRequestException(
+        "Active wage snapshot already exists. Revoke it before relocking.",
+      );
+    }
+
+    if (latest?.expenseRecordId) {
       throw new BadRequestException("Wage snapshot already generated expense.");
     }
 
-    const snapshot = await this.prisma.$transaction(async (tx) => {
-      if (existing) {
-        await tx.teacherWageSnapshotDetail.deleteMany({
-          where: { snapshotId: existing.id },
-        });
-      }
+    const nextVersion = (latest?.version ?? 0) + 1;
 
+    const snapshot = await this.prisma.$transaction(async (tx) => {
       const data = {
         teacherId: key.teacherId,
         yearMonth: key.yearMonth,
         businessEntityId: key.businessEntityId,
+        version: nextVersion,
         lessonCount: preview.lessonCount,
         totalLessonHours: new Prisma.Decimal(preview.totalLessonHours),
         baseWageJpy: preview.baseWageJpy,
@@ -276,21 +285,16 @@ export class WagesService {
         status: TeacherWageSnapshotStatus.locked,
         adjustmentStatus: TeacherWageAdjustmentStatus.none,
         calculationSnapshot: preview,
+        replacesId: latest?.id ?? null,
         lockedAt: new Date(),
         revokedAt: null,
         memo: memo ?? null,
       };
 
-      const saved = existing
-        ? await tx.teacherWageSnapshot.update({
-            where: { id: existing.id },
-            data,
-            select: wageSnapshotSelect,
-          })
-        : await tx.teacherWageSnapshot.create({
-            data,
-            select: wageSnapshotSelect,
-          });
+      const saved = await tx.teacherWageSnapshot.create({
+        data,
+        select: wageSnapshotSelect,
+      });
 
       await tx.teacherWageSnapshotDetail.createMany({
         data: preview.details.map((detail) => ({
@@ -316,11 +320,11 @@ export class WagesService {
       await this.auditService.recordEvent(
         {
           actorUserId,
-          action: existing ? "teacher_wage_snapshot.relock" : "teacher_wage_snapshot.lock",
+          action: latest ? "teacher_wage_snapshot.relock" : "teacher_wage_snapshot.lock",
           targetType: "teacher_wage_snapshot",
           targetId: saved.id,
           riskLevel: AuditRiskLevel.high,
-          beforeSnapshot: existing,
+          beforeSnapshot: latest,
           afterSnapshot: reloaded,
         },
         tx,
@@ -605,6 +609,7 @@ export class WagesService {
           durationHours: true,
           content: true,
           teacherWageEligible: true,
+          studentId: true,
           student: { select: { name: true } },
           subject: { select: { name: true } },
         },
@@ -641,6 +646,30 @@ export class WagesService {
       };
     });
     const includedDetails = details.filter((detail) => detail.includedInWage);
+    const includedStudentIds = [
+      ...new Set(
+        actualLessons
+          .filter((lesson) => lesson.teacherWageEligible)
+          .map((lesson) => lesson.studentId),
+      ),
+    ];
+    const lockedStudentSettlements =
+      includedStudentIds.length === 0
+        ? []
+        : await this.prisma.studentMonthlySettlement.findMany({
+            where: {
+              studentId: { in: includedStudentIds },
+              yearMonth: key.yearMonth,
+              status: StudentSettlementStatus.locked,
+            },
+            select: { studentId: true },
+          });
+    const lockedStudentIds = new Set(
+      lockedStudentSettlements.map((settlement) => settlement.studentId),
+    );
+    const unlockedStudentCount = includedStudentIds.filter(
+      (studentId) => !lockedStudentIds.has(studentId),
+    ).length;
     const baseWageJpy = this.confirmJpy(
       includedDetails.reduce((sum, detail) => sum + detail.lessonWageJpy, 0),
     );
@@ -652,6 +681,9 @@ export class WagesService {
       ...(!rule ? ["Active teacher wage rule is required."] : []),
       ...(actualLessons.length === 0
         ? ["No completed actual lessons exist for this teacher/month/business entity."]
+        : []),
+      ...(unlockedStudentCount > 0
+        ? ["Student monthly settlements must be locked before teacher wage settlement."]
         : []),
     ];
 

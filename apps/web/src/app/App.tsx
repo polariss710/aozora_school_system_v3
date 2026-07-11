@@ -46,6 +46,7 @@ import {
   archiveTeacher,
   apiBaseUrl,
   cancelPlannedLesson,
+  createTeacherWageRule,
   createReimbursementFromExpense,
   createManualExpense,
   createManualIncome,
@@ -77,6 +78,7 @@ import {
   listTeacherWageSnapshots,
   listTuitionBills,
   lockStudentSettlement,
+  lockTeacherWage,
   loginWithPassword,
   generateTuitionBill,
   generateTuitionBillIncome,
@@ -84,8 +86,10 @@ import {
   getCurrentUser,
   markPlannedLessonMakeupPending,
   previewStudentSettlement,
+  previewTeacherWage,
   rejectCashInboundEvent,
   revokeStudentSettlement,
+  revokeTeacherWage,
   restorePlannedLesson,
   restoreStudent,
   restoreTeacher,
@@ -93,6 +97,7 @@ import {
   submitIncomeCashRequest,
   updateStudent,
   updateTeacher,
+  updateTeacherWageRule,
   voidExpenseRecord,
   voidIncomeRecord,
   voidReimbursement,
@@ -132,6 +137,9 @@ import type {
   SubjectRecord,
   TeacherRecord,
   TeacherWageRuleRecord,
+  TeacherWageRuleInput,
+  TeacherWageInput,
+  TeacherWagePreview,
   TeacherWageSnapshotRecord,
   TeacherWriteInput,
   TuitionBillRecord,
@@ -207,6 +215,8 @@ interface DataRow {
   studentRecord?: StudentRecord;
   tuitionBillRecord?: TuitionBillRecord;
   studentSettlementRecord?: StudentSettlementRecord;
+  teacherWageRuleRecord?: TeacherWageRuleRecord;
+  teacherWageSnapshotRecord?: TeacherWageSnapshotRecord;
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
@@ -247,6 +257,9 @@ type DrawerActionKey =
   | "tuitionBill.void"
   | "studentSettlement.relock"
   | "studentSettlement.revoke"
+  | "teacherWageRule.edit"
+  | "teacherWageSnapshot.relock"
+  | "teacherWageSnapshot.revoke"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -389,6 +402,16 @@ type StudentSettlementDialogState = {
   studentId?: string;
   yearMonth: string;
   settlement?: StudentSettlementRecord;
+};
+type TeacherWageRuleDialogState =
+  | { mode: "create" }
+  | { mode: "edit"; rule: TeacherWageRuleRecord };
+type TeacherWageDialogState = {
+  mode: "lock" | "relock";
+  teacherId?: string;
+  businessEntityId?: string;
+  yearMonth: string;
+  snapshot?: TeacherWageSnapshotRecord;
 };
 type CashRequestDialogState = { row: DataRow };
 type ReimbursementDialogState = {
@@ -1340,9 +1363,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       {
         title: "工资规则操作",
         actions: [
-          { label: "编辑规则", icon: PencilLine, variant: "primary" },
-          { label: "复制为新规则", icon: FileText, variant: "secondary" },
-          { label: "停用规则", icon: X, variant: "warning" },
+          { label: "编辑规则", icon: PencilLine, variant: "primary", key: "teacherWageRule.edit" },
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ],
       },
@@ -1350,16 +1371,24 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   }
 
   if (row.id.startsWith("wage-")) {
+    const snapshot = row.teacherWageSnapshotRecord;
+    const actions: DrawerAction[] = [];
+
+    if (snapshot?.status === "revoked") {
+      actions.push({ label: "重新预览并锁定", icon: LockKeyhole, variant: "primary", key: "teacherWageSnapshot.relock" });
+    } else if (snapshot && !snapshot.expenseRecordId && snapshot.status !== "expense_created") {
+      actions.push({ label: "撤销工资快照", icon: RotateCcw, variant: "warning", key: "teacherWageSnapshot.revoke" });
+    }
+
+    actions.push(
+      { label: "查看工资明细", icon: Eye, variant: "secondary" },
+      { label: "查看操作记录", icon: History, variant: "quiet" },
+    );
+
     return [
       {
         title: "工资结算操作",
-        actions: [
-          { label: "查看工资明细", icon: Eye, variant: "secondary" },
-          { label: "确认调整", icon: CheckCircle2, variant: "primary" },
-          { label: "生成支出记录", icon: ReceiptText, variant: "primary" },
-          { label: "查看已生成支出记录", icon: FileText, variant: "quiet" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
-        ],
+        actions,
       },
     ];
   }
@@ -2312,6 +2341,147 @@ function StudentSettlementModal({
   );
 }
 
+function TeacherWageRuleModal({
+  teachers,
+  businessEntities,
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  teachers: TeacherRecord[];
+  businessEntities: BusinessEntityRecord[];
+  state: TeacherWageRuleDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: TeacherWageRuleInput) => void;
+}) {
+  const activeTeachers = teachers.filter((teacher) => teacher.status === "active");
+  const activeEntities = businessEntities.filter((entity) => entity.status === "active");
+  const existing = state.mode === "edit" ? state.rule : undefined;
+  const [teacherId, setTeacherId] = useState(existing?.teacherId ?? activeTeachers[0]?.id ?? "");
+  const [businessEntityId, setBusinessEntityId] = useState(existing?.businessEntityId ?? activeEntities[0]?.id ?? "");
+  const [hourlyRateJpy, setHourlyRateJpy] = useState(existing ? String(existing.hourlyRateJpy) : "");
+  const [memo, setMemo] = useState(existing?.memo ?? "");
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const rate = Number(hourlyRateJpy);
+    if (!teacherId || !businessEntityId || !Number.isFinite(rate) || rate < 0) {
+      return;
+    }
+    onSubmit({ teacherId, businessEntityId, hourlyRateJpy: rate, memo: normalizeOptionalFormValue(memo) });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex w-[min(620px,96vw)] flex-col rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{existing ? "编辑工资规则" : "新增工资规则"}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">工资规则按老师和业务归属唯一，课时单价以 JPY 计。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="grid gap-4 px-6 py-5">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">老师</span>
+              <select required disabled={Boolean(existing)} value={teacherId} onChange={(event) => setTeacherId(event.target.value)} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] disabled:bg-muted/40">
+                <option value="">请选择老师</option>
+                {activeTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.code ? `（${teacher.code}）` : ""}</option>)}
+              </select>
+            </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">业务归属</span>
+              <select required disabled={Boolean(existing)} value={businessEntityId} onChange={(event) => setBusinessEntityId(event.target.value)} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] disabled:bg-muted/40">
+                <option value="">请选择业务归属</option>
+                {activeEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">课时单价（JPY / 小时）</span>
+            <input required min="0" step="1" type="number" value={hourlyRateJpy} onChange={(event) => setHourlyRateJpy(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9]" placeholder="例如 3000" />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[84px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm outline-none focus:border-[#1687D9]" placeholder="选填" />
+          </label>
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="submit" disabled={isSubmitting || !teacherId || !businessEntityId || !hourlyRateJpy} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white disabled:bg-[#8cbfe3]">
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{isSubmitting ? "保存中" : "保存规则"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function TeacherWageModal({ teachers, businessEntities, state, onClose, onPreview, onLock }: {
+  teachers: TeacherRecord[];
+  businessEntities: BusinessEntityRecord[];
+  state: TeacherWageDialogState;
+  onClose: () => void;
+  onPreview: (input: TeacherWageInput) => Promise<TeacherWagePreview>;
+  onLock: (input: TeacherWageInput & { memo?: string | null }) => Promise<void>;
+}) {
+  const activeTeachers = teachers.filter((teacher) => teacher.status === "active");
+  const activeEntities = businessEntities.filter((entity) => entity.status === "active");
+  const [teacherId, setTeacherId] = useState(state.teacherId ?? activeTeachers[0]?.id ?? "");
+  const [businessEntityId, setBusinessEntityId] = useState(state.businessEntityId ?? activeEntities[0]?.id ?? "");
+  const [yearMonth, setYearMonth] = useState(state.yearMonth);
+  const [memo, setMemo] = useState(state.snapshot?.memo ?? "");
+  const [preview, setPreview] = useState<TeacherWagePreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isLocking, setIsLocking] = useState(false);
+  const clearPreview = () => { setPreview(null); setError(null); };
+  const input = { teacherId, businessEntityId, yearMonth };
+
+  const requestPreview = async () => {
+    if (!teacherId || !businessEntityId || !yearMonth) return;
+    setIsPreviewing(true); setError(null);
+    try { setPreview(await onPreview(input)); } catch (requestError) { setPreview(null); setError(formatApiError(requestError)); } finally { setIsPreviewing(false); }
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!preview || preview.blockingIssues.length > 0) return;
+    setIsLocking(true); setError(null);
+    try { await onLock({ ...input, memo: normalizeOptionalFormValue(memo) }); } catch (requestError) { setError(formatApiError(requestError)); } finally { setIsLocking(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex max-h-[92vh] w-[min(820px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div><h2 className="text-base font-semibold text-foreground">{state.mode === "relock" ? "重新生成老师工资快照" : "生成老师工资预览"}</h2><p className="mt-1 text-xs text-muted-foreground">金额只读取实际课时和当前生效工资规则，由后端计算。</p></div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          <div className="grid min-w-0 gap-4 md:grid-cols-3">
+            <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">老师</span><select required disabled={state.mode === "relock"} value={teacherId} onChange={(event) => { setTeacherId(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40"><option value="">请选择老师</option>{activeTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.code ? `（${teacher.code}）` : ""}</option>)}</select></label>
+            <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">业务归属</span><select required disabled={state.mode === "relock"} value={businessEntityId} onChange={(event) => { setBusinessEntityId(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40"><option value="">请选择业务归属</option>{activeEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label>
+            <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">业务月份</span><input required disabled={state.mode === "relock"} type="month" value={yearMonth} onChange={(event) => { setYearMonth(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+          </div>
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注</span><textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[68px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm" placeholder="选填" /></label>
+          {preview && <section className="overflow-hidden rounded-lg border border-border"><div className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs font-semibold">后端工资预览</div><div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">{[["计薪课时", `${preview.lessonCount} 节`], ["计薪时长", formatDurationHours(preview.totalLessonHours)], ["课时单价", preview.wageRule ? formatApiJpyAmount(preview.wageRule.hourlyRateJpy) : "无生效规则"], ["基础工资", formatApiJpyAmount(preview.baseWageJpy)]].map(([label, value]) => <div key={label} className="min-w-0 bg-white px-3 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 truncate text-sm font-medium" title={value}>{value}</div></div>)}</div><div className="max-h-44 overflow-y-auto border-t border-border">{preview.details.slice(0, 20).map((detail) => <div key={detail.actualLessonId} className="grid grid-cols-[90px_1fr_auto] gap-3 border-b border-border/70 px-3 py-2 text-xs last:border-b-0"><span>{formatApiDate(detail.actualDate)}</span><span className="truncate">{detail.studentNameSnapshot} / {detail.subjectNameSnapshot}</span><span className={detail.includedInWage ? "font-medium" : "text-muted-foreground"}>{detail.includedInWage ? formatApiJpyAmount(detail.lessonWageJpy) : "不计工资"}</span></div>)}</div></section>}
+          {preview && preview.blockingIssues.length > 0 && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{preview.blockingIssues.map((issue) => <div key={issue}>{formatTeacherWageBlockingIssue(issue)}</div>)}</div>}
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4"><ActionButton variant="quiet" onClick={onClose}>取消</ActionButton><button type="button" disabled={isPreviewing || isLocking || !teacherId || !businessEntityId || !yearMonth} onClick={requestPreview} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[#1687D9] px-3 text-xs font-medium text-[#1264a8] disabled:opacity-50">{isPreviewing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}{isPreviewing ? "预览中" : "生成预览"}</button><button type="submit" disabled={isLocking || isPreviewing || !preview || preview.blockingIssues.length > 0} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white disabled:bg-[#8cbfe3]">{isLocking ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <LockKeyhole className="h-3.5 w-3.5" />}{isLocking ? "锁定中" : state.mode === "relock" ? "重新锁定" : "锁定工资"}</button></div>
+      </form>
+    </div>
+  );
+}
+
 function TeacherFormModal({
   state,
   isSubmitting,
@@ -3003,6 +3173,15 @@ function formatSettlementBlockingIssue(issue: string) {
   return issue;
 }
 
+function formatTeacherWageBlockingIssue(issue: string) {
+  const translations: Record<string, string> = {
+    "Active teacher wage rule is required.": "当前老师与业务归属没有生效中的工资规则，请先新增工资规则。",
+    "No completed actual lessons exist for this teacher/month/business entity.": "当前老师、月份和业务归属没有已完成的实际课时。",
+    "Student monthly settlements must be locked before teacher wage settlement.": "参与计薪课时对应的学生月度结算尚未全部锁定。",
+  };
+  return translations[issue] ?? issue;
+}
+
 function formatApiError(error: unknown) {
   if (isApiRequestError(error)) {
     let message = error.responseText;
@@ -3032,6 +3211,17 @@ function formatApiError(error: unknown) {
       if (message.includes(source)) {
         message = message.replace(source, translated);
       }
+    }
+
+    const wageErrorTranslations = [
+      ["Active teacher is required.", "该老师已归档或停用，请先恢复老师状态。"],
+      ["Active business entity is required.", "该业务归属已停用，当前操作不可用。"],
+      ["Active wage snapshot already exists. Revoke it before relocking.", "该老师、业务归属和月份已有有效工资快照，请先撤销后再重新锁定。"],
+      ["Wage snapshot already generated expense.", "该工资快照已经生成支出，不能直接撤销或重新锁定。"],
+      ["Student monthly settlements must be locked before teacher wage settlement.", "参与计薪课时对应的学生月度结算尚未全部锁定。"],
+    ] as const;
+    for (const [source, translated] of wageErrorTranslations) {
+      if (message.includes(source)) message = message.replace(source, translated);
     }
 
     return message || `请求失败（HTTP ${error.status}）`;
@@ -4210,13 +4400,13 @@ function getStudentSettlementStatusView(status: string): { label: string; tone: 
 }
 
 function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState): PageConfig {
-  const readonlyBasePage: PageConfig = {
+  const apiBasePage: PageConfig = {
     ...basePage,
     description:
       wageRuleApi.status === "error"
         ? `真实 dev API 工资规则读取失败：${wageRuleApi.message}`
-        : "真实 dev API 工资规则列表；第一层只读展示，新增和编辑会在第二层接入",
-    primaryAction: undefined,
+        : "真实 dev API 工资规则列表；按老师和业务归属维护课时单价",
+    primaryAction: wageRuleApi.status === "ready" ? "新增工资规则" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -4236,7 +4426,7 @@ function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState)
 
   if (wageRuleApi.status !== "ready") {
     return {
-      ...readonlyBasePage,
+      ...apiBasePage,
       metrics: [
         {
           label: "规则读取",
@@ -4257,7 +4447,7 @@ function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState)
   const archivedCount = wageRuleApi.rows.filter((row) => row.status === "归档").length;
 
   return {
-    ...readonlyBasePage,
+    ...apiBasePage,
     metrics: [
       { label: "工资规则", value: `${wageRuleApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: FileText },
       { label: "生效中", value: `${activeCount} 条`, sub: "参与工资快照", tone: "emerald", icon: CheckCircle2 },
@@ -4278,7 +4468,7 @@ function mapTeacherWageRuleToRow(record: TeacherWageRuleRecord): DataRow {
     status: status.label,
     tone: status.tone,
     apiRef: { resource: "teacherWageRule", id: record.id },
-    readOnlyActions: true,
+    teacherWageRuleRecord: record,
     cells: {
       teacher: record.teacher.name,
       entity: record.businessEntity.name,
@@ -4309,13 +4499,13 @@ function mapTeacherWageRuleToRow(record: TeacherWageRuleRecord): DataRow {
 }
 
 function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceListState): PageConfig {
-  const readonlyBasePage: PageConfig = {
+  const apiBasePage: PageConfig = {
     ...basePage,
     description:
       wageSnapshotApi.status === "error"
         ? `真实 dev API 工资结算读取失败：${wageSnapshotApi.message}`
-        : "真实 dev API 工资快照列表；第一层只读展示，锁定、调整和生成支出会在第二层接入",
-    primaryAction: undefined,
+        : "真实 dev API 工资快照列表；本阶段支持预览、锁定、撤销和版本化重锁",
+    primaryAction: wageSnapshotApi.status === "ready" ? "生成工资预览" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -4328,7 +4518,7 @@ function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceLis
 
   if (wageSnapshotApi.status !== "ready") {
     return {
-      ...readonlyBasePage,
+      ...apiBasePage,
       metrics: [
         {
           label: "快照读取",
@@ -4349,7 +4539,7 @@ function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceLis
   const expenseCreatedCount = wageSnapshotApi.rows.filter((row) => row.status === "已生成支出").length;
 
   return {
-    ...readonlyBasePage,
+    ...apiBasePage,
     metrics: [
       { label: "工资快照", value: `${wageSnapshotApi.total} 份`, sub: "老师 + 月份 + 业务归属", tone: "sky", icon: FileText },
       { label: "已锁定", value: `${lockedCount} 份`, sub: "等待调整或导出", tone: "amber", icon: LockKeyhole },
@@ -4369,11 +4559,11 @@ function mapTeacherWageSnapshotToRow(record: TeacherWageSnapshotRecord): DataRow
   return {
     id: `wage-${record.id}`,
     title: record.teacher.name,
-    subtitle: `${formatYearMonth(record.yearMonth)}工资快照`,
+    subtitle: `${formatYearMonth(record.yearMonth)}工资快照 · V${record.version}`,
     status: status.label,
     tone: status.tone,
     apiRef: { resource: "teacherWageSnapshot", id: record.id },
-    readOnlyActions: true,
+    teacherWageSnapshotRecord: record,
     cells: {
       entity: record.businessEntity.name,
       lessons: `${record.lessonCount} 节 / ${formatDurationHours(record.totalLessonHours)}`,
@@ -4392,6 +4582,7 @@ function buildTeacherWageSnapshotDetail(record: TeacherWageSnapshotRecord, statu
         { label: "老师", value: record.teacher.name },
         { label: "业务归属", value: record.businessEntity.name },
         { label: "业务月份", value: formatYearMonth(record.yearMonth) },
+        { label: "快照版本", value: `V${record.version}` },
         { label: "课时数", value: `${record.lessonCount} 节` },
         { label: "课时时长", value: formatDurationHours(record.totalLessonHours) },
         { label: "基础工资", value: formatApiJpyAmount(record.baseWageJpy) },
@@ -4407,6 +4598,7 @@ function buildTeacherWageSnapshotDetail(record: TeacherWageSnapshotRecord, statu
         { label: "快照状态", value: statusLabel },
         { label: "调整状态", value: getWageAdjustmentStatusLabel(record.adjustmentStatus) },
         { label: "支出记录", value: record.expenseRecordId ?? "-" },
+        { label: "前一版本", value: record.replacesId ?? "-" },
         { label: "锁定时间", value: formatApiDate(record.lockedAt) },
         { label: "撤销时间", value: record.revokedAt ? formatApiDate(record.revokedAt) : "-" },
         { label: "备注", value: record.memo ?? "-" },
@@ -8181,6 +8373,11 @@ export default function App() {
   const [isLessonActualSubmitting, setIsLessonActualSubmitting] = useState(false);
   const [lessonActualError, setLessonActualError] = useState<string | null>(null);
   const [workflowApi, setWorkflowApi] = useState<WorkflowApiState>(createEmptyWorkflowApiState);
+  const [workflowReloadKey, setWorkflowReloadKey] = useState(0);
+  const [teacherWageRuleDialog, setTeacherWageRuleDialog] = useState<TeacherWageRuleDialogState | null>(null);
+  const [isTeacherWageRuleSubmitting, setIsTeacherWageRuleSubmitting] = useState(false);
+  const [teacherWageRuleError, setTeacherWageRuleError] = useState<string | null>(null);
+  const [teacherWageDialog, setTeacherWageDialog] = useState<TeacherWageDialogState | null>(null);
   const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
   const [financeReloadKey, setFinanceReloadKey] = useState(0);
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
@@ -8700,7 +8897,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [authSession]);
+  }, [authSession, workflowReloadKey]);
 
   useEffect(() => {
     if (!authSession) {
@@ -8877,6 +9074,57 @@ export default function App() {
       tone: "emerald",
       text: studentSettlementDialog?.mode === "relock" ? "学生月度结算已重新锁定。" : "学生月度结算已锁定。",
     });
+  };
+
+  const openTeacherWageRuleCreate = () => {
+    setTeacherWageRuleError(null);
+    setTeacherWageRuleDialog({ mode: "create" });
+  };
+
+  const submitTeacherWageRule = async (input: TeacherWageRuleInput) => {
+    if (!authSession || !teacherWageRuleDialog) {
+      setTeacherWageRuleError("请先使用真实 API 登录后再保存工资规则。");
+      return;
+    }
+    setIsTeacherWageRuleSubmitting(true);
+    setTeacherWageRuleError(null);
+    try {
+      if (teacherWageRuleDialog.mode === "edit") {
+        await updateTeacherWageRule(authSession.accessToken, teacherWageRuleDialog.rule.id, {
+          hourlyRateJpy: input.hourlyRateJpy,
+          memo: input.memo,
+        });
+      } else {
+        await createTeacherWageRule(authSession.accessToken, input);
+      }
+      setTeacherWageRuleDialog(null);
+      setDetailRow(null);
+      setWorkflowReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: teacherWageRuleDialog.mode === "edit" ? "工资规则已更新。" : "工资规则已创建。" });
+    } catch (error) {
+      setTeacherWageRuleError(formatApiError(error));
+    } finally {
+      setIsTeacherWageRuleSubmitting(false);
+    }
+  };
+
+  const openTeacherWageCreate = () => {
+    setTeacherWageDialog({ mode: "lock", yearMonth: new Date().toISOString().slice(0, 7) });
+  };
+
+  const requestTeacherWagePreview = async (input: TeacherWageInput) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再生成工资预览。");
+    const result = await previewTeacherWage(authSession.accessToken, input);
+    return result.preview;
+  };
+
+  const submitTeacherWageLock = async (input: TeacherWageInput & { memo?: string | null }) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再锁定工资快照。");
+    await lockTeacherWage(authSession.accessToken, input);
+    const relocked = teacherWageDialog?.mode === "relock";
+    setTeacherWageDialog(null);
+    setWorkflowReloadKey((current) => current + 1);
+    setActionNotice({ tone: "emerald", text: relocked ? "新版本工资快照已锁定，旧版本继续保留。" : "老师工资快照已锁定。" });
   };
 
   const submitTuitionBillForm = async (input: GenerateTuitionBillInput) => {
@@ -9196,6 +9444,51 @@ export default function App() {
         setDetailRow(null);
         setStudentChainReloadKey((current) => current + 1);
         setActionNotice({ tone: "emerald", text: "学生月度结算已撤销，旧快照继续保留用于审计。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
+      return;
+    }
+
+    if (actionKey === "teacherWageRule.edit") {
+      if (!authSession || !row.teacherWageRuleRecord) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的工资规则。" });
+        return;
+      }
+      setTeacherWageRuleError(null);
+      setDetailRow(null);
+      setTeacherWageRuleDialog({ mode: "edit", rule: row.teacherWageRuleRecord });
+      return;
+    }
+
+    if (actionKey === "teacherWageSnapshot.relock" || actionKey === "teacherWageSnapshot.revoke") {
+      if (!authSession || !row.teacherWageSnapshotRecord) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的工资快照。" });
+        return;
+      }
+      const snapshot = row.teacherWageSnapshotRecord;
+      if (actionKey === "teacherWageSnapshot.relock") {
+        setDetailRow(null);
+        setTeacherWageDialog({
+          mode: "relock",
+          teacherId: snapshot.teacherId,
+          businessEntityId: snapshot.businessEntityId,
+          yearMonth: snapshot.yearMonth,
+          snapshot,
+        });
+        return;
+      }
+
+      const reason = window.prompt(
+        `确认撤销「${snapshot.teacher.name}」${snapshot.yearMonth} / ${snapshot.businessEntity.name} 的工资快照 V${snapshot.version}？请输入原因（可留空）：`,
+        "测试撤销工资快照",
+      );
+      if (reason === null) return;
+      try {
+        await revokeTeacherWage(authSession.accessToken, snapshot.id, normalizeOptionalFormValue(reason));
+        setDetailRow(null);
+        setWorkflowReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "工资快照已撤销，可从该记录重新生成新版本。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
@@ -9594,6 +9887,10 @@ export default function App() {
                       ? openTuitionBillCreate
                     : activeKey === "student-settlements"
                       ? openStudentSettlementCreate
+                    : activeKey === "teacher-rules"
+                      ? openTeacherWageRuleCreate
+                    : activeKey === "teacher-wages"
+                      ? openTeacherWageCreate
                     : activeKey === "income-records"
                       ? () => openFinanceCreate("income")
                     : activeKey === "expense-records"
@@ -9655,6 +9952,27 @@ export default function App() {
           onClose={() => setStudentSettlementDialog(null)}
           onPreview={requestStudentSettlementPreview}
           onLock={submitStudentSettlementLock}
+        />
+      )}
+      {teacherWageRuleDialog && (
+        <TeacherWageRuleModal
+          teachers={teacherApi.rows.flatMap((row) => (row.teacherRecord ? [row.teacherRecord] : []))}
+          businessEntities={settingsApi.businessEntities}
+          state={teacherWageRuleDialog}
+          isSubmitting={isTeacherWageRuleSubmitting}
+          error={teacherWageRuleError}
+          onClose={() => setTeacherWageRuleDialog(null)}
+          onSubmit={submitTeacherWageRule}
+        />
+      )}
+      {teacherWageDialog && (
+        <TeacherWageModal
+          teachers={teacherApi.rows.flatMap((row) => (row.teacherRecord ? [row.teacherRecord] : []))}
+          businessEntities={settingsApi.businessEntities}
+          state={teacherWageDialog}
+          onClose={() => setTeacherWageDialog(null)}
+          onPreview={requestTeacherWagePreview}
+          onLock={submitTeacherWageLock}
         />
       )}
       {financeDialog && (

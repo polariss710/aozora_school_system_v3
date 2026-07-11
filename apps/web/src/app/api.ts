@@ -590,11 +590,58 @@ export interface TeacherWageRuleRecord {
   businessEntity: RelatedBusinessEntityRecord;
 }
 
+export interface TeacherWageRuleInput {
+  teacherId: string;
+  businessEntityId: string;
+  hourlyRateJpy: number;
+  memo?: string | null;
+}
+
+export interface TeacherWageInput {
+  teacherId: string;
+  businessEntityId: string;
+  yearMonth: string;
+}
+
+export interface LockTeacherWageInput extends TeacherWageInput {
+  memo?: string | null;
+}
+
+export interface TeacherWagePreview {
+  teacher: RelatedTeacherRecord;
+  businessEntity: RelatedBusinessEntityRecord;
+  teacherId: string;
+  businessEntityId: string;
+  yearMonth: string;
+  wageRule: { id: string; hourlyRateJpy: ApiAmountValue } | null;
+  lessonCount: number;
+  totalLessonHours: ApiAmountValue;
+  baseWageJpy: ApiAmountValue;
+  transportationFeeJpy: ApiAmountValue;
+  classroomFeeJpy: ApiAmountValue;
+  manualAdjustmentJpy: ApiAmountValue;
+  totalWageJpy: ApiAmountValue;
+  blockingIssues: string[];
+  details: Array<{
+    actualLessonId: string;
+    actualDate: string;
+    durationHours: ApiAmountValue;
+    hourlyRateJpy: ApiAmountValue;
+    lessonWageJpy: ApiAmountValue;
+    teacherWageEligible: boolean;
+    includedInWage: boolean;
+    studentNameSnapshot: string;
+    subjectNameSnapshot: string;
+    contentSnapshot: string | null;
+  }>;
+}
+
 export interface TeacherWageSnapshotRecord {
   id: string;
   teacherId: string;
   yearMonth: string;
   businessEntityId: string;
+  version: number;
   lessonCount: number;
   totalLessonHours: ApiAmountValue;
   baseWageJpy: ApiAmountValue;
@@ -606,6 +653,7 @@ export interface TeacherWageSnapshotRecord {
   adjustmentStatus: string;
   calculationSnapshot: unknown;
   expenseRecordId: string | null;
+  replacesId: string | null;
   lockedAt: string;
   revokedAt: string | null;
   memo: string | null;
@@ -1062,9 +1110,53 @@ export function listTeacherWageRules(accessToken: string) {
   });
 }
 
+export function createTeacherWageRule(accessToken: string, input: TeacherWageRuleInput) {
+  return requestJson<{ rule: TeacherWageRuleRecord }>("/wages/rules", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateTeacherWageRule(
+  accessToken: string,
+  ruleId: string,
+  input: Pick<TeacherWageRuleInput, "hourlyRateJpy" | "memo">,
+) {
+  return requestJson<{ rule: TeacherWageRuleRecord }>(`/wages/rules/${ruleId}`, {
+    method: "PATCH",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
 export function listTeacherWageSnapshots(accessToken: string) {
   return requestJson<ListResponse<TeacherWageSnapshotRecord>>("/wages/teacher?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function previewTeacherWage(accessToken: string, input: TeacherWageInput) {
+  return requestJson<{ preview: TeacherWagePreview }>("/wages/teacher/preview", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function lockTeacherWage(accessToken: string, input: LockTeacherWageInput) {
+  return requestJson<{ snapshot: TeacherWageSnapshotRecord }>("/wages/teacher/lock", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function revokeTeacherWage(accessToken: string, snapshotId: string, reason?: string | null) {
+  return requestJson<{ snapshot: TeacherWageSnapshotRecord }>(`/wages/teacher/${snapshotId}/revoke`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ reason: reason || null }),
   });
 }
 

@@ -60,7 +60,7 @@ V2 的 pending income 作废规则是：没有待确认/已确认 Cash 请求、
 
 ### 4. 学生月度结算
 
-V3 后端已有 preview、lock、revoke 和下游 carryover guard，业务方向与 V2 对齐。当前前端仍以只读展示为主，锁定和撤销动作属于学生链路下一阶段实装，不与本轮财务页面重做混在一起。
+V3 后端已有 preview、lock、revoke 和下游 carryover guard，业务方向与 V2 对齐。前端已接入单学生预览、锁定、撤销和重新锁定，并验证未处理课时阻断、汇率校验及下游学费账单保护。
 
 ### 5. 学费收据
 

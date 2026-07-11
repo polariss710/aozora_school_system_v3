@@ -1134,6 +1134,7 @@ locked teacher_wage_snapshot
 - 生成接口传入 `business_entity_id` 时，只生成该业务归属的 snapshot；不传时可批量生成同一老师同月多个业务归属 snapshot。
 - `expense_created` 后，工资快照不能普通 revoke。
 - 撤销 / 重锁必须保留历史版本，不覆盖旧快照。
+- 2026-07-12 V3 老师工资第二层第一阶段开始接入：工资规则新增/编辑、工资预览、锁定、撤销和版本化重锁。工资预览按 `teacher_id + business_entity_id + year_month` 读取实际课时，并要求参与计薪课时对应的学生月度结算已锁定。
 
 工资调整状态建议使用独立 `adjustment_status`，不塞进主状态：
 

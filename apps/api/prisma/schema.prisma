@@ -553,9 +553,9 @@ model StudentTuitionBill {
   createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  student       Student             @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  incomeRecord  IncomeRecord?       @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
-  replaces      StudentTuitionBill? @relation("TuitionBillRevisions", fields: [replacesId], references: [id], onDelete: Restrict)
+  student      Student              @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  incomeRecord IncomeRecord?        @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  replaces     StudentTuitionBill?  @relation("TuitionBillRevisions", fields: [replacesId], references: [id], onDelete: Restrict)
   replacements StudentTuitionBill[] @relation("TuitionBillRevisions")
 
   @@unique([studentId, yearMonth, version])
@@ -623,6 +623,7 @@ model TeacherWageSnapshot {
   teacherId            String                      @map("teacher_id") @db.Uuid
   yearMonth            String                      @map("year_month") @db.VarChar(7)
   businessEntityId     String                      @map("business_entity_id") @db.Uuid
+  version              Int                         @default(1)
   lessonCount          Int                         @map("lesson_count")
   totalLessonHours     Decimal                     @map("total_lesson_hours") @db.Decimal(8, 2)
   baseWageJpy          Int                         @map("base_wage_jpy")
@@ -634,6 +635,7 @@ model TeacherWageSnapshot {
   adjustmentStatus     TeacherWageAdjustmentStatus @default(none) @map("adjustment_status")
   calculationSnapshot  Json                        @map("calculation_snapshot")
   expenseRecordId      String?                     @unique @map("expense_record_id") @db.Uuid
+  replacesId           String?                     @map("replaces_id") @db.Uuid
   lockedAt             DateTime                    @default(now()) @map("locked_at") @db.Timestamptz(6)
   revokedAt            DateTime?                   @map("revoked_at") @db.Timestamptz(6)
   memo                 String?
@@ -643,12 +645,15 @@ model TeacherWageSnapshot {
   teacher        Teacher                     @relation(fields: [teacherId], references: [id], onDelete: Restrict)
   businessEntity BusinessEntity              @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   expenseRecord  ExpenseRecord?              @relation("TeacherWageExpense", fields: [expenseRecordId], references: [id], onDelete: Restrict)
+  replaces       TeacherWageSnapshot?        @relation("TeacherWageSnapshotRevisions", fields: [replacesId], references: [id], onDelete: Restrict)
+  replacements   TeacherWageSnapshot[]       @relation("TeacherWageSnapshotRevisions")
   details        TeacherWageSnapshotDetail[]
 
-  @@unique([teacherId, yearMonth, businessEntityId])
+  @@unique([teacherId, yearMonth, businessEntityId, version])
   @@index([yearMonth])
   @@index([teacherId, yearMonth])
   @@index([businessEntityId])
+  @@index([replacesId])
   @@index([status])
   @@index([adjustmentStatus])
   @@map("teacher_wage_snapshots")
