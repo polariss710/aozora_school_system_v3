@@ -5,7 +5,7 @@ services:
     plan: free
     rootDir: .
     buildCommand: pnpm install --frozen-lockfile && pnpm --dir apps/api exec prisma generate && pnpm build:api
-    startCommand: pnpm --dir apps/api start
+    startCommand: pnpm --dir apps/api exec prisma migrate deploy && pnpm --dir apps/api start
     envVars:
       - key: NODE_ENV
         value: production
