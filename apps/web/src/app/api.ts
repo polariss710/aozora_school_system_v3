@@ -500,7 +500,9 @@ export interface TuitionBillRecord {
   incomeRecordId: string | null;
   replacesId: string | null;
   generatedAt: string;
-  student: RelatedStudentRecord;
+  student: RelatedStudentRecord & {
+    status?: "active" | "inactive" | "archived";
+  };
   incomeRecord: {
     id: string;
     recordStatus: string;
@@ -778,6 +780,12 @@ export function loginWithPassword(credentials: { email: string; password: string
   });
 }
 
+export function getCurrentUser(accessToken: string) {
+  return requestJson<{ user: AuthenticatedUser }>("/auth/me", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
 export function listStudents(accessToken: string) {
   return requestJson<ListResponse<StudentRecord>>("/students?limit=100", {
     headers: authorizedHeaders(accessToken),
@@ -952,7 +960,7 @@ export interface GenerateTuitionBillInput {
 }
 
 export function generateTuitionBill(accessToken: string, input: GenerateTuitionBillInput) {
-  return requestJson<{ tuitionBill: TuitionBillRecord }>("/tuition-bills/generate", {
+  return requestJson<{ tuitionBill: TuitionBillRecord; created?: boolean }>("/tuition-bills/generate", {
     method: "POST",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),

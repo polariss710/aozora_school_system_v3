@@ -44,6 +44,7 @@ const tuitionBillSelect = {
       id: true,
       code: true,
       name: true,
+      status: true,
     },
   },
   incomeRecord: {
@@ -285,7 +286,7 @@ export class TuitionBillingService {
       latest?.status === TuitionBillStatus.generated &&
       this.isSameTuitionBillCalculation(latest, plannedLessons, carryoverAmountCny)
     ) {
-      return { tuitionBill: latest };
+      return { tuitionBill: latest, created: false };
     }
 
     const nextVersion = (latest?.version ?? 0) + 1;
@@ -338,7 +339,7 @@ export class TuitionBillingService {
       return saved;
     });
 
-    return { tuitionBill };
+    return { tuitionBill, created: true };
   }
 
   async generateIncomeRecord(id: string, actorUserId: string) {

@@ -80,6 +80,7 @@ import {
   generateTuitionBill,
   generateTuitionBillIncome,
   generateActualLesson,
+  getCurrentUser,
   markPlannedLessonMakeupPending,
   rejectCashInboundEvent,
   restorePlannedLesson,
@@ -282,6 +283,77 @@ interface MenuGroup {
 }
 
 type AuthMode = "api" | "demo";
+
+const persistentAuthStorageKey = "aozora-v3-auth-session";
+const tabAuthStorageKey = "aozora-v3-tab-auth-session";
+
+interface StoredAuthSession {
+  session: AuthSession;
+  remember: boolean;
+}
+
+function isAuthSession(value: unknown): value is AuthSession {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<AuthSession>;
+  return (
+    typeof candidate.accessToken === "string" &&
+    candidate.tokenType === "Bearer" &&
+    typeof candidate.expiresIn === "string" &&
+    Boolean(candidate.user && typeof candidate.user.id === "string")
+  );
+}
+
+function readStoredAuthSession(): StoredAuthSession | null {
+  const candidates = [
+    { getStorage: () => window.localStorage, key: persistentAuthStorageKey, remember: true },
+    { getStorage: () => window.sessionStorage, key: tabAuthStorageKey, remember: false },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const storage = candidate.getStorage();
+      const raw = storage.getItem(candidate.key);
+      if (!raw) {
+        continue;
+      }
+
+      const parsed = JSON.parse(raw) as unknown;
+      if (isAuthSession(parsed)) {
+        return { session: parsed, remember: candidate.remember };
+      }
+
+      storage.removeItem(candidate.key);
+    } catch {
+      // Try the next storage when this one is unavailable or malformed.
+    }
+  }
+
+  return null;
+}
+
+function clearStoredAuthSession() {
+  try {
+    window.localStorage.removeItem(persistentAuthStorageKey);
+    window.sessionStorage.removeItem(tabAuthStorageKey);
+  } catch {
+    // Storage can be unavailable in restricted browser modes.
+  }
+}
+
+function persistAuthSession(session: AuthSession, remember: boolean) {
+  clearStoredAuthSession();
+
+  try {
+    const storage = remember ? window.localStorage : window.sessionStorage;
+    const key = remember ? persistentAuthStorageKey : tabAuthStorageKey;
+    storage.setItem(key, JSON.stringify(session));
+  } catch {
+    // The current page remains logged in even when persistence is unavailable.
+  }
+}
 
 type StudentApiState =
   | { status: "idle" | "loading"; rows: DataRow[]; total: number; message?: string }
@@ -994,15 +1066,20 @@ function DataTable({
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1">
                       <button
+                        type="button"
                         onClick={() => onOpenDetail(row)}
                         className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
                         title="查看详情"
+                        aria-label={`查看${row.title}详情`}
                       >
                         <Eye className="h-4 w-4" />
                       </button>
                       <button
+                        type="button"
+                        onClick={() => onOpenDetail(row)}
                         className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
                         title="更多操作"
+                        aria-label={`打开${row.title}更多操作`}
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -2634,7 +2711,22 @@ function normalizeOptionalFormValue(value: string) {
 
 function formatApiError(error: unknown) {
   if (isApiRequestError(error)) {
-    return error.responseText || `HTTP ${error.status}`;
+    let message = error.responseText;
+
+    try {
+      const payload = JSON.parse(error.responseText) as { message?: unknown };
+      if (typeof payload.message === "string") {
+        message = payload.message;
+      }
+    } catch {
+      // Keep the plain-text response when the API did not return JSON.
+    }
+
+    if (message === "Active student is required.") {
+      return "该学生已归档或停用，不能生成新的学费账单。请先恢复学生状态后再操作。";
+    }
+
+    return message || `请求失败（HTTP ${error.status}）`;
   }
 
   if (error instanceof Error && error.message) {
@@ -7588,11 +7680,12 @@ function LoginScreen({
   onRefreshApi,
 }: {
   apiHealth: ApiHealthSnapshot;
-  onLogin: (session: AuthSession | null, mode: AuthMode) => void;
+  onLogin: (session: AuthSession | null, mode: AuthMode, remember: boolean) => void;
   onRefreshApi: () => void;
 }) {
   const [email, setEmail] = useState("polariss710@gmail.com");
   const [password, setPassword] = useState("");
+  const [rememberLogin, setRememberLogin] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -7603,14 +7696,14 @@ function LoginScreen({
 
     try {
       const session = await loginWithPassword({ email, password });
-      onLogin(session, "api");
+      onLogin(session, "api", rememberLogin);
     } catch (error) {
       if (isApiRequestError(error)) {
         setLoginError("账号或密码不正确，或账号尚未启用。");
         return;
       }
 
-      onLogin(null, "demo");
+      onLogin(null, "demo", false);
     } finally {
       setIsSubmitting(false);
     }
@@ -7701,7 +7794,12 @@ function LoginScreen({
 
             <div className="mt-6 flex items-center justify-between gap-3">
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input type="checkbox" className="h-4 w-4 rounded border-border text-[#1687D9]" defaultChecked />
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border text-[#1687D9]"
+                  checked={rememberLogin}
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                />
                 保持登录
               </label>
               <button type="button" className="text-xs font-medium text-[#1687D9] hover:underline">
@@ -7741,6 +7839,8 @@ function LoginScreen({
 }
 
 export default function App() {
+  const [initialStoredAuth] = useState(readStoredAuthSession);
+  const [isAuthRestoring, setIsAuthRestoring] = useState(Boolean(initialStoredAuth));
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("demo");
@@ -7900,6 +8000,46 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!initialStoredAuth) {
+      return;
+    }
+
+    let isMounted = true;
+
+    void getCurrentUser(initialStoredAuth.session.accessToken)
+      .then(({ user }) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const restoredSession = { ...initialStoredAuth.session, user };
+        persistAuthSession(restoredSession, initialStoredAuth.remember);
+        setAuthSession(restoredSession);
+        setAuthMode("api");
+        setIsAuthenticated(true);
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return;
+        }
+
+        clearStoredAuthSession();
+        setAuthSession(null);
+        setAuthMode("demo");
+        setIsAuthenticated(false);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsAuthRestoring(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [initialStoredAuth]);
 
   useEffect(() => {
     if (!actionNotice) {
@@ -8360,13 +8500,20 @@ export default function App() {
     };
   }, [authSession, financeReloadKey]);
 
-  const handleLogin = (session: AuthSession | null, mode: AuthMode) => {
+  const handleLogin = (session: AuthSession | null, mode: AuthMode, remember: boolean) => {
+    if (session && mode === "api") {
+      persistAuthSession(session, remember);
+    } else {
+      clearStoredAuthSession();
+    }
+
     setAuthSession(session);
     setAuthMode(mode);
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
+    clearStoredAuthSession();
     setAuthSession(null);
     setAuthMode("demo");
     setIsAuthenticated(false);
@@ -8402,10 +8549,16 @@ export default function App() {
     setTuitionBillMutationError(null);
 
     try {
-      await generateTuitionBill(authSession.accessToken, input);
+      const result = await generateTuitionBill(authSession.accessToken, input);
       setTuitionBillDialog(null);
       setStudentChainReloadKey((current) => current + 1);
-      setActionNotice({ tone: "emerald", text: "学费账单已生成，金额来自后端账单快照。" });
+      const wasCreated = result.created ?? true;
+      setActionNotice({
+        tone: wasCreated ? "emerald" : "amber",
+        text: wasCreated
+          ? "学费账单已生成，金额来自后端账单快照。"
+          : "相同账单已经存在，本次没有重复生成。",
+      });
     } catch (error) {
       setTuitionBillMutationError(formatApiError(error));
     } finally {
@@ -8603,19 +8756,34 @@ export default function App() {
       const tuitionBill = row.tuitionBillRecord;
 
       if (actionKey === "tuitionBill.generate") {
+        if (tuitionBill.student.status && tuitionBill.student.status !== "active") {
+          setDetailRow(null);
+          setActionNotice({
+            tone: "amber",
+            text: "该学生已归档或停用，不能生成新的学费账单。请先恢复学生状态后再操作。",
+          });
+          return;
+        }
+
         const confirmed = window.confirm(`确认重新生成「${tuitionBill.student.name}」${tuitionBill.yearMonth} 的学费账单？`);
         if (!confirmed) {
           return;
         }
 
         try {
-          await generateTuitionBill(authSession.accessToken, {
+          const result = await generateTuitionBill(authSession.accessToken, {
             studentId: tuitionBill.studentId,
             yearMonth: tuitionBill.yearMonth,
           });
           setDetailRow(null);
           setStudentChainReloadKey((current) => current + 1);
-          setActionNotice({ tone: "emerald", text: "学费账单已重新生成。" });
+          const wasCreated = result.created ?? result.tuitionBill.id !== tuitionBill.id;
+          setActionNotice({
+            tone: wasCreated ? "emerald" : "amber",
+            text: wasCreated
+              ? "学费账单已重新生成。"
+              : "相同账单已经存在，本次没有重复生成。",
+          });
         } catch (error) {
           setActionNotice({ tone: "rose", text: formatApiError(error) });
         }
@@ -8982,6 +9150,17 @@ export default function App() {
     displayName: "系统管理员",
     email: "polariss710@gmail.com",
   };
+
+  if (isAuthRestoring) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        <div className="flex items-center gap-2 text-sm">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          正在恢复登录状态
+        </div>
+      </main>
+    );
+  }
 
   if (!isAuthenticated) {
     return <LoginScreen apiHealth={apiHealth} onLogin={handleLogin} onRefreshApi={refreshApiHealth} />;
