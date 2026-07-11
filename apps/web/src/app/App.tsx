@@ -4559,7 +4559,7 @@ function mapTeacherWageSnapshotToRow(record: TeacherWageSnapshotRecord): DataRow
   return {
     id: `wage-${record.id}`,
     title: record.teacher.name,
-    subtitle: `${formatYearMonth(record.yearMonth)}工资快照 · V${record.version}`,
+    subtitle: `${formatYearMonth(record.yearMonth)}工资快照 · 第${record.version}版`,
     status: status.label,
     tone: status.tone,
     apiRef: { resource: "teacherWageSnapshot", id: record.id },
@@ -4582,7 +4582,7 @@ function buildTeacherWageSnapshotDetail(record: TeacherWageSnapshotRecord, statu
         { label: "老师", value: record.teacher.name },
         { label: "业务归属", value: record.businessEntity.name },
         { label: "业务月份", value: formatYearMonth(record.yearMonth) },
-        { label: "快照版本", value: `V${record.version}` },
+        { label: "快照版本", value: `第${record.version}版` },
         { label: "课时数", value: `${record.lessonCount} 节` },
         { label: "课时时长", value: formatDurationHours(record.totalLessonHours) },
         { label: "基础工资", value: formatApiJpyAmount(record.baseWageJpy) },
@@ -9480,7 +9480,7 @@ export default function App() {
       }
 
       const reason = window.prompt(
-        `确认撤销「${snapshot.teacher.name}」${snapshot.yearMonth} / ${snapshot.businessEntity.name} 的工资快照 V${snapshot.version}？请输入原因（可留空）：`,
+        `确认撤销「${snapshot.teacher.name}」${snapshot.yearMonth} / ${snapshot.businessEntity.name} 的第${snapshot.version}版工资快照？请输入原因（可留空）：`,
         "测试撤销工资快照",
       );
       if (reason === null) return;
