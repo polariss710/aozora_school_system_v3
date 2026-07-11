@@ -539,6 +539,44 @@ export interface StudentSettlementRecord {
   student: RelatedStudentRecord;
 }
 
+export interface StudentSettlementInput {
+  studentId: string;
+  yearMonth: string;
+  settlementExchangeRate?: number | null;
+  adjustmentAmountCny?: number | null;
+}
+
+export interface LockStudentSettlementInput extends StudentSettlementInput {
+  memo?: string | null;
+}
+
+export interface StudentSettlementPreview {
+  student: RelatedStudentRecord;
+  studentId: string;
+  yearMonth: string;
+  plannedLessonCount: number;
+  billableLessonCount: number;
+  cancelledLessonCount: number;
+  actualLessonCount: number;
+  plannedAmountJpy: ApiAmountValue;
+  billableAmountJpy: ApiAmountValue;
+  receivedAmountJpy: ApiAmountValue;
+  receivedAmountCny: ApiAmountValue;
+  previousCarryoverAmountCny: ApiAmountValue;
+  expectedAmountCny: ApiAmountValue;
+  adjustmentAmountCny: ApiAmountValue;
+  carryoverAmountCny: ApiAmountValue;
+  settlementExchangeRate: ApiAmountValue;
+  needsExchangeRate: boolean;
+  blockingIssues: string[];
+  tuitionBill: {
+    id: string;
+    status: string;
+    plannedAmountJpy: ApiAmountValue;
+    carryoverAmountCny: ApiAmountValue;
+  } | null;
+}
+
 export interface TeacherWageRuleRecord {
   id: string;
   teacherId: string;
@@ -989,6 +1027,33 @@ export function listStudentSettlements(accessToken: string) {
   return requestJson<ListResponse<StudentSettlementRecord>>("/settlements/student?limit=100", {
     headers: authorizedHeaders(accessToken),
   });
+}
+
+export function previewStudentSettlement(accessToken: string, input: StudentSettlementInput) {
+  return requestJson<{ preview: StudentSettlementPreview }>("/settlements/student/preview", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function lockStudentSettlement(accessToken: string, input: LockStudentSettlementInput) {
+  return requestJson<{ settlement: StudentSettlementRecord }>("/settlements/student/lock", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function revokeStudentSettlement(accessToken: string, settlementId: string, reason?: string | null) {
+  return requestJson<{ settlement: StudentSettlementRecord }>(
+    `/settlements/student/${settlementId}/revoke`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify({ reason: reason || null }),
+    },
+  );
 }
 
 export function listTeacherWageRules(accessToken: string) {

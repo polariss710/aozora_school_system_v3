@@ -76,13 +76,16 @@ import {
   listTeacherWageRules,
   listTeacherWageSnapshots,
   listTuitionBills,
+  lockStudentSettlement,
   loginWithPassword,
   generateTuitionBill,
   generateTuitionBillIncome,
   generateActualLesson,
   getCurrentUser,
   markPlannedLessonMakeupPending,
+  previewStudentSettlement,
   rejectCashInboundEvent,
+  revokeStudentSettlement,
   restorePlannedLesson,
   restoreStudent,
   restoreTeacher,
@@ -113,6 +116,7 @@ import type {
   GenerateActualLessonInput,
   GenerateTuitionBillInput,
   IncomeRecord,
+  LockStudentSettlementInput,
   ManualExpenseInput,
   ManualIncomeInput,
   ReimbursementCandidateExpenseRecord,
@@ -121,6 +125,8 @@ import type {
   StudentPlannedLessonRecord,
   SubmitCashRequestInput,
   StudentSettlementRecord,
+  StudentSettlementInput,
+  StudentSettlementPreview,
   StudentRecord,
   StudentWriteInput,
   SubjectRecord,
@@ -200,6 +206,7 @@ interface DataRow {
   };
   studentRecord?: StudentRecord;
   tuitionBillRecord?: TuitionBillRecord;
+  studentSettlementRecord?: StudentSettlementRecord;
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
@@ -238,6 +245,8 @@ type DrawerActionKey =
   | "tuitionBill.generate"
   | "tuitionBill.generateIncome"
   | "tuitionBill.void"
+  | "studentSettlement.relock"
+  | "studentSettlement.revoke"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -375,6 +384,12 @@ type TeacherDialogState =
 
 type FinanceDialogState = { kind: "income" | "expense" };
 type TuitionBillDialogState = { yearMonth: string };
+type StudentSettlementDialogState = {
+  mode: "lock" | "relock";
+  studentId?: string;
+  yearMonth: string;
+  settlement?: StudentSettlementRecord;
+};
 type CashRequestDialogState = { row: DataRow };
 type ReimbursementDialogState = {
   isLoading: boolean;
@@ -1275,13 +1290,12 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   }
 
   if (row.id.startsWith("settlement-")) {
-    if (row.status === "待锁定") {
+    if (row.studentSettlementRecord?.status === "locked") {
       return [
         {
           title: "月度结算操作",
           actions: [
-            { label: "锁定结算", icon: LockKeyhole, variant: "primary" },
-            { label: "重新生成预览", icon: RefreshCw, variant: "secondary" },
+            { label: "撤销结算", icon: RotateCcw, variant: "warning", key: "studentSettlement.revoke" },
             { label: "查看课时明细", icon: CalendarDays, variant: "quiet" },
             { label: "查看操作记录", icon: History, variant: "quiet" },
           ],
@@ -1293,9 +1307,8 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       {
         title: "月度结算操作",
         actions: [
-          { label: "查看下月结转", icon: RefreshCw, variant: "secondary" },
+          { label: "重新预览并锁定", icon: LockKeyhole, variant: "primary", key: "studentSettlement.relock" },
           { label: "查看课时明细", icon: CalendarDays, variant: "quiet" },
-          { label: "撤销锁定", icon: X, variant: "warning" },
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ],
       },
@@ -2030,6 +2043,275 @@ function TuitionBillGenerateModal({
   );
 }
 
+function StudentSettlementModal({
+  students,
+  state,
+  onClose,
+  onPreview,
+  onLock,
+}: {
+  students: StudentRecord[];
+  state: StudentSettlementDialogState;
+  onClose: () => void;
+  onPreview: (input: StudentSettlementInput) => Promise<StudentSettlementPreview>;
+  onLock: (input: LockStudentSettlementInput) => Promise<void>;
+}) {
+  const activeStudents = students.filter((student) => student.status === "active");
+  const existing = state.settlement;
+  const [studentId, setStudentId] = useState(state.studentId ?? existing?.studentId ?? activeStudents[0]?.id ?? "");
+  const [yearMonth, setYearMonth] = useState(state.yearMonth);
+  const [exchangeRate, setExchangeRate] = useState(
+    existing?.settlementExchangeRate === null || existing?.settlementExchangeRate === undefined
+      ? ""
+      : String(existing.settlementExchangeRate),
+  );
+  const [adjustmentAmountCny, setAdjustmentAmountCny] = useState(
+    existing?.adjustmentAmountCny === null || existing?.adjustmentAmountCny === undefined
+      ? "0"
+      : String(existing.adjustmentAmountCny),
+  );
+  const [memo, setMemo] = useState(existing?.memo ?? "");
+  const [preview, setPreview] = useState<StudentSettlementPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isLocking, setIsLocking] = useState(false);
+
+  useEffect(() => {
+    if (!studentId && activeStudents[0]) {
+      setStudentId(activeStudents[0].id);
+    }
+  }, [activeStudents, studentId]);
+
+  const clearPreview = () => {
+    setPreview(null);
+    setError(null);
+  };
+
+  const buildInput = (): StudentSettlementInput | null => {
+    const normalizedRate = exchangeRate.trim() ? Number(exchangeRate) : null;
+    const normalizedAdjustment = adjustmentAmountCny.trim() ? Number(adjustmentAmountCny) : 0;
+
+    if (!studentId || !yearMonth) {
+      setError("请选择学生和业务月份。");
+      return null;
+    }
+
+    if (normalizedRate !== null && (!Number.isFinite(normalizedRate) || normalizedRate <= 0)) {
+      setError("结算汇率必须是大于 0 的数字。");
+      return null;
+    }
+
+    if (!Number.isFinite(normalizedAdjustment)) {
+      setError("CNY 调整额必须是有效数字。");
+      return null;
+    }
+
+    return {
+      studentId,
+      yearMonth,
+      settlementExchangeRate: normalizedRate,
+      adjustmentAmountCny: normalizedAdjustment,
+    };
+  };
+
+  const requestPreview = async () => {
+    const input = buildInput();
+    if (!input) {
+      return;
+    }
+
+    setIsPreviewing(true);
+    setError(null);
+    try {
+      setPreview(await onPreview(input));
+    } catch (previewError) {
+      setPreview(null);
+      setError(formatApiError(previewError));
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
+  const submitLock = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const input = buildInput();
+    if (!input || !preview || preview.blockingIssues.length > 0 || preview.needsExchangeRate) {
+      return;
+    }
+
+    setIsLocking(true);
+    setError(null);
+    try {
+      await onLock({ ...input, memo: normalizeOptionalFormValue(memo) });
+    } catch (lockError) {
+      setError(formatApiError(lockError));
+    } finally {
+      setIsLocking(false);
+    }
+  };
+
+  const title = state.mode === "relock" ? "重新锁定学生月度结算" : "生成学生月度结算预览";
+  const canLock = Boolean(preview && preview.blockingIssues.length === 0 && !preview.needsExchangeRate);
+  const selectedStudent = activeStudents.find((student) => student.id === studentId);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submitLock}
+        className="relative z-10 flex max-h-[92vh] w-[min(760px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{title}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">金额和结转均来自后端预览，锁定后形成月度快照。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">学生</span>
+              <select
+                required
+                disabled={state.mode === "relock"}
+                value={studentId}
+                title={selectedStudent ? `${selectedStudent.name}${selectedStudent.code ? `（${selectedStudent.code}）` : ""}` : undefined}
+                onChange={(event) => {
+                  setStudentId(event.target.value);
+                  clearPreview();
+                }}
+                className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15 disabled:bg-muted/40"
+              >
+                <option value="">请选择学生</option>
+                {activeStudents.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.name}{student.code ? `（${student.code}）` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">业务月份</span>
+              <input
+                required
+                disabled={state.mode === "relock"}
+                type="month"
+                value={yearMonth}
+                onChange={(event) => {
+                  setYearMonth(event.target.value);
+                  clearPreview();
+                }}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15 disabled:bg-muted/40"
+              />
+            </label>
+
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">JPY → CNY 结算汇率</span>
+              <input
+                inputMode="decimal"
+                value={exchangeRate}
+                onChange={(event) => {
+                  setExchangeRate(event.target.value);
+                  clearPreview();
+                }}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="例如 0.04782"
+              />
+            </label>
+
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">CNY 调整额</span>
+              <input
+                inputMode="decimal"
+                value={adjustmentAmountCny}
+                onChange={(event) => {
+                  setAdjustmentAmountCny(event.target.value);
+                  clearPreview();
+                }}
+                className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="0.00"
+              />
+            </label>
+          </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea
+              value={memo}
+              onChange={(event) => setMemo(event.target.value)}
+              className="min-h-[72px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              placeholder="选填"
+            />
+          </label>
+
+          {preview && (
+            <section className="overflow-hidden rounded-lg border border-border">
+              <div className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs font-semibold text-foreground">后端结算预览</div>
+              <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">
+                {[
+                  ["计费课时", `${preview.billableLessonCount}/${preview.plannedLessonCount} 节`],
+                  ["实际课时", `${preview.actualLessonCount} 节`],
+                  ["应收课时费", formatApiJpyAmount(preview.billableAmountJpy)],
+                  ["已收金额", formatReceivedAmounts(preview.receivedAmountJpy, preview.receivedAmountCny)],
+                  ["上月结转", formatApiCnyAmount(preview.previousCarryoverAmountCny)],
+                  ["CNY 应收", preview.expectedAmountCny === null ? "待输入汇率" : formatApiCnyAmount(preview.expectedAmountCny)],
+                  ["调整额", formatApiCnyAmount(preview.adjustmentAmountCny)],
+                  ["下月结转", formatApiCnyAmount(preview.carryoverAmountCny)],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0 bg-white px-3 py-3">
+                    <div className="text-[11px] text-muted-foreground">{label}</div>
+                    <div className="mt-1 truncate text-sm font-medium text-foreground" title={value}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {preview?.needsExchangeRate && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              当前结算包含 JPY 应收或收款，请填写结算汇率后重新生成预览。
+            </div>
+          )}
+
+          {preview && preview.blockingIssues.length > 0 && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">
+              {preview.blockingIssues.map((issue) => <div key={issue}>{formatSettlementBlockingIssue(issue)}</div>)}
+            </div>
+          )}
+
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button
+            type="button"
+            disabled={isPreviewing || isLocking || !studentId || !yearMonth}
+            onClick={requestPreview}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[#1687D9] bg-white px-3 text-xs font-medium text-[#1264a8] transition hover:bg-[#EDF6FD] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isPreviewing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+            {isPreviewing ? "预览中" : "生成预览"}
+          </button>
+          <button
+            type="submit"
+            disabled={isLocking || isPreviewing || !canLock}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+          >
+            {isLocking ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <LockKeyhole className="h-3.5 w-3.5" />}
+            {isLocking ? "锁定中" : state.mode === "relock" ? "重新锁定" : "锁定结算"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function TeacherFormModal({
   state,
   isSubmitting,
@@ -2709,6 +2991,18 @@ function normalizeOptionalFormValue(value: string) {
   return trimmed || null;
 }
 
+function formatSettlementBlockingIssue(issue: string) {
+  if (issue === "No planned lessons exist for this student/month.") {
+    return "该学生本月没有预定课时，不能锁定月度结算。";
+  }
+
+  if (issue === "Scheduled planned lessons must be processed before settlement lock.") {
+    return "仍有未处理的预定课时，请先生成实际课时、标记待补课或取消课时。";
+  }
+
+  return issue;
+}
+
 function formatApiError(error: unknown) {
   if (isApiRequestError(error)) {
     let message = error.responseText;
@@ -2723,7 +3017,21 @@ function formatApiError(error: unknown) {
     }
 
     if (message === "Active student is required.") {
-      return "该学生已归档或停用，不能生成新的学费账单。请先恢复学生状态后再操作。";
+      return "该学生已归档或停用，当前操作不可用。请先恢复学生状态后再操作。";
+    }
+
+    const settlementErrorTranslations = [
+      ["No planned lessons exist for this student/month.", "该学生本月没有预定课时。"],
+      ["Scheduled planned lessons must be processed before settlement lock.", "仍有未处理的预定课时，请先处理完毕后再锁定结算。"],
+      ["settlementExchangeRate is required to lock CNY carryover.", "当前结算包含 JPY 金额，请填写结算汇率并重新生成预览。"],
+      ["Only locked settlement can be revoked.", "只有已锁定的月度结算可以撤销。"],
+      ["Next month tuition bill already exists. Revoke or rebuild downstream bill first.", "下月学费账单已经存在，请先处理下游账单后再撤销或重新锁定本月结算。"],
+    ] as const;
+
+    for (const [source, translated] of settlementErrorTranslations) {
+      if (message.includes(source)) {
+        message = message.replace(source, translated);
+      }
     }
 
     return message || `请求失败（HTTP ${error.status}）`;
@@ -3763,8 +4071,8 @@ function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: Financ
     description:
       settlementApi.status === "error"
         ? `真实 dev API 月度结算读取失败：${settlementApi.message}`
-        : "真实 dev API 学生月度结算列表；第一层只读展示，锁定和撤销会在第二层接入",
-    primaryAction: undefined,
+        : "真实 dev API 学生月度结算；预览、锁定、撤销和重新锁定均由后端校验",
+    primaryAction: settlementApi.status === "ready" ? "生成结算预览" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -3838,7 +4146,8 @@ function mapStudentSettlementToRow(record: StudentSettlementRecord): DataRow {
     status: status.label,
     tone: status.tone,
     apiRef: { resource: "studentSettlement", id: record.id },
-    readOnlyActions: true,
+    studentSettlementRecord: record,
+    readOnlyActions: false,
     cells: {
       lessonCount: `${record.billableLessonCount}/${record.plannedLessonCount} 节`,
       billableAmount,
@@ -7866,6 +8175,7 @@ export default function App() {
   const [tuitionBillDialog, setTuitionBillDialog] = useState<TuitionBillDialogState | null>(null);
   const [isTuitionBillSubmitting, setIsTuitionBillSubmitting] = useState(false);
   const [tuitionBillMutationError, setTuitionBillMutationError] = useState<string | null>(null);
+  const [studentSettlementDialog, setStudentSettlementDialog] = useState<StudentSettlementDialogState | null>(null);
   const [lessonActionSubmittingId, setLessonActionSubmittingId] = useState<string | null>(null);
   const [lessonActualDialog, setLessonActualDialog] = useState<LessonActualDialogState | null>(null);
   const [isLessonActualSubmitting, setIsLessonActualSubmitting] = useState(false);
@@ -8539,6 +8849,36 @@ export default function App() {
     setTuitionBillDialog({ yearMonth: new Date().toISOString().slice(0, 7) });
   };
 
+  const openStudentSettlementCreate = () => {
+    setStudentSettlementDialog({
+      mode: "lock",
+      yearMonth: new Date().toISOString().slice(0, 7),
+    });
+  };
+
+  const requestStudentSettlementPreview = async (input: StudentSettlementInput) => {
+    if (!authSession) {
+      throw new Error("请先使用真实 API 登录后再生成结算预览。");
+    }
+
+    const result = await previewStudentSettlement(authSession.accessToken, input);
+    return result.preview;
+  };
+
+  const submitStudentSettlementLock = async (input: LockStudentSettlementInput) => {
+    if (!authSession) {
+      throw new Error("请先使用真实 API 登录后再锁定结算。");
+    }
+
+    await lockStudentSettlement(authSession.accessToken, input);
+    setStudentSettlementDialog(null);
+    setStudentChainReloadKey((current) => current + 1);
+    setActionNotice({
+      tone: "emerald",
+      text: studentSettlementDialog?.mode === "relock" ? "学生月度结算已重新锁定。" : "学生月度结算已锁定。",
+    });
+  };
+
   const submitTuitionBillForm = async (input: GenerateTuitionBillInput) => {
     if (!authSession) {
       setTuitionBillMutationError("请先使用真实 API 登录后再生成账单。");
@@ -8818,6 +9158,44 @@ export default function App() {
         setDetailRow(null);
         setStudentChainReloadKey((current) => current + 1);
         setActionNotice({ tone: "emerald", text: "学费账单已作废。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
+      return;
+    }
+
+    if (actionKey === "studentSettlement.relock" || actionKey === "studentSettlement.revoke") {
+      if (!authSession || row.apiRef?.resource !== "studentSettlement" || !row.studentSettlementRecord) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的学生月度结算。" });
+        return;
+      }
+
+      const settlement = row.studentSettlementRecord;
+
+      if (actionKey === "studentSettlement.relock") {
+        setDetailRow(null);
+        setStudentSettlementDialog({
+          mode: "relock",
+          studentId: settlement.studentId,
+          yearMonth: settlement.yearMonth,
+          settlement,
+        });
+        return;
+      }
+
+      const reason = window.prompt(
+        `确认撤销「${settlement.student.name}」${settlement.yearMonth} 的月度结算？请输入原因（可留空）：`,
+        "测试撤销月度结算",
+      );
+      if (reason === null) {
+        return;
+      }
+
+      try {
+        await revokeStudentSettlement(authSession.accessToken, settlement.id, normalizeOptionalFormValue(reason));
+        setDetailRow(null);
+        setStudentChainReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "学生月度结算已撤销，旧快照继续保留用于审计。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
@@ -9134,6 +9512,7 @@ export default function App() {
     setStudentDialog(null);
     setTeacherDialog(null);
     setTuitionBillDialog(null);
+    setStudentSettlementDialog(null);
     setFinanceDialog(null);
     setCashRequestDialog(null);
     setReimbursementDialog(null);
@@ -9213,6 +9592,8 @@ export default function App() {
                     ? openTeacherCreate
                     : activeKey === "tuition-bills"
                       ? openTuitionBillCreate
+                    : activeKey === "student-settlements"
+                      ? openStudentSettlementCreate
                     : activeKey === "income-records"
                       ? () => openFinanceCreate("income")
                     : activeKey === "expense-records"
@@ -9265,6 +9646,15 @@ export default function App() {
           error={tuitionBillMutationError}
           onClose={() => setTuitionBillDialog(null)}
           onSubmit={submitTuitionBillForm}
+        />
+      )}
+      {studentSettlementDialog && (
+        <StudentSettlementModal
+          students={studentApi.rows.flatMap((row) => (row.studentRecord ? [row.studentRecord] : []))}
+          state={studentSettlementDialog}
+          onClose={() => setStudentSettlementDialog(null)}
+          onPreview={requestStudentSettlementPreview}
+          onLock={submitStudentSettlementLock}
         />
       )}
       {financeDialog && (
