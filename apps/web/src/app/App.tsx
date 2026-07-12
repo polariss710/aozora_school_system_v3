@@ -2508,7 +2508,6 @@ function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
   const [memo, setMemo] = useState(snapshot.memo ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const readOnly = snapshot.status !== "locked" || snapshot.adjustmentStatus === "confirmed";
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -2528,7 +2527,6 @@ function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
 
     setIsSubmitting(true);
     setError(null);
-    setSavedNotice(null);
     try {
       const updated = await onSave(snapshot.id, {
         transportationFeeJpy: transportation,
@@ -2537,7 +2535,7 @@ function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
         memo: normalizeOptionalFormValue(memo),
       });
       setSnapshot(updated);
-      setSavedNotice(`调整已保存，后端确认工资合计为 ${formatApiJpyAmount(updated.totalWageJpy)}。`);
+      onClose();
     } catch (requestError) {
       setError(formatApiError(requestError));
     } finally {
@@ -2573,9 +2571,9 @@ function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
           </section>
 
           <div className="grid gap-4 sm:grid-cols-3">
-            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">交通费（JPY）</span><input disabled={readOnly} min="0" step="1" type="number" value={transportationFeeJpy} onChange={(event) => { setTransportationFeeJpy(event.target.value); setSavedNotice(null); }} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
-            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">教室费（JPY）</span><input disabled={readOnly} min="0" step="1" type="number" value={classroomFeeJpy} onChange={(event) => { setClassroomFeeJpy(event.target.value); setSavedNotice(null); }} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
-            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">其他调整（JPY）</span><input disabled={readOnly} step="1" type="number" value={manualAdjustmentJpy} onChange={(event) => { setManualAdjustmentJpy(event.target.value); setSavedNotice(null); }} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">交通费（JPY）</span><input disabled={readOnly} min="0" step="1" type="number" value={transportationFeeJpy} onChange={(event) => setTransportationFeeJpy(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">教室费（JPY）</span><input disabled={readOnly} min="0" step="1" type="number" value={classroomFeeJpy} onChange={(event) => setClassroomFeeJpy(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">其他调整（JPY）</span><input disabled={readOnly} step="1" type="number" value={manualAdjustmentJpy} onChange={(event) => setManualAdjustmentJpy(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
           </div>
 
           <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注</span><textarea disabled={readOnly} value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[68px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm disabled:bg-muted/40" placeholder="选填" /></label>
@@ -2595,7 +2593,6 @@ function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
             </div>
           </section>
 
-          {savedNotice && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{savedNotice}</div>}
           {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
         </div>
 
