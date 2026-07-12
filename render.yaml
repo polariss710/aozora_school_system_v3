@@ -11,6 +11,8 @@ services:
         value: production
       - key: CORS_ORIGIN
         value: http://localhost:5173,http://127.0.0.1:5173,https://aozora-school-system-v3-demo.onrender.com
+      - key: OPERATIONAL_BUSINESS_ENTITY_CODE
+        value: aozora_school
       - key: DATABASE_URL
         sync: false
       - key: DIRECT_DATABASE_URL

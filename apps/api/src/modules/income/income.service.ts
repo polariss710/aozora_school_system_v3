@@ -16,6 +16,7 @@ import {
   TuitionBillStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
+import { resolveOperationalBusinessEntityId } from "../business-entities/business-ownership.policy";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import {
@@ -276,14 +277,13 @@ export class IncomeService {
   private async normalizeManualIncome(body: ManualIncomeBody) {
     const originalCurrency = this.normalizeCurrency(body.originalCurrency);
     const studentId = this.normalizeOptionalString(body.studentId);
-    const businessEntityId = this.normalizeOptionalString(body.businessEntityId);
+    const businessEntityId = await resolveOperationalBusinessEntityId(
+      this.prisma,
+      this.normalizeOptionalString(body.businessEntityId),
+    );
 
     if (studentId) {
       await this.assertActiveStudent(studentId);
-    }
-
-    if (businessEntityId) {
-      await this.assertActiveBusinessEntity(businessEntityId);
     }
 
     return {
@@ -312,17 +312,6 @@ export class IncomeService {
 
     if (!student) {
       throw new BadRequestException("Active student is required.");
-    }
-  }
-
-  private async assertActiveBusinessEntity(businessEntityId: string) {
-    const businessEntity = await this.prisma.businessEntity.findFirst({
-      where: { id: businessEntityId, status: RecordStatus.active },
-      select: { id: true },
-    });
-
-    if (!businessEntity) {
-      throw new BadRequestException("Active business entity is required.");
     }
   }
 

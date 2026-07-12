@@ -8,6 +8,7 @@ import {
 import { AuditRiskLevel, Prisma, RecordStatus } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../database/prisma.service";
+import { isOperationalBusinessEntityCode } from "./business-ownership.policy";
 import {
   BusinessEntitySnapshot,
   BusinessEntityWriteBody,
@@ -47,13 +48,17 @@ export class BusinessEntitiesService {
       this.prisma.businessEntity.count({ where }),
     ]);
 
-    return { items, total, limit };
+    return {
+      items: items.map((item) => this.withOwnershipPolicy(item)),
+      total,
+      limit,
+    };
   }
 
   async getBusinessEntity(id: string) {
     const businessEntity = await this.findBusinessEntitySnapshot(id);
 
-    return { businessEntity };
+    return { businessEntity: this.withOwnershipPolicy(businessEntity) };
   }
 
   async createBusinessEntity(
@@ -84,7 +89,7 @@ export class BusinessEntitiesService {
       return created;
     });
 
-    return { businessEntity };
+    return { businessEntity: this.withOwnershipPolicy(businessEntity) };
   }
 
   async updateBusinessEntity(
@@ -94,6 +99,15 @@ export class BusinessEntitiesService {
   ) {
     const before = await this.findBusinessEntitySnapshot(id);
     const input = this.normalizeUpdateInput(body, before);
+
+    if (
+      isOperationalBusinessEntityCode(before.code) &&
+      input.code !== before.code
+    ) {
+      throw new BadRequestException(
+        "Operational business entity code cannot be changed.",
+      );
+    }
 
     if (input.code !== before.code) {
       await this.assertCodeAvailable(input.code, id);
@@ -122,7 +136,7 @@ export class BusinessEntitiesService {
       return updated;
     });
 
-    return { businessEntity };
+    return { businessEntity: this.withOwnershipPolicy(businessEntity) };
   }
 
   async archiveBusinessEntity(id: string, actorUserId: string) {
@@ -140,8 +154,17 @@ export class BusinessEntitiesService {
   ) {
     const before = await this.findBusinessEntitySnapshot(id);
 
+    if (
+      status === RecordStatus.archived &&
+      isOperationalBusinessEntityCode(before.code)
+    ) {
+      throw new BadRequestException(
+        "Operational business entity cannot be archived.",
+      );
+    }
+
     if (before.status === status) {
-      return { businessEntity: before };
+      return { businessEntity: this.withOwnershipPolicy(before) };
     }
 
     const businessEntity = await this.prisma.$transaction(async (tx) => {
@@ -170,7 +193,16 @@ export class BusinessEntitiesService {
       return updated;
     });
 
-    return { businessEntity };
+    return { businessEntity: this.withOwnershipPolicy(businessEntity) };
+  }
+
+  private withOwnershipPolicy(businessEntity: BusinessEntitySnapshot) {
+    return {
+      ...businessEntity,
+      acceptsNewBusiness:
+        businessEntity.status === RecordStatus.active &&
+        isOperationalBusinessEntityCode(businessEntity.code),
+    };
   }
 
   private async findBusinessEntitySnapshot(

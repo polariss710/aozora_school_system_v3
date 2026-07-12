@@ -73,6 +73,7 @@ export interface BusinessEntityRecord {
   name: string;
   status: "active" | "inactive" | "archived";
   memo: string | null;
+  acceptsNewBusiness?: boolean;
 }
 
 export interface AccountRecord {

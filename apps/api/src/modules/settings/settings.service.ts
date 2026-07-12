@@ -1,4 +1,6 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { RecordStatus } from "@prisma/client";
+import { isOperationalBusinessEntityCode } from "../business-entities/business-ownership.policy";
 import { PrismaService } from "../database/prisma.service";
 
 @Injectable()
@@ -17,7 +19,14 @@ export class SettingsService {
       },
     });
 
-    return { items };
+    return {
+      items: items.map((item) => ({
+        ...item,
+        acceptsNewBusiness:
+          item.status === RecordStatus.active &&
+          isOperationalBusinessEntityCode(item.code),
+      })),
+    };
   }
 
   async listAccounts() {

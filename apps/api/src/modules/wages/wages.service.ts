@@ -14,6 +14,7 @@ import {
   TeacherWageSnapshotStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
+import { resolveOperationalBusinessEntityId } from "../business-entities/business-ownership.policy";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import {
@@ -1258,9 +1259,9 @@ export class WagesService {
 
   private async normalizeRuleInput(body: TeacherWageRuleBody) {
     const teacherId = this.normalizeRequiredString(body.teacherId, "teacherId");
-    const businessEntityId = this.normalizeRequiredString(
-      body.businessEntityId,
-      "businessEntityId",
+    const businessEntityId = await resolveOperationalBusinessEntityId(
+      this.prisma,
+      this.normalizeOptionalString(body.businessEntityId),
     );
 
     await this.assertActiveTeacherAndBusinessEntity(teacherId, businessEntityId);

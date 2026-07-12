@@ -15,6 +15,7 @@ import {
   TeacherWageSnapshotStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
+import { resolveOperationalBusinessEntityId } from "../business-entities/business-ownership.policy";
 import { PrismaService } from "../database/prisma.service";
 import {
   ActualLessonWriteBody,
@@ -155,7 +156,13 @@ export class LessonsService {
     body: PlannedLessonWriteBody,
     actorUserId: string,
   ) {
-    const input = this.normalizeCreatePlannedInput(body);
+    const input = this.normalizeCreatePlannedInput({
+      ...body,
+      businessEntityId: await resolveOperationalBusinessEntityId(
+        this.prisma,
+        this.normalizeOptionalString(body.businessEntityId),
+      ),
+    });
     await this.assertActiveReferences(input);
     await this.assertStudentSettlementOpen(input.studentId, input.yearMonth);
 
@@ -188,7 +195,13 @@ export class LessonsService {
   }
 
   async previewBatchPlannedLessons(body: BatchPlannedLessonsBody) {
-    const input = this.normalizeBatchPlannedLessonsInput(body);
+    const input = this.normalizeBatchPlannedLessonsInput({
+      ...body,
+      businessEntityId: await resolveOperationalBusinessEntityId(
+        this.prisma,
+        this.normalizeOptionalString(body.businessEntityId),
+      ),
+    });
     await this.assertActiveBatchReferences(input);
     const generatedInputs = this.buildBatchPlannedLessonInputs(input);
     await this.assertBatchStudentSettlementsOpen(generatedInputs);
@@ -201,7 +214,13 @@ export class LessonsService {
     body: BatchPlannedLessonsBody,
     actorUserId: string,
   ) {
-    const input = this.normalizeBatchPlannedLessonsInput(body);
+    const input = this.normalizeBatchPlannedLessonsInput({
+      ...body,
+      businessEntityId: await resolveOperationalBusinessEntityId(
+        this.prisma,
+        this.normalizeOptionalString(body.businessEntityId),
+      ),
+    });
     await this.assertActiveBatchReferences(input);
 
     if (input.sourceId) {
@@ -286,7 +305,21 @@ export class LessonsService {
   ) {
     const before = await this.findPlannedLesson(id);
     this.assertPlannedLessonEditable(before);
-    const input = this.normalizeUpdatePlannedInput(body, before);
+    const normalizedBody =
+      body.businessEntityId === undefined
+        ? body
+        : {
+            ...body,
+            businessEntityId:
+              this.normalizeOptionalString(body.businessEntityId) ===
+              before.businessEntityId
+                ? before.businessEntityId
+                : await resolveOperationalBusinessEntityId(
+                    this.prisma,
+                    this.normalizeOptionalString(body.businessEntityId),
+                  ),
+          };
+    const input = this.normalizeUpdatePlannedInput(normalizedBody, before);
     await this.assertActiveReferences(input);
     await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
     await this.assertStudentSettlementOpen(input.studentId, input.yearMonth);

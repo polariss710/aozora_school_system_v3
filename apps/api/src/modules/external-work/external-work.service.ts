@@ -16,6 +16,7 @@ import {
   RecordStatus,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
+import { resolveOperationalBusinessEntityId } from "../business-entities/business-ownership.policy";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import {
@@ -594,6 +595,9 @@ export class ExternalWorkService {
     }
 
     const memo = this.normalizeOptionalString(body.memo);
+    const businessEntityId = await resolveOperationalBusinessEntityId(
+      this.prisma,
+    );
 
     const result = await this.prisma.$transaction(async (tx) => {
       const incomeRecord = await tx.incomeRecord.create({
@@ -601,7 +605,7 @@ export class ExternalWorkService {
           sourceType: externalWorkSourceType,
           sourceId: before.id,
           studentId: null,
-          businessEntityId: null,
+          businessEntityId,
           yearMonth: before.yearMonth,
           title: `${before.yearMonth} ${before.workplace.name} 外部授课收入`,
           originalCurrency: CurrencyCode.JPY,

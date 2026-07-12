@@ -202,11 +202,13 @@ const businessEntities = [
     code: "aozora_school",
     name: "青空进学塾",
     memo: "V3 默认正式业务归属。",
+    status: RecordStatus.active,
   },
   {
     code: "personal",
     name: "个人名义",
-    memo: "保留 V2 既有业务归属，用于迁移和历史口径延续。",
+    memo: "保留 V2 既有业务归属，用于迁移和历史口径延续；不再接受新业务。",
+    status: RecordStatus.archived,
   },
 ];
 
@@ -356,11 +358,10 @@ async function seedBusinessEntities() {
       update: {
         name: businessEntity.name,
         memo: businessEntity.memo,
-        status: RecordStatus.active,
+        status: businessEntity.status,
       },
       create: {
         ...businessEntity,
-        status: RecordStatus.active,
       },
     });
   }

@@ -2419,10 +2419,11 @@ function TeacherWageRuleModal({
   onSubmit: (input: TeacherWageRuleInput) => void;
 }) {
   const activeTeachers = teachers.filter((teacher) => teacher.status === "active");
-  const activeEntities = businessEntities.filter((entity) => entity.status === "active");
   const existing = state.mode === "edit" ? state.rule : undefined;
+  const operationalEntity = getOperationalBusinessEntity(businessEntities);
   const [teacherId, setTeacherId] = useState(existing?.teacherId ?? activeTeachers[0]?.id ?? "");
-  const [businessEntityId, setBusinessEntityId] = useState(existing?.businessEntityId ?? activeEntities[0]?.id ?? "");
+  const businessEntityId = existing?.businessEntityId ?? operationalEntity?.id ?? "";
+  const businessEntityName = existing?.businessEntity.name ?? operationalEntity?.name ?? "未配置";
   const [hourlyRateJpy, setHourlyRateJpy] = useState(existing ? String(existing.hourlyRateJpy) : "");
   const [memo, setMemo] = useState(existing?.memo ?? "");
 
@@ -2457,10 +2458,7 @@ function TeacherWageRuleModal({
             </label>
             <label className="grid min-w-0 gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">业务归属</span>
-              <select required disabled={Boolean(existing)} value={businessEntityId} onChange={(event) => setBusinessEntityId(event.target.value)} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] disabled:bg-muted/40">
-                <option value="">请选择业务归属</option>
-                {activeEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-              </select>
+              <div className="flex h-10 min-w-0 items-center truncate rounded-md border border-border bg-muted/40 px-3 text-sm" title={businessEntityName}>{businessEntityName}</div>
             </label>
           </div>
           <label className="grid gap-1.5">
@@ -2493,9 +2491,10 @@ function TeacherWageModal({ teachers, businessEntities, state, onClose, onPrevie
   onLock: (input: TeacherWageInput & { memo?: string | null }) => Promise<void>;
 }) {
   const activeTeachers = teachers.filter((teacher) => teacher.status === "active");
-  const activeEntities = businessEntities.filter((entity) => entity.status === "active");
+  const operationalEntity = getOperationalBusinessEntity(businessEntities);
   const [teacherId, setTeacherId] = useState(state.teacherId ?? activeTeachers[0]?.id ?? "");
-  const [businessEntityId, setBusinessEntityId] = useState(state.businessEntityId ?? activeEntities[0]?.id ?? "");
+  const businessEntityId = state.businessEntityId ?? operationalEntity?.id ?? "";
+  const businessEntityName = state.snapshot?.businessEntity.name ?? operationalEntity?.name ?? "未配置";
   const [yearMonth, setYearMonth] = useState(state.yearMonth);
   const [memo, setMemo] = useState(state.snapshot?.memo ?? "");
   const [preview, setPreview] = useState<TeacherWagePreview | null>(null);
@@ -2528,7 +2527,7 @@ function TeacherWageModal({ teachers, businessEntities, state, onClose, onPrevie
         <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
           <div className="grid min-w-0 gap-4 md:grid-cols-3">
             <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">老师</span><select required disabled={state.mode === "relock"} value={teacherId} onChange={(event) => { setTeacherId(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40"><option value="">请选择老师</option>{activeTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.code ? `（${teacher.code}）` : ""}</option>)}</select></label>
-            <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">业务归属</span><select required disabled={state.mode === "relock"} value={businessEntityId} onChange={(event) => { setBusinessEntityId(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40"><option value="">请选择业务归属</option>{activeEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label>
+            <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">业务归属</span><div className="flex h-10 min-w-0 items-center truncate rounded-md border border-border bg-muted/40 px-3 text-sm" title={businessEntityName}>{businessEntityName}</div></label>
             <label className="grid min-w-0 gap-1.5"><span className="text-xs font-medium text-muted-foreground">业务月份</span><input required disabled={state.mode === "relock"} type="month" value={yearMonth} onChange={(event) => { setYearMonth(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
           </div>
           <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注</span><textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[68px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm" placeholder="选填" /></label>
@@ -2896,17 +2895,17 @@ function FinanceRecordFormModal({
   onSubmit: (input: ManualIncomeInput | ManualExpenseInput) => void;
 }) {
   const defaultMonth = new Date().toISOString().slice(0, 7);
-  const activeBusinessEntities = businessEntities.filter((item) => item.status === "active");
+  const operationalEntity = getOperationalBusinessEntity(businessEntities);
   const [title, setTitle] = useState("");
   const [yearMonth, setYearMonth] = useState(defaultMonth);
-  const [businessEntityId, setBusinessEntityId] = useState(activeBusinessEntities[0]?.id ?? "");
+  const businessEntityId = operationalEntity?.id ?? "";
   const [currency, setCurrency] = useState<"JPY" | "CNY">("JPY");
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const isIncome = state.kind === "income";
   const modalTitle = isIncome ? "新增手动收入" : "新增手动支出";
   const amountNumber = Number(amount);
-  const canSubmit = title.trim() && yearMonth && Number.isFinite(amountNumber) && amountNumber > 0;
+  const canSubmit = title.trim() && yearMonth && businessEntityId && Number.isFinite(amountNumber) && amountNumber > 0;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2968,18 +2967,7 @@ function FinanceRecordFormModal({
             </label>
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">业务归属</span>
-              <select
-                value={businessEntityId}
-                onChange={(event) => setBusinessEntityId(event.target.value)}
-                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
-              >
-                <option value="">未设置</option>
-                {activeBusinessEntities.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex h-10 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-foreground">{operationalEntity?.name ?? "未配置"}</div>
             </label>
           </div>
 
@@ -3443,6 +3431,14 @@ function normalizeOptionalFormValue(value: string) {
   return trimmed || null;
 }
 
+function getOperationalBusinessEntity(businessEntities: BusinessEntityRecord[]) {
+  return businessEntities.find(
+    (entity) =>
+      entity.status === "active" &&
+      (entity.acceptsNewBusiness === true || entity.code === "aozora_school"),
+  );
+}
+
 function formatSettlementBlockingIssue(issue: string) {
   if (issue === "No planned lessons exist for this student/month.") {
     return "该学生本月没有预定课时，不能锁定月度结算。";
@@ -3496,6 +3492,10 @@ function formatApiError(error: unknown) {
     }
 
     const wageErrorTranslations = [
+      ["Operational business entity is not active or does not exist.", "青空进学塾业务归属未启用，请先检查基础设置。"],
+      ["New business must belong to the operational business entity.", "新业务只能归属青空进学塾。"],
+      ["Operational business entity cannot be archived.", "青空进学塾是当前运营归属，不能归档。"],
+      ["Operational business entity code cannot be changed.", "青空进学塾的系统编码不能修改。"],
       ["Active teacher is required.", "该老师已归档或停用，请先恢复老师状态。"],
       ["Active business entity is required.", "该业务归属已停用，当前操作不可用。"],
       ["Active wage snapshot already exists. Revoke it before relocking.", "该老师、业务归属和月份已有有效工资快照，请先撤销后再重新锁定。"],

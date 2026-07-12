@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { AuditRiskLevel, Prisma, RecordStatus } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
+import { resolveOperationalBusinessEntityId } from "../business-entities/business-ownership.policy";
 import { PrismaService } from "../database/prisma.service";
 import {
   ListStudentsQuery,
@@ -71,13 +72,13 @@ export class StudentsService {
 
   async createStudent(body: StudentWriteBody, actorUserId: string) {
     const input = this.normalizeCreateInput(body);
+    input.primaryBusinessEntityId = await resolveOperationalBusinessEntityId(
+      this.prisma,
+      input.primaryBusinessEntityId,
+    );
 
     if (input.code) {
       await this.assertCodeAvailable(input.code);
-    }
-
-    if (input.primaryBusinessEntityId) {
-      await this.assertBusinessEntityExists(input.primaryBusinessEntityId);
     }
 
     const student = await this.prisma.$transaction(async (tx) => {
@@ -116,10 +117,12 @@ export class StudentsService {
     }
 
     if (
-      input.primaryBusinessEntityId &&
       input.primaryBusinessEntityId !== before.primaryBusinessEntityId
     ) {
-      await this.assertBusinessEntityExists(input.primaryBusinessEntityId);
+      input.primaryBusinessEntityId = await resolveOperationalBusinessEntityId(
+        this.prisma,
+        input.primaryBusinessEntityId,
+      );
     }
 
     const student = await this.prisma.$transaction(async (tx) => {
@@ -220,17 +223,6 @@ export class StudentsService {
 
     if (existing && existing.id !== currentId) {
       throw new ConflictException("Student code already exists.");
-    }
-  }
-
-  private async assertBusinessEntityExists(id: string) {
-    const existing = await this.prisma.businessEntity.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-
-    if (!existing) {
-      throw new BadRequestException("primaryBusinessEntityId does not exist.");
     }
   }
 

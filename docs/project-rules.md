@@ -194,6 +194,15 @@ v3 优先围绕以下业务链路设计。
 - `teacher_wage_snapshots` 和对应工资支出均按 `teacher_id + year_month + business_entity_id` 生成。
 - `income_records` / `expense_records` 是 School 侧业务单据，Cash 交易由 `cash_requests` / `cash_events` 承接。
 
+业务归属收口规则（2026-07-13）：
+
+- V3 新业务统一归属 `aozora_school`（青空进学塾）。运行环境通过 `OPERATIONAL_BUSINESS_ENTITY_CODE` 指定运营归属，默认值为 `aozora_school`。
+- `personal`（个人名义）转为历史归属，不再接受新学生、新预定课时、手动收支、外部授课收入或新工资规则。
+- 后端在新业务未传业务归属时自动补入运营归属；显式传入其他归属时拒绝写入。前端新增表单只读显示当前运营归属。
+- 历史记录继续保留原 `business_entity_id`，列表、筛选、详情、审计和既有下游处理不得改写其归属。
+- 工资快照与支出仍保留 `teacher_id + year_month + business_entity_id` 粒度，以兼容迁移期和历史双归属数据；新业务正常情况下只会产生青空进学塾归属记录。
+- 运营归属不能被归档，其系统编码不能在基础设置中修改。
+
 学生侧课时 / 结算链路：
 
 ```text

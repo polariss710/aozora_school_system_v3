@@ -109,7 +109,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 - 前端 demo 已部署到 Render preview 环境，用于 UI / 页面结构 / 流程确认。
 - 后端已建立 NestJS + Prisma API 工程，并已接入 Supabase v3 dev PostgreSQL。
 - Prisma 已建立第一版 foundation schema 和 migration。
-- dev DB 已执行基础 seed，包含角色、权限、业务归属和 School 侧账户。
+- dev DB 已执行基础 seed，包含角色、权限、业务归属和 School 侧账户；新业务运营归属统一为青空进学塾，个人名义仅保留历史数据。
 - dev API 已补充 Render Web Service 蓝图 `render.yaml`，默认服务名为 `aozora-school-system-v3-api-dev`，并通过 `CORS_ORIGIN` 允许前端 demo 域名和本地 Vite 联调访问。
 - 2026-07-07 已确认 dev API Web Service 部署成功，`https://aozora-school-system-v3-api-dev.onrender.com/api/health` 与 DB health 可用于前端联调。
 - 前端 demo 已开始接真实 dev API：登录页会检查 API health，优先调用 `/api/auth/login`；登录成功后学生管理页和老师管理页可用 token 拉取真实列表，并可调用新增、基础信息编辑、归档和恢复动作；基础设置页可按类型标签页只读拉取业务归属、School 账户、科目和外部授课机构；收入和支出页可拉取真实列表、新增 / 作废手动记录并提交 Cash 请求；Cash 请求页可拉取真实请求队列，并允许 School 端撤回待确认请求；Cash 入站页可拉取真实列表并冲销已入账事件，入站请求由 Cash 端发起；账户流水页可只读拉取真实列表；报销管理页可拉取真实列表、读取可报销支出候选、从垫付支出生成报销并作废已完成报销。API 不可达时保留 demo fallback。
@@ -175,7 +175,7 @@ v3 已进入后端 API 第一轮主链路闭合阶段：前端 demo 主框架已
 - 基础 seed：
   - 4 个角色：系统管理员、财务负责人、业务人员、销售人员。
   - 21 个权限。
-  - 2 个业务归属：青空进学塾、个人名义。
+  - 2 个业务归属：青空进学塾为唯一新业务运营归属；个人名义已归档，仅用于历史关系和审计。
   - 3 个 School 侧账户：法人账户、吴垫付账户、包垫付账户。
 
 ## 7. 建议下一步

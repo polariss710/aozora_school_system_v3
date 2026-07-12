@@ -19,6 +19,7 @@ API contract principles:
 - State-machine APIs must write audit events for high-risk or irreversible changes.
 - Linked records should be moved forward and released by the same backend use case. Example: Cash inbound creates the School-side corporate account transaction and marks linked Cash-confirmed income records as `account_transaction_created`; rejection reverses the transaction and restores them to `cash_confirmed`.
 - Fresh planned lesson physical delete is only allowed through `POST /api/lessons/planned/:id/delete-fresh` after backend downstream guard checks.
+- New business records use the active entity identified by `OPERATIONAL_BUSINESS_ENTITY_CODE` (default `aozora_school`). Historical entity relations remain readable, but a different entity cannot be selected for new students, planned lessons, manual finance records, external-work income, or wage rules.
 
 Health endpoints:
 
@@ -316,6 +317,7 @@ Required Render environment variables:
 ```text
 NODE_ENV=production
 CORS_ORIGIN=http://localhost:5173,https://aozora-school-system-v3-demo.onrender.com
+OPERATIONAL_BUSINESS_ENTITY_CODE=aozora_school
 DATABASE_URL=<Supabase v3 dev pooler URL>
 DIRECT_DATABASE_URL=<Supabase v3 dev direct URL>
 JWT_SECRET=<long random secret>
@@ -325,4 +327,5 @@ Notes:
 
 - `DATABASE_URL`, `DIRECT_DATABASE_URL`, and `JWT_SECRET` must be set in Render, not committed to git.
 - `CORS_ORIGIN` is comma-separated when multiple frontend origins are needed.
+- `OPERATIONAL_BUSINESS_ENTITY_CODE` identifies the only entity that accepts new business. Do not use a database UUID so environment migrations remain portable.
 - The dev API uses the Supabase v3 dev project only. Do not point it at v2, staging, or future prod data.
