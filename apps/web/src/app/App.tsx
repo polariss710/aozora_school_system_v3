@@ -46,6 +46,7 @@ import {
   archiveTeacher,
   apiBaseUrl,
   cancelPlannedLesson,
+  confirmTeacherWageAdjustments,
   createTeacherWageRule,
   createReimbursementFromExpense,
   createManualExpense,
@@ -97,6 +98,7 @@ import {
   submitIncomeCashRequest,
   updateStudent,
   updateTeacher,
+  updateTeacherWageAdjustments,
   updateTeacherWageRule,
   voidExpenseRecord,
   voidIncomeRecord,
@@ -139,6 +141,7 @@ import type {
   TeacherWageRuleRecord,
   TeacherWageRuleInput,
   TeacherWageInput,
+  TeacherWageAdjustmentInput,
   TeacherWagePreview,
   TeacherWageSnapshotRecord,
   TeacherWriteInput,
@@ -260,6 +263,8 @@ type DrawerActionKey =
   | "teacherWageRule.edit"
   | "teacherWageSnapshot.relock"
   | "teacherWageSnapshot.revoke"
+  | "teacherWageSnapshot.adjust"
+  | "teacherWageSnapshot.confirmAdjustments"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -413,6 +418,7 @@ type TeacherWageDialogState = {
   yearMonth: string;
   snapshot?: TeacherWageSnapshotRecord;
 };
+type TeacherWageAdjustmentDialogState = { snapshot: TeacherWageSnapshotRecord };
 type CashRequestDialogState = { row: DataRow };
 type ReimbursementDialogState = {
   isLoading: boolean;
@@ -1376,14 +1382,22 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
 
     if (snapshot?.status === "revoked") {
       actions.push({ label: "重新预览并锁定", icon: LockKeyhole, variant: "primary", key: "teacherWageSnapshot.relock" });
-    } else if (snapshot && !snapshot.expenseRecordId && snapshot.status !== "expense_created") {
+    } else if (snapshot?.status === "locked") {
+      actions.push(
+        { label: "调整工资与查看课时", icon: PencilLine, variant: "primary", key: "teacherWageSnapshot.adjust" },
+        { label: "确认调整", icon: CheckCircle2, variant: "primary", key: "teacherWageSnapshot.confirmAdjustments" },
+      );
+    }
+
+    if (snapshot && snapshot.status !== "locked") {
+      actions.push({ label: "查看工资与课时明细", icon: Eye, variant: "secondary", key: "teacherWageSnapshot.adjust" });
+    }
+
+    if (snapshot && !snapshot.expenseRecordId && !["expense_created", "revoked"].includes(snapshot.status)) {
       actions.push({ label: "撤销工资快照", icon: RotateCcw, variant: "warning", key: "teacherWageSnapshot.revoke" });
     }
 
-    actions.push(
-      { label: "查看工资明细", icon: Eye, variant: "secondary" },
-      { label: "查看操作记录", icon: History, variant: "quiet" },
-    );
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
 
     return [
       {
@@ -2482,6 +2496,118 @@ function TeacherWageModal({ teachers, businessEntities, state, onClose, onPrevie
   );
 }
 
+function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
+  state: TeacherWageAdjustmentDialogState;
+  onClose: () => void;
+  onSave: (snapshotId: string, input: TeacherWageAdjustmentInput) => Promise<TeacherWageSnapshotRecord>;
+}) {
+  const [snapshot, setSnapshot] = useState(state.snapshot);
+  const [transportationFeeJpy, setTransportationFeeJpy] = useState(String(snapshot.transportationFeeJpy ?? 0));
+  const [classroomFeeJpy, setClassroomFeeJpy] = useState(String(snapshot.classroomFeeJpy ?? 0));
+  const [manualAdjustmentJpy, setManualAdjustmentJpy] = useState(String(snapshot.manualAdjustmentJpy ?? 0));
+  const [memo, setMemo] = useState(snapshot.memo ?? "");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const readOnly = snapshot.status !== "locked" || snapshot.adjustmentStatus === "confirmed";
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (readOnly) return;
+    const transportation = Number(transportationFeeJpy);
+    const classroom = Number(classroomFeeJpy);
+    const manual = Number(manualAdjustmentJpy);
+    if (![transportation, classroom, manual].every(Number.isFinite)) {
+      setError("调整金额必须是有效数字。");
+      return;
+    }
+    if (transportation < 0 || classroom < 0) {
+      setError("交通费和教室费不能为负数。");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    setSavedNotice(null);
+    try {
+      const updated = await onSave(snapshot.id, {
+        transportationFeeJpy: transportation,
+        classroomFeeJpy: classroom,
+        manualAdjustmentJpy: manual,
+        memo: normalizeOptionalFormValue(memo),
+      });
+      setSnapshot(updated);
+      setSavedNotice(`调整已保存，后端确认工资合计为 ${formatApiJpyAmount(updated.totalWageJpy)}。`);
+    } catch (requestError) {
+      setError(formatApiError(requestError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex max-h-[94vh] w-[min(900px,97vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-foreground">{readOnly ? "查看工资与课时明细" : "调整老师工资"}</h2>
+            <p className="mt-1 truncate text-xs text-muted-foreground" title={`${snapshot.teacher.name} / ${snapshot.businessEntity.name} / ${snapshot.yearMonth}`}>
+              {snapshot.teacher.name} / {snapshot.businessEntity.name} / {formatYearMonth(snapshot.yearMonth)} / 第{snapshot.version}版
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          <section className="overflow-hidden rounded-lg border border-border">
+            <div className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs font-semibold">工资金额</div>
+            <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">
+              {[
+                ["基础工资", formatApiJpyAmount(snapshot.baseWageJpy)],
+                ["计薪课时", `${snapshot.lessonCount} 节`],
+                ["计薪时长", formatDurationHours(snapshot.totalLessonHours)],
+                ["已保存工资合计", formatApiJpyAmount(snapshot.totalWageJpy)],
+              ].map(([label, value]) => <div key={label} className="min-w-0 bg-white px-3 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 truncate text-sm font-medium" title={value}>{value}</div></div>)}
+            </div>
+          </section>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">交通费（JPY）</span><input disabled={readOnly} min="0" step="1" type="number" value={transportationFeeJpy} onChange={(event) => { setTransportationFeeJpy(event.target.value); setSavedNotice(null); }} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">教室费（JPY）</span><input disabled={readOnly} min="0" step="1" type="number" value={classroomFeeJpy} onChange={(event) => { setClassroomFeeJpy(event.target.value); setSavedNotice(null); }} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">其他调整（JPY）</span><input disabled={readOnly} step="1" type="number" value={manualAdjustmentJpy} onChange={(event) => { setManualAdjustmentJpy(event.target.value); setSavedNotice(null); }} className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm disabled:bg-muted/40" /></label>
+          </div>
+
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注</span><textarea disabled={readOnly} value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[68px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm disabled:bg-muted/40" placeholder="选填" /></label>
+
+          <section className="overflow-hidden rounded-lg border border-border">
+            <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2.5"><span className="text-xs font-semibold">计薪课时明细</span><span className="text-[11px] text-muted-foreground">共 {snapshot.details.length} 条</span></div>
+            <div className="max-h-64 overflow-y-auto">
+              {snapshot.details.map((detail) => (
+                <div key={detail.id} className="grid grid-cols-[90px_minmax(0,1fr)_90px_100px] gap-3 border-b border-border/70 px-3 py-2.5 text-xs last:border-b-0">
+                  <span>{formatApiDate(detail.actualDate)}</span>
+                  <span className="truncate" title={`${detail.studentNameSnapshot} / ${detail.subjectNameSnapshot}`}>{detail.studentNameSnapshot} / {detail.subjectNameSnapshot}</span>
+                  <span>{formatDurationHours(detail.durationHours)}</span>
+                  <span className={detail.includedInWage ? "text-right font-medium" : "text-right text-muted-foreground"}>{detail.includedInWage ? formatApiJpyAmount(detail.lessonWageJpy) : "不计工资"}</span>
+                </div>
+              ))}
+              {snapshot.details.length === 0 && <div className="px-4 py-8 text-center text-xs text-muted-foreground">没有工资课时明细</div>}
+            </div>
+          </section>
+
+          {savedNotice && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{savedNotice}</div>}
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>{readOnly ? "关闭" : "取消"}</ActionButton>
+          {!readOnly && <button type="submit" disabled={isSubmitting} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{isSubmitting ? "保存中" : "保存调整"}</button>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function TeacherFormModal({
   state,
   isSubmitting,
@@ -3219,6 +3345,8 @@ function formatApiError(error: unknown) {
       ["Active wage snapshot already exists. Revoke it before relocking.", "该老师、业务归属和月份已有有效工资快照，请先撤销后再重新锁定。"],
       ["Wage snapshot already generated expense.", "该工资快照已经生成支出，不能直接撤销或重新锁定。"],
       ["Student monthly settlements must be locked before teacher wage settlement.", "参与计薪课时对应的学生月度结算尚未全部锁定。"],
+      ["Confirmed wage adjustments cannot be edited.", "工资调整已经确认，不能继续修改金额。请先撤销整份工资快照。"],
+      ["Revoked wage snapshot cannot be adjusted.", "已撤销的工资快照不能调整。"],
     ] as const;
     for (const [source, translated] of wageErrorTranslations) {
       if (message.includes(source)) message = message.replace(source, translated);
@@ -4504,7 +4632,7 @@ function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceLis
     description:
       wageSnapshotApi.status === "error"
         ? `真实 dev API 工资结算读取失败：${wageSnapshotApi.message}`
-        : "真实 dev API 工资快照列表；本阶段支持预览、锁定、撤销和版本化重锁",
+        : "真实 dev API 工资快照列表；支持预览、锁定、工资调整、确认、撤销和版本化重锁",
     primaryAction: wageSnapshotApi.status === "ready" ? "生成工资预览" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
@@ -8378,6 +8506,7 @@ export default function App() {
   const [isTeacherWageRuleSubmitting, setIsTeacherWageRuleSubmitting] = useState(false);
   const [teacherWageRuleError, setTeacherWageRuleError] = useState<string | null>(null);
   const [teacherWageDialog, setTeacherWageDialog] = useState<TeacherWageDialogState | null>(null);
+  const [teacherWageAdjustmentDialog, setTeacherWageAdjustmentDialog] = useState<TeacherWageAdjustmentDialogState | null>(null);
   const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
   const [financeReloadKey, setFinanceReloadKey] = useState(0);
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
@@ -9127,6 +9256,14 @@ export default function App() {
     setActionNotice({ tone: "emerald", text: relocked ? "新版本工资快照已锁定，旧版本继续保留。" : "老师工资快照已锁定。" });
   };
 
+  const submitTeacherWageAdjustments = async (snapshotId: string, input: TeacherWageAdjustmentInput) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再调整工资。");
+    const result = await updateTeacherWageAdjustments(authSession.accessToken, snapshotId, input);
+    setWorkflowReloadKey((current) => current + 1);
+    setActionNotice({ tone: "emerald", text: "工资调整已保存，工资合计已由后端重新计算。" });
+    return result.snapshot;
+  };
+
   const submitTuitionBillForm = async (input: GenerateTuitionBillInput) => {
     if (!authSession) {
       setTuitionBillMutationError("请先使用真实 API 登录后再生成账单。");
@@ -9461,12 +9598,39 @@ export default function App() {
       return;
     }
 
-    if (actionKey === "teacherWageSnapshot.relock" || actionKey === "teacherWageSnapshot.revoke") {
+    if (
+      actionKey === "teacherWageSnapshot.relock" ||
+      actionKey === "teacherWageSnapshot.revoke" ||
+      actionKey === "teacherWageSnapshot.adjust" ||
+      actionKey === "teacherWageSnapshot.confirmAdjustments"
+    ) {
       if (!authSession || !row.teacherWageSnapshotRecord) {
         setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的工资快照。" });
         return;
       }
       const snapshot = row.teacherWageSnapshotRecord;
+      if (actionKey === "teacherWageSnapshot.adjust") {
+        setDetailRow(null);
+        setTeacherWageAdjustmentDialog({ snapshot });
+        return;
+      }
+
+      if (actionKey === "teacherWageSnapshot.confirmAdjustments") {
+        const confirmed = window.confirm(
+          `确认「${snapshot.teacher.name}」${snapshot.yearMonth} / ${snapshot.businessEntity.name} 的工资调整？\n\n确认后金额进入只读保护；如需修改，必须先撤销整份工资快照。`,
+        );
+        if (!confirmed) return;
+        try {
+          await confirmTeacherWageAdjustments(authSession.accessToken, snapshot.id, snapshot.memo);
+          setDetailRow(null);
+          setWorkflowReloadKey((current) => current + 1);
+          setActionNotice({ tone: "emerald", text: "工资调整已确认，金额已进入只读保护。" });
+        } catch (error) {
+          setActionNotice({ tone: "rose", text: formatApiError(error) });
+        }
+        return;
+      }
+
       if (actionKey === "teacherWageSnapshot.relock") {
         setDetailRow(null);
         setTeacherWageDialog({
@@ -9973,6 +10137,13 @@ export default function App() {
           onClose={() => setTeacherWageDialog(null)}
           onPreview={requestTeacherWagePreview}
           onLock={submitTeacherWageLock}
+        />
+      )}
+      {teacherWageAdjustmentDialog && (
+        <TeacherWageAdjustmentModal
+          state={teacherWageAdjustmentDialog}
+          onClose={() => setTeacherWageAdjustmentDialog(null)}
+          onSave={submitTeacherWageAdjustments}
         />
       )}
       {financeDialog && (

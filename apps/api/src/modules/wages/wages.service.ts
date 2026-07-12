@@ -733,6 +733,13 @@ export class WagesService {
     if (snapshot.status === TeacherWageSnapshotStatus.revoked) {
       throw new BadRequestException("Revoked wage snapshot cannot be adjusted.");
     }
+
+    if (
+      snapshot.status !== TeacherWageSnapshotStatus.locked ||
+      snapshot.adjustmentStatus === TeacherWageAdjustmentStatus.confirmed
+    ) {
+      throw new BadRequestException("Confirmed wage adjustments cannot be edited.");
+    }
   }
 
   private assertSnapshotExportable(snapshot: WageSnapshot) {

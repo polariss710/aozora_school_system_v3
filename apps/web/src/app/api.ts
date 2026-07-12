@@ -607,6 +607,13 @@ export interface LockTeacherWageInput extends TeacherWageInput {
   memo?: string | null;
 }
 
+export interface TeacherWageAdjustmentInput {
+  transportationFeeJpy: number;
+  classroomFeeJpy: number;
+  manualAdjustmentJpy: number;
+  memo?: string | null;
+}
+
 export interface TeacherWagePreview {
   teacher: RelatedTeacherRecord;
   businessEntity: RelatedBusinessEntityRecord;
@@ -1157,6 +1164,26 @@ export function revokeTeacherWage(accessToken: string, snapshotId: string, reaso
     method: "POST",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify({ reason: reason || null }),
+  });
+}
+
+export function updateTeacherWageAdjustments(
+  accessToken: string,
+  snapshotId: string,
+  input: TeacherWageAdjustmentInput,
+) {
+  return requestJson<{ snapshot: TeacherWageSnapshotRecord }>(`/wages/teacher/${snapshotId}/adjustments`, {
+    method: "PATCH",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function confirmTeacherWageAdjustments(accessToken: string, snapshotId: string, memo?: string | null) {
+  return requestJson<{ snapshot: TeacherWageSnapshotRecord }>(`/wages/teacher/${snapshotId}/confirm-adjustments`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ memo: memo || null }),
   });
 }
 
