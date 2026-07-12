@@ -43,6 +43,16 @@ export type ImportTeacherAttendanceAdjustmentsBody = UpdateTeacherWageAdjustment
   importSource?: unknown;
 };
 
+export type TeacherAttendanceWorkbookBody = {
+  teacherId?: unknown;
+  yearMonth?: unknown;
+};
+
+export type TeacherAttendanceWorkbookImportBody = TeacherAttendanceWorkbookBody & {
+  rows?: unknown;
+  importSource?: unknown;
+};
+
 export type ConfirmTeacherWageAdjustmentsBody = {
   memo?: unknown;
 };

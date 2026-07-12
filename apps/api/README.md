@@ -221,6 +221,9 @@ PATCH /api/wages/teacher/:id/adjustments
 POST /api/wages/teacher/:id/attendance-export
 POST /api/wages/teacher/:id/attendance-import-preview
 POST /api/wages/teacher/:id/attendance-import-confirm
+POST /api/wages/attendance/export
+POST /api/wages/attendance/import-preview
+POST /api/wages/attendance/import-confirm
 POST /api/wages/teacher/:id/confirm-adjustments
 POST /api/wages/teacher/:id/revoke
 ```

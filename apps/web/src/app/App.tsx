@@ -47,6 +47,7 @@ import {
   apiBaseUrl,
   cancelPlannedLesson,
   confirmTeacherWageAdjustments,
+  confirmTeacherAttendanceWorkbookImport,
   createTeacherWageRule,
   createReimbursementFromExpense,
   createExpenseFromTeacherWage,
@@ -78,6 +79,7 @@ import {
   listTeachers,
   listTeacherWageRules,
   listTeacherWageSnapshots,
+  exportTeacherAttendanceWorkbook,
   listTuitionBills,
   lockStudentSettlement,
   lockTeacherWage,
@@ -89,6 +91,7 @@ import {
   markPlannedLessonMakeupPending,
   previewStudentSettlement,
   previewTeacherWage,
+  previewTeacherAttendanceWorkbookImport,
   rejectCashInboundEvent,
   revokeStudentSettlement,
   revokeTeacherWage,
@@ -145,9 +148,15 @@ import type {
   TeacherWageAdjustmentInput,
   TeacherWagePreview,
   TeacherWageSnapshotRecord,
+  TeacherAttendanceWorkbookImportInput,
+  TeacherAttendanceWorkbookImportPreview,
   TeacherWriteInput,
   TuitionBillRecord,
 } from "./api";
+import {
+  downloadTeacherAttendanceWorkbook,
+  parseTeacherAttendanceWorkbook,
+} from "./attendance-workbook";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
 
@@ -221,6 +230,7 @@ interface DataRow {
   studentSettlementRecord?: StudentSettlementRecord;
   teacherWageRuleRecord?: TeacherWageRuleRecord;
   teacherWageSnapshotRecord?: TeacherWageSnapshotRecord;
+  teacherAttendanceGroup?: TeacherAttendanceGroup;
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
@@ -268,6 +278,8 @@ type DrawerActionKey =
   | "teacherWageSnapshot.confirmAdjustments"
   | "teacherWageSnapshot.generateExpense"
   | "teacherWageSnapshot.viewExpense"
+  | "teacherAttendance.export"
+  | "teacherAttendance.import"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -422,6 +434,13 @@ type TeacherWageDialogState = {
   snapshot?: TeacherWageSnapshotRecord;
 };
 type TeacherWageAdjustmentDialogState = { snapshot: TeacherWageSnapshotRecord };
+interface TeacherAttendanceGroup {
+  teacherId: string;
+  teacherName: string;
+  yearMonth: string;
+  snapshots: TeacherWageSnapshotRecord[];
+}
+type TeacherAttendanceImportDialogState = { group: TeacherAttendanceGroup };
 type CashRequestDialogState = { row: DataRow };
 type ReimbursementDialogState = {
   isLoading: boolean;
@@ -1420,17 +1439,27 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   }
 
   if (row.id.startsWith("import-")) {
+    const group = row.teacherAttendanceGroup;
+    const canExport = Boolean(group && group.snapshots.every((snapshot) =>
+      snapshot.status === "locked" && ["none", "exported"].includes(snapshot.adjustmentStatus),
+    ));
+    const canImport = Boolean(group && group.snapshots.every((snapshot) =>
+      snapshot.status === "locked" && ["exported", "imported"].includes(snapshot.adjustmentStatus),
+    ));
+    const actions: DrawerAction[] = [];
+    if (canExport) {
+      actions.push({ label: row.status === "未导出" ? "下载勤务表" : "重新下载勤务表", icon: Download, variant: "primary", key: "teacherAttendance.export" });
+    }
+    if (canImport) {
+      actions.push({ label: "上传老师回传文件", icon: FileText, variant: "primary", key: "teacherAttendance.import" });
+    }
+    actions.push({ label: "查看工资快照", icon: Eye, variant: "secondary" });
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
+
     return [
       {
         title: "勤务表导入操作",
-        actions: [
-          { label: "下载勤务表", icon: Download, variant: "secondary" },
-          { label: "上传老师回传文件", icon: FileText, variant: "primary" },
-          { label: "预览读取结果", icon: Eye, variant: "secondary" },
-          { label: "导入交通费 / 教室费", icon: RefreshCw, variant: "primary" },
-          { label: "查看导入日志", icon: History, variant: "quiet" },
-          { label: "作废本次导入", icon: X, variant: "warning" },
-        ],
+        actions,
       },
     ];
   }
@@ -2617,6 +2646,114 @@ function TeacherWageAdjustmentModal({ state, onClose, onSave }: {
   );
 }
 
+function TeacherAttendanceImportModal({ state, onClose, onPreview, onConfirm }: {
+  state: TeacherAttendanceImportDialogState;
+  onClose: () => void;
+  onPreview: (file: File, group: TeacherAttendanceGroup) => Promise<{
+    input: TeacherAttendanceWorkbookImportInput;
+    preview: TeacherAttendanceWorkbookImportPreview;
+  }>;
+  onConfirm: (input: TeacherAttendanceWorkbookImportInput) => Promise<void>;
+}) {
+  const [fileName, setFileName] = useState("");
+  const [input, setInput] = useState<TeacherAttendanceWorkbookImportInput | null>(null);
+  const [preview, setPreview] = useState<TeacherAttendanceWorkbookImportPreview | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectFile = async (file: File | undefined) => {
+    if (!file) return;
+    setFileName(file.name);
+    setInput(null);
+    setPreview(null);
+    setError(null);
+    setIsPreviewing(true);
+    try {
+      const result = await onPreview(file, state.group);
+      setInput(result.input);
+      setPreview(result.preview);
+    } catch (requestError) {
+      setError(formatApiError(requestError));
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
+  const confirm = async () => {
+    if (!input || !preview) return;
+    setIsConfirming(true);
+    setError(null);
+    try {
+      await onConfirm(input);
+    } catch (requestError) {
+      setError(formatApiError(requestError));
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <div className="relative z-10 flex max-h-[92vh] w-[min(760px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">导入老师勤务表</h2>
+            <p className="mt-1 truncate text-xs text-muted-foreground">{state.group.teacherName} / {formatYearMonth(state.group.yearMonth)} / {state.group.snapshots.length} 个业务归属</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">老师回传 Excel</span>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              disabled={isPreviewing || isConfirming}
+              onChange={(event) => void selectFile(event.target.files?.[0])}
+              className="block w-full rounded-md border border-border bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-sky-50 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-sky-700"
+            />
+          </label>
+
+          {fileName && <div className="text-xs text-muted-foreground">已选择：{fileName}</div>}
+          {isPreviewing && <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700"><RefreshCw className="h-3.5 w-3.5 animate-spin" />正在读取并校验文件...</div>}
+
+          {preview && (
+            <section className="overflow-hidden rounded-lg border border-border">
+              <div className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs font-semibold">导入预览 · {preview.rowCount} 条课时</div>
+              <div className="divide-y divide-border">
+                {preview.groups.map((group) => (
+                  <div key={group.snapshotId} className="grid gap-2 px-4 py-3 text-xs sm:grid-cols-[minmax(0,1fr)_120px_120px_140px] sm:items-center">
+                    <div className="min-w-0"><div className="truncate font-medium" title={group.businessEntity.name}>{group.businessEntity.name}</div><div className="mt-0.5 text-muted-foreground">{group.rowCount} 条课时</div></div>
+                    <div><span className="text-muted-foreground">交通费 </span>{formatApiJpyAmount(group.after.transportationFeeJpy)}</div>
+                    <div><span className="text-muted-foreground">教室费 </span>{formatApiJpyAmount(group.after.classroomFeeJpy)}</div>
+                    <div><span className="text-muted-foreground">工资合计 </span><span className="font-medium">{formatApiJpyAmount(group.after.totalWageJpy)}</span></div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-px border-t border-border bg-border text-xs">
+                <div className="bg-white px-3 py-2"><span className="text-muted-foreground">交通费合计 </span>{formatApiJpyAmount(preview.totalTransportationFeeJpy)}</div>
+                <div className="bg-white px-3 py-2"><span className="text-muted-foreground">教室费合计 </span>{formatApiJpyAmount(preview.totalClassroomFeeJpy)}</div>
+                <div className="bg-white px-3 py-2"><span className="text-muted-foreground">工资总计 </span><span className="font-medium">{formatApiJpyAmount(preview.totalWageJpy)}</span></div>
+              </div>
+            </section>
+          )}
+
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">系统只读取交通费和教室费。业务归属、日期、学生、科目、课时和工资金额不会从 Excel 回写。</div>
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="button" disabled={!preview || !input || isPreviewing || isConfirming} onClick={() => void confirm()} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white disabled:bg-[#8cbfe3]">{isConfirming ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <FileCheck2 className="h-3.5 w-3.5" />}{isConfirming ? "导入中" : "确认导入"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TeacherFormModal({
   state,
   isSubmitting,
@@ -3358,6 +3495,12 @@ function formatApiError(error: unknown) {
       ["Revoked wage snapshot cannot be adjusted.", "已撤销的工资快照不能调整。"],
       ["Wage snapshot adjustments must be confirmed before generating expense.", "工资调整尚未确认，不能生成工资支出。"],
       ["Rejected teacher wage expense with account transaction cannot be voided.", "该工资支出已经存在账户流水，不能按 Cash 拒绝分支直接作废。"],
+      ["No active teacher wage snapshots exist for this teacher/month.", "该老师和月份没有可用的工资快照。"],
+      ["Only locked wage snapshots can be exported to attendance workbook.", "只有尚未确认调整的锁定工资快照可以导出勤务表。"],
+      ["Wage snapshot already has adjustments and cannot start Excel workflow.", "工资快照已经通过其他方式调整，不能再开始 Excel 流程。"],
+      ["Attendance workbook must be exported before import.", "请先从系统导出勤务表，再导入老师回传文件。"],
+      ["Attendance workbook detail rows do not match exported snapshot details.", "回传文件的课时行数与导出快照不一致，请使用原始导出文件。"],
+      ["Attendance workbook detail mapping does not match exported snapshots.", "回传文件的课时映射已被修改，不能导入。"],
     ] as const;
     for (const [source, translated] of wageErrorTranslations) {
       if (message.includes(source)) message = message.replace(source, translated);
@@ -4766,7 +4909,7 @@ function buildWageImportPage(basePage: PageConfig, wageImportApi: FinanceListSta
     description:
       wageImportApi.status === "error"
         ? `真实 dev API 勤务表状态读取失败：${wageImportApi.message}`
-        : "真实 dev API 工资快照的勤务表导出/导入状态；第一层只读展示",
+        : "每位老师每月一份勤务表；跨业务归属合并导出并分别写回工资快照",
     primaryAction: undefined,
     secondaryAction: undefined,
     batchAction: undefined,
@@ -4803,7 +4946,7 @@ function buildWageImportPage(basePage: PageConfig, wageImportApi: FinanceListSta
   return {
     ...readonlyBasePage,
     metrics: [
-      { label: "勤务表快照", value: `${wageImportApi.total} 份`, sub: "来自工资快照", tone: "sky", icon: Download },
+      { label: "老师勤务表", value: `${wageImportApi.total} 份`, sub: "老师 + 月份", tone: "sky", icon: Download },
       { label: "已导出", value: `${exportedCount} 份`, sub: "等待老师回填", tone: "cyan", icon: Download },
       { label: "已导入待确认", value: `${importedCount} 份`, sub: "费用已写回", tone: "amber", icon: RefreshCw },
       { label: "调整已确认", value: `${confirmedCount} 份`, sub: "可生成支出", tone: "emerald", icon: CheckCircle2 },
@@ -4811,27 +4954,77 @@ function buildWageImportPage(basePage: PageConfig, wageImportApi: FinanceListSta
   };
 }
 
-function mapTeacherWageSnapshotToImportRow(record: TeacherWageSnapshotRecord): DataRow {
-  const status = getWageImportStatusView(record.adjustmentStatus);
+function buildTeacherAttendanceGroupRows(records: TeacherWageSnapshotRecord[]) {
+  const groups = new Map<string, TeacherAttendanceGroup>();
+  for (const record of records.filter((item) => item.status !== "revoked")) {
+    const key = `${record.teacherId}:${record.yearMonth}`;
+    const group = groups.get(key) ?? {
+      teacherId: record.teacherId,
+      teacherName: record.teacher.name,
+      yearMonth: record.yearMonth,
+      snapshots: [],
+    };
+    group.snapshots.push(record);
+    groups.set(key, group);
+  }
+
+  return Array.from(groups.values())
+    .sort((left, right) => right.yearMonth.localeCompare(left.yearMonth) || left.teacherName.localeCompare(right.teacherName, "zh-CN"))
+    .map(mapTeacherAttendanceGroupToRow);
+}
+
+function mapTeacherAttendanceGroupToRow(group: TeacherAttendanceGroup): DataRow {
+  const snapshots = [...group.snapshots].sort((left, right) => left.businessEntity.name.localeCompare(right.businessEntity.name, "zh-CN"));
+  const status = getTeacherAttendanceGroupStatus(snapshots);
+  const latestUpdatedAt = snapshots.reduce((latest, snapshot) => snapshot.updatedAt > latest ? snapshot.updatedAt : latest, "");
+  const exported = snapshots.every((snapshot) => ["exported", "imported", "confirmed"].includes(snapshot.adjustmentStatus));
+  const returned = snapshots.every((snapshot) => ["imported", "confirmed"].includes(snapshot.adjustmentStatus));
 
   return {
-    id: `import-${record.id}`,
-    title: record.teacher.name,
-    subtitle: `${formatYearMonth(record.yearMonth)}勤务表`,
+    id: `import-${group.teacherId}-${group.yearMonth}`,
+    title: group.teacherName,
+    subtitle: `${formatYearMonth(group.yearMonth)}勤务表 · ${snapshots.length} 个业务归属`,
     status: status.label,
     tone: status.tone,
-    apiRef: { resource: "teacherWageSnapshot", id: record.id },
-    readOnlyActions: true,
+    teacherAttendanceGroup: { ...group, snapshots },
     cells: {
-      exported: ["exported", "imported", "manual_adjusted", "confirmed"].includes(record.adjustmentStatus)
-        ? formatApiDate(record.updatedAt)
-        : "-",
-      returned: ["imported", "manual_adjusted", "confirmed"].includes(record.adjustmentStatus) ? formatApiDate(record.updatedAt) : "-",
-      transport: formatApiJpyAmount(record.transportationFeeJpy),
-      classroom: formatApiJpyAmount(record.classroomFeeJpy),
+      exported: exported ? formatApiDate(latestUpdatedAt) : "-",
+      returned: returned ? formatApiDate(latestUpdatedAt) : "-",
+      transport: formatApiJpyAmount(snapshots.reduce((sum, snapshot) => sum + (parseApiAmount(snapshot.transportationFeeJpy) ?? 0), 0)),
+      classroom: formatApiJpyAmount(snapshots.reduce((sum, snapshot) => sum + (parseApiAmount(snapshot.classroomFeeJpy) ?? 0), 0)),
     },
-    detail: buildTeacherWageSnapshotDetail(record, getTeacherWageSnapshotStatusView(record.status).label),
+    detail: [
+      {
+        title: "勤务表范围",
+        lines: [
+          { label: "老师", value: group.teacherName },
+          { label: "业务月份", value: formatYearMonth(group.yearMonth) },
+          { label: "业务归属", value: snapshots.map((snapshot) => snapshot.businessEntity.name).join("；") },
+          { label: "工资快照", value: `${snapshots.length} 份` },
+          { label: "课时明细", value: `${snapshots.reduce((sum, snapshot) => sum + snapshot.details.length, 0)} 条` },
+        ],
+      },
+    ],
   };
+}
+
+function getTeacherAttendanceGroupStatus(snapshots: TeacherWageSnapshotRecord[]): { label: string; tone: Tone } {
+  if (snapshots.every((snapshot) => snapshot.adjustmentStatus === "none" && snapshot.status === "locked")) {
+    return { label: "未导出", tone: "slate" };
+  }
+  if (snapshots.every((snapshot) => snapshot.adjustmentStatus === "exported" && snapshot.status === "locked")) {
+    return { label: "已导出", tone: "cyan" };
+  }
+  if (snapshots.every((snapshot) => snapshot.adjustmentStatus === "imported" && snapshot.status === "locked")) {
+    return { label: "已导入待确认", tone: "amber" };
+  }
+  if (snapshots.every((snapshot) => snapshot.adjustmentStatus === "confirmed")) {
+    return { label: "调整已确认", tone: "emerald" };
+  }
+  if (snapshots.some((snapshot) => snapshot.status === "expense_created")) {
+    return { label: "已生成支出", tone: "emerald" };
+  }
+  return { label: "状态不一致", tone: "rose" };
 }
 
 function getTeacherWageSnapshotStatusView(status: string): { label: string; tone: Tone } {
@@ -8527,6 +8720,7 @@ export default function App() {
   const [teacherWageRuleError, setTeacherWageRuleError] = useState<string | null>(null);
   const [teacherWageDialog, setTeacherWageDialog] = useState<TeacherWageDialogState | null>(null);
   const [teacherWageAdjustmentDialog, setTeacherWageAdjustmentDialog] = useState<TeacherWageAdjustmentDialogState | null>(null);
+  const [teacherAttendanceImportDialog, setTeacherAttendanceImportDialog] = useState<TeacherAttendanceImportDialogState | null>(null);
   const [financeApi, setFinanceApi] = useState<FinanceApiState>(createEmptyFinanceApiState);
   const [financeReloadKey, setFinanceReloadKey] = useState(0);
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
@@ -8994,6 +9188,7 @@ export default function App() {
           return;
         }
 
+        const attendanceRows = buildTeacherAttendanceGroupRows(wageSnapshots.items);
         setWorkflowApi({
           wageRules: {
             status: "ready",
@@ -9007,8 +9202,8 @@ export default function App() {
           },
           wageImports: {
             status: "ready",
-            rows: wageSnapshots.items.map(mapTeacherWageSnapshotToImportRow),
-            total: wageSnapshots.total,
+            rows: attendanceRows,
+            total: attendanceRows.length,
           },
           externalLessons: {
             status: "ready",
@@ -9282,6 +9477,27 @@ export default function App() {
     setWorkflowReloadKey((current) => current + 1);
     setActionNotice({ tone: "emerald", text: "工资调整已保存，工资合计已由后端重新计算。" });
     return result.snapshot;
+  };
+
+  const requestTeacherAttendanceImportPreview = async (
+    file: File,
+    group: TeacherAttendanceGroup,
+  ) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再导入勤务表。");
+    const input = await parseTeacherAttendanceWorkbook(file);
+    if (input.teacherId !== group.teacherId || input.yearMonth !== group.yearMonth) {
+      throw new Error("所选文件与当前老师或业务月份不一致。");
+    }
+    const result = await previewTeacherAttendanceWorkbookImport(authSession.accessToken, input);
+    return { input, preview: result.preview };
+  };
+
+  const submitTeacherAttendanceImport = async (input: TeacherAttendanceWorkbookImportInput) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再导入勤务表。");
+    await confirmTeacherAttendanceWorkbookImport(authSession.accessToken, input);
+    setTeacherAttendanceImportDialog(null);
+    setWorkflowReloadKey((current) => current + 1);
+    setActionNotice({ tone: "emerald", text: "勤务表费用已按业务归属写回工资快照，请继续确认工资调整。" });
   };
 
   const submitTuitionBillForm = async (input: GenerateTuitionBillInput) => {
@@ -9699,6 +9915,33 @@ export default function App() {
         setDetailRow(null);
         setWorkflowReloadKey((current) => current + 1);
         setActionNotice({ tone: "emerald", text: "工资快照已撤销，可从该记录重新生成新版本。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
+      return;
+    }
+
+    if (actionKey === "teacherAttendance.export" || actionKey === "teacherAttendance.import") {
+      if (!authSession || !row.teacherAttendanceGroup) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择老师勤务表记录。" });
+        return;
+      }
+      const group = row.teacherAttendanceGroup;
+      if (actionKey === "teacherAttendance.import") {
+        setDetailRow(null);
+        setTeacherAttendanceImportDialog({ group });
+        return;
+      }
+
+      try {
+        const result = await exportTeacherAttendanceWorkbook(authSession.accessToken, {
+          teacherId: group.teacherId,
+          yearMonth: group.yearMonth,
+        });
+        await downloadTeacherAttendanceWorkbook(result.exportPayload);
+        setDetailRow(null);
+        setWorkflowReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "勤务表 Excel 已导出；同一老师的多个业务归属已合并到一个文件。" });
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
@@ -10195,6 +10438,14 @@ export default function App() {
           state={teacherWageAdjustmentDialog}
           onClose={() => setTeacherWageAdjustmentDialog(null)}
           onSave={submitTeacherWageAdjustments}
+        />
+      )}
+      {teacherAttendanceImportDialog && (
+        <TeacherAttendanceImportModal
+          state={teacherAttendanceImportDialog}
+          onClose={() => setTeacherAttendanceImportDialog(null)}
+          onPreview={requestTeacherAttendanceImportPreview}
+          onConfirm={submitTeacherAttendanceImport}
         />
       )}
       {financeDialog && (

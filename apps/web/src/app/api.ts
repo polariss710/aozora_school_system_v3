@@ -683,6 +683,70 @@ export interface TeacherWageSnapshotRecord {
   }>;
 }
 
+export interface TeacherAttendanceWorkbookRow {
+  rowNo: number;
+  snapshotId: string;
+  detailId: string;
+  businessEntityId: string;
+  businessEntityCode: string;
+  businessEntityName: string;
+  actualDate: string;
+  studentName: string;
+  subjectName: string;
+  content: string | null;
+  durationHours: ApiAmountValue;
+  lessonWageJpy: ApiAmountValue;
+  includedInWage: boolean;
+  transportationFeeJpy: ApiAmountValue;
+  classroomFeeJpy: ApiAmountValue;
+}
+
+export interface TeacherAttendanceWorkbookPayload {
+  kind: "teacher_attendance_workbook";
+  schemaVersion: number;
+  teacher: RelatedTeacherRecord;
+  yearMonth: string;
+  sortPolicy: string[];
+  snapshots: Array<{
+    id: string;
+    version: number;
+    businessEntity: RelatedBusinessEntityRecord;
+    lessonCount: number;
+    totalLessonHours: ApiAmountValue;
+    baseWageJpy: ApiAmountValue;
+  }>;
+  rows: TeacherAttendanceWorkbookRow[];
+}
+
+export interface TeacherAttendanceWorkbookImportInput {
+  teacherId: string;
+  yearMonth: string;
+  importSource: string;
+  rows: Array<{
+    snapshotId: string;
+    detailId: string;
+    transportationFeeJpy: number;
+    classroomFeeJpy: number;
+  }>;
+}
+
+export interface TeacherAttendanceWorkbookImportPreview {
+  teacher: RelatedTeacherRecord;
+  yearMonth: string;
+  importSource: string;
+  rowCount: number;
+  groups: Array<{
+    snapshotId: string;
+    businessEntity: RelatedBusinessEntityRecord;
+    rowCount: number;
+    before: { transportationFeeJpy: number; classroomFeeJpy: number; totalWageJpy: number };
+    after: { transportationFeeJpy: number; classroomFeeJpy: number; totalWageJpy: number };
+  }>;
+  totalTransportationFeeJpy: number;
+  totalClassroomFeeJpy: number;
+  totalWageJpy: number;
+}
+
 export interface ExternalWorkLessonRecord {
   id: string;
   workplaceId: string;
@@ -1185,6 +1249,42 @@ export function confirmTeacherWageAdjustments(accessToken: string, snapshotId: s
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify({ memo: memo || null }),
   });
+}
+
+export function exportTeacherAttendanceWorkbook(
+  accessToken: string,
+  input: { teacherId: string; yearMonth: string },
+) {
+  return requestJson<{ exportPayload: TeacherAttendanceWorkbookPayload }>("/wages/attendance/export", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function previewTeacherAttendanceWorkbookImport(
+  accessToken: string,
+  input: TeacherAttendanceWorkbookImportInput,
+) {
+  return requestJson<{ preview: TeacherAttendanceWorkbookImportPreview }>("/wages/attendance/import-preview", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function confirmTeacherAttendanceWorkbookImport(
+  accessToken: string,
+  input: TeacherAttendanceWorkbookImportInput,
+) {
+  return requestJson<{ snapshots: TeacherWageSnapshotRecord[]; preview: TeacherAttendanceWorkbookImportPreview }>(
+    "/wages/attendance/import-confirm",
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function listExternalWorkLessons(accessToken: string) {

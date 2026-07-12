@@ -25,6 +25,8 @@ import {
   PreviewTeacherWageBody,
   RevokeTeacherWageSnapshotBody,
   TeacherWageRuleBody,
+  TeacherAttendanceWorkbookBody,
+  TeacherAttendanceWorkbookImportBody,
   UpdateTeacherWageAdjustmentsBody,
 } from "./wages.types";
 
@@ -99,6 +101,13 @@ type NormalizedWageKey = {
   teacherId: string;
   yearMonth: string;
   businessEntityId: string;
+};
+
+type NormalizedAttendanceWorkbookRow = {
+  snapshotId: string;
+  detailId: string;
+  transportationFeeJpy: number;
+  classroomFeeJpy: number;
 };
 
 @Injectable()
@@ -396,6 +405,106 @@ export class WagesService {
     });
 
     return { snapshot };
+  }
+
+  async exportAttendanceWorkbook(
+    body: TeacherAttendanceWorkbookBody,
+    actorUserId: string,
+  ) {
+    const key = this.normalizeAttendanceWorkbookKey(body);
+    const before = await this.findAttendanceWorkbookSnapshots(key);
+    before.forEach((snapshot) => this.assertAttendanceWorkbookExportable(snapshot));
+
+    const snapshots = await this.prisma.$transaction(async (tx) => {
+      const saved: WageSnapshot[] = [];
+
+      for (const snapshot of before) {
+        const updated =
+          snapshot.adjustmentStatus === TeacherWageAdjustmentStatus.none
+            ? await tx.teacherWageSnapshot.update({
+                where: { id: snapshot.id },
+                data: { adjustmentStatus: TeacherWageAdjustmentStatus.exported },
+                select: wageSnapshotSelect,
+              })
+            : snapshot;
+
+        await this.auditService.recordEvent(
+          {
+            actorUserId,
+            action: "teacher_attendance_workbook.export",
+            targetType: "teacher_wage_snapshot",
+            targetId: snapshot.id,
+            riskLevel: AuditRiskLevel.medium,
+            beforeSnapshot: snapshot,
+            afterSnapshot: updated,
+          },
+          tx,
+        );
+        saved.push(updated);
+      }
+
+      return saved;
+    });
+
+    return { exportPayload: this.buildAttendanceWorkbookExportPayload(snapshots) };
+  }
+
+  async previewAttendanceWorkbookImport(body: TeacherAttendanceWorkbookImportBody) {
+    const key = this.normalizeAttendanceWorkbookKey(body);
+    const snapshots = await this.findAttendanceWorkbookSnapshots(key);
+    const rows = this.normalizeAttendanceWorkbookRows(body.rows);
+    const importSource = this.normalizeOptionalString(body.importSource) ?? "xlsx_upload";
+
+    return {
+      preview: this.buildAttendanceWorkbookImportPreview(snapshots, rows, importSource),
+    };
+  }
+
+  async confirmAttendanceWorkbookImport(
+    body: TeacherAttendanceWorkbookImportBody,
+    actorUserId: string,
+  ) {
+    const key = this.normalizeAttendanceWorkbookKey(body);
+    const before = await this.findAttendanceWorkbookSnapshots(key);
+    const rows = this.normalizeAttendanceWorkbookRows(body.rows);
+    const importSource = this.normalizeOptionalString(body.importSource) ?? "xlsx_upload";
+    const preview = this.buildAttendanceWorkbookImportPreview(before, rows, importSource);
+
+    const snapshots = await this.prisma.$transaction(async (tx) => {
+      const saved: WageSnapshot[] = [];
+
+      for (const group of preview.groups) {
+        const previous = before.find((snapshot) => snapshot.id === group.snapshotId)!;
+        const updated = await tx.teacherWageSnapshot.update({
+          where: { id: group.snapshotId },
+          data: {
+            transportationFeeJpy: group.after.transportationFeeJpy,
+            classroomFeeJpy: group.after.classroomFeeJpy,
+            totalWageJpy: group.after.totalWageJpy,
+            adjustmentStatus: TeacherWageAdjustmentStatus.imported,
+          },
+          select: wageSnapshotSelect,
+        });
+
+        await this.auditService.recordEvent(
+          {
+            actorUserId,
+            action: "teacher_attendance_workbook.import",
+            targetType: "teacher_wage_snapshot",
+            targetId: group.snapshotId,
+            riskLevel: AuditRiskLevel.high,
+            beforeSnapshot: previous,
+            afterSnapshot: { snapshot: updated, importSource, workbookPreview: group },
+          },
+          tx,
+        );
+        saved.push(updated);
+      }
+
+      return saved;
+    });
+
+    return { snapshots, preview };
   }
 
   async exportAttendanceSheet(id: string, actorUserId: string) {
@@ -719,6 +828,240 @@ export class WagesService {
           "false actual lessons are snapshotted but not included in wage",
         jpyPrecision: 0,
       },
+    };
+  }
+
+  private normalizeAttendanceWorkbookKey(body: TeacherAttendanceWorkbookBody) {
+    return {
+      teacherId: this.normalizeRequiredString(body.teacherId, "teacherId"),
+      yearMonth: this.normalizeYearMonth(body.yearMonth),
+    };
+  }
+
+  private async findAttendanceWorkbookSnapshots(key: {
+    teacherId: string;
+    yearMonth: string;
+  }) {
+    const snapshots = await this.prisma.teacherWageSnapshot.findMany({
+      where: {
+        teacherId: key.teacherId,
+        yearMonth: key.yearMonth,
+        status: { not: TeacherWageSnapshotStatus.revoked },
+      },
+      orderBy: [{ businessEntity: { name: "asc" } }, { version: "desc" }],
+      select: wageSnapshotSelect,
+    });
+
+    if (snapshots.length === 0) {
+      throw new BadRequestException(
+        "No active teacher wage snapshots exist for this teacher/month.",
+      );
+    }
+
+    const entityIds = snapshots.map((snapshot) => snapshot.businessEntityId);
+    if (new Set(entityIds).size !== entityIds.length) {
+      throw new BadRequestException(
+        "Multiple active wage snapshot versions exist for one business entity.",
+      );
+    }
+
+    return snapshots;
+  }
+
+  private assertAttendanceWorkbookExportable(snapshot: WageSnapshot) {
+    this.assertSnapshotExportable(snapshot);
+
+    if (snapshot.status !== TeacherWageSnapshotStatus.locked) {
+      throw new BadRequestException(
+        "Only locked wage snapshots can be exported to attendance workbook.",
+      );
+    }
+
+    if (
+      snapshot.adjustmentStatus !== TeacherWageAdjustmentStatus.none &&
+      snapshot.adjustmentStatus !== TeacherWageAdjustmentStatus.exported
+    ) {
+      throw new BadRequestException(
+        "Wage snapshot already has adjustments and cannot start Excel workflow.",
+      );
+    }
+  }
+
+  private assertAttendanceWorkbookImportable(snapshot: WageSnapshot) {
+    this.assertSnapshotAttendanceImportable(snapshot);
+
+    if (
+      snapshot.adjustmentStatus !== TeacherWageAdjustmentStatus.exported &&
+      snapshot.adjustmentStatus !== TeacherWageAdjustmentStatus.imported
+    ) {
+      throw new BadRequestException(
+        "Attendance workbook must be exported before import.",
+      );
+    }
+  }
+
+  private buildAttendanceWorkbookExportPayload(snapshots: WageSnapshot[]) {
+    const first = snapshots[0];
+    const rows = snapshots
+      .flatMap((snapshot) =>
+        snapshot.details.map((detail) => ({
+          snapshotId: snapshot.id,
+          detailId: detail.id,
+          businessEntityId: snapshot.businessEntityId,
+          businessEntityCode: snapshot.businessEntity.code,
+          businessEntityName: snapshot.businessEntity.name,
+          actualDate: detail.actualDate.toISOString().slice(0, 10),
+          studentName: detail.studentNameSnapshot ?? "",
+          subjectName: detail.subjectNameSnapshot ?? "",
+          content: detail.contentSnapshot,
+          durationHours: detail.durationHours.toNumber(),
+          lessonWageJpy: detail.lessonWageJpy,
+          includedInWage: detail.includedInWage,
+          transportationFeeJpy: 0,
+          classroomFeeJpy: 0,
+        })),
+      )
+      .sort((left, right) =>
+        left.businessEntityName.localeCompare(right.businessEntityName, "zh-CN") ||
+        left.actualDate.localeCompare(right.actualDate) ||
+        left.studentName.localeCompare(right.studentName, "zh-CN") ||
+        left.detailId.localeCompare(right.detailId),
+      )
+      .map((row, index) => ({ rowNo: index + 1, ...row }));
+
+    return {
+      kind: "teacher_attendance_workbook",
+      schemaVersion: 1,
+      teacher: first.teacher,
+      yearMonth: first.yearMonth,
+      sortPolicy: ["businessEntityName", "actualDate", "studentName"],
+      snapshots: snapshots.map((snapshot) => ({
+        id: snapshot.id,
+        version: snapshot.version,
+        businessEntity: snapshot.businessEntity,
+        lessonCount: snapshot.lessonCount,
+        totalLessonHours: snapshot.totalLessonHours.toNumber(),
+        baseWageJpy: snapshot.baseWageJpy,
+      })),
+      rows,
+      policy: {
+        editableFields: ["transportationFeeJpy", "classroomFeeJpy"],
+        immutableFieldsAreNotImported: true,
+        oneWorkbookPerTeacherMonth: true,
+      },
+    };
+  }
+
+  private normalizeAttendanceWorkbookRows(value: unknown) {
+    if (!Array.isArray(value) || value.length === 0 || value.length > 1000) {
+      throw new BadRequestException("Attendance workbook rows are required.");
+    }
+
+    const seenDetailIds = new Set<string>();
+    return value.map((row, index): NormalizedAttendanceWorkbookRow => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        throw new BadRequestException(`Attendance workbook row ${index + 1} is invalid.`);
+      }
+
+      const input = row as Record<string, unknown>;
+      const detailId = this.normalizeRequiredString(input.detailId, `rows[${index}].detailId`);
+      if (seenDetailIds.has(detailId)) {
+        throw new BadRequestException(`Duplicate attendance detail row: ${detailId}.`);
+      }
+      seenDetailIds.add(detailId);
+
+      return {
+        snapshotId: this.normalizeRequiredString(input.snapshotId, `rows[${index}].snapshotId`),
+        detailId,
+        transportationFeeJpy: this.normalizeJpyAmount(
+          input.transportationFeeJpy ?? 0,
+          `rows[${index}].transportationFeeJpy`,
+        ),
+        classroomFeeJpy: this.normalizeJpyAmount(
+          input.classroomFeeJpy ?? 0,
+          `rows[${index}].classroomFeeJpy`,
+        ),
+      };
+    });
+  }
+
+  private buildAttendanceWorkbookImportPreview(
+    snapshots: WageSnapshot[],
+    rows: NormalizedAttendanceWorkbookRow[],
+    importSource: string,
+  ) {
+    snapshots.forEach((snapshot) => this.assertAttendanceWorkbookImportable(snapshot));
+
+    const expectedDetails = snapshots.flatMap((snapshot) =>
+      snapshot.details.map((detail) => ({ snapshotId: snapshot.id, detailId: detail.id })),
+    );
+    const expectedByDetailId = new Map(
+      expectedDetails.map((detail) => [detail.detailId, detail.snapshotId]),
+    );
+
+    if (rows.length !== expectedDetails.length) {
+      throw new BadRequestException(
+        "Attendance workbook detail rows do not match exported snapshot details.",
+      );
+    }
+
+    for (const row of rows) {
+      if (expectedByDetailId.get(row.detailId) !== row.snapshotId) {
+        throw new BadRequestException(
+          "Attendance workbook detail mapping does not match exported snapshots.",
+        );
+      }
+    }
+
+    const groups = snapshots.map((snapshot) => {
+      const snapshotRows = rows.filter((row) => row.snapshotId === snapshot.id);
+      const transportationFeeJpy = snapshotRows.reduce(
+        (sum, row) => sum + row.transportationFeeJpy,
+        0,
+      );
+      const classroomFeeJpy = snapshotRows.reduce(
+        (sum, row) => sum + row.classroomFeeJpy,
+        0,
+      );
+      const totalWageJpy = this.confirmJpy(
+        snapshot.baseWageJpy +
+          transportationFeeJpy +
+          classroomFeeJpy +
+          snapshot.manualAdjustmentJpy,
+      );
+
+      return {
+        snapshotId: snapshot.id,
+        businessEntity: snapshot.businessEntity,
+        rowCount: snapshotRows.length,
+        before: {
+          transportationFeeJpy: snapshot.transportationFeeJpy,
+          classroomFeeJpy: snapshot.classroomFeeJpy,
+          totalWageJpy: snapshot.totalWageJpy,
+        },
+        after: {
+          transportationFeeJpy,
+          classroomFeeJpy,
+          totalWageJpy,
+        },
+      };
+    });
+
+    return {
+      teacher: snapshots[0].teacher,
+      yearMonth: snapshots[0].yearMonth,
+      importSource,
+      rowCount: rows.length,
+      groups,
+      totalTransportationFeeJpy: groups.reduce(
+        (sum, group) => sum + group.after.transportationFeeJpy,
+        0,
+      ),
+      totalClassroomFeeJpy: groups.reduce(
+        (sum, group) => sum + group.after.classroomFeeJpy,
+        0,
+      ),
+      totalWageJpy: groups.reduce((sum, group) => sum + group.after.totalWageJpy, 0),
     };
   }
 

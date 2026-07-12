@@ -24,6 +24,8 @@ import {
   PreviewTeacherWageBody,
   RevokeTeacherWageSnapshotBody,
   TeacherWageRuleBody,
+  TeacherAttendanceWorkbookBody,
+  TeacherAttendanceWorkbookImportBody,
   UpdateTeacherWageAdjustmentsBody,
 } from "./wages.types";
 
@@ -92,6 +94,30 @@ export class WagesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.wagesService.updateAdjustments(id, body, user.id);
+  }
+
+  @Post("attendance/export")
+  @RequirePermissions("teacher_attendance_import.manage")
+  exportAttendanceWorkbook(
+    @Body() body: TeacherAttendanceWorkbookBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.wagesService.exportAttendanceWorkbook(body, user.id);
+  }
+
+  @Post("attendance/import-preview")
+  @RequirePermissions("teacher_attendance_import.manage")
+  previewAttendanceWorkbookImport(@Body() body: TeacherAttendanceWorkbookImportBody) {
+    return this.wagesService.previewAttendanceWorkbookImport(body);
+  }
+
+  @Post("attendance/import-confirm")
+  @RequirePermissions("teacher_attendance_import.manage")
+  confirmAttendanceWorkbookImport(
+    @Body() body: TeacherAttendanceWorkbookImportBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.wagesService.confirmAttendanceWorkbookImport(body, user.id);
   }
 
   @Post("teacher/:id/attendance-export")
