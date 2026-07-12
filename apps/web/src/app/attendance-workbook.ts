@@ -22,9 +22,15 @@ const headers = [
 
 export async function downloadTeacherAttendanceWorkbook(payload: TeacherAttendanceWorkbookPayload) {
   const XLSX = await import("xlsx-js-style");
+  const detailStartRow = 6;
+  const detailEndRow = payload.rows.length + detailStartRow - 1;
+  const baseWageTotal = payload.rows.reduce((sum, row) => sum + Number(row.lessonWageJpy ?? 0), 0);
+  const transportationFeeTotal = payload.rows.reduce((sum, row) => sum + Number(row.transportationFeeJpy ?? 0), 0);
+  const classroomFeeTotal = payload.rows.reduce((sum, row) => sum + Number(row.classroomFeeJpy ?? 0), 0);
   const rows: unknown[][] = [
     ["勤务申报表（讲师填写用）"],
     ["老师", payload.teacher.name, "业务月份", payload.yearMonth],
+    ["课时工资总额", baseWageTotal, "交通费总额", transportationFeeTotal, "教室费总额", classroomFeeTotal, "最终合计", baseWageTotal + transportationFeeTotal + classroomFeeTotal],
     ["请只填写黄色的交通费和教室费。课时信息由系统快照生成，请勿修改。"],
     headers,
     ...payload.rows.map((row) => [
@@ -42,23 +48,39 @@ export async function downloadTeacherAttendanceWorkbook(payload: TeacherAttendan
   ];
 
   const workbook = XLSX.utils.book_new();
+  workbook.Workbook ??= {};
+  (workbook.Workbook as XlsxTypes.WBProps & { CalcPr?: Record<string, unknown> }).CalcPr = {
+    calcMode: "auto",
+    calcOnSave: true,
+    fullCalcOnLoad: true,
+  };
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet["!merges"] = [XLSX.utils.decode_range("A1:J1"), XLSX.utils.decode_range("A3:J3")];
+  sheet["!merges"] = [XLSX.utils.decode_range("A1:J1"), XLSX.utils.decode_range("A4:J4")];
   sheet["!cols"] = [
     { wch: 24 }, { wch: 12 }, { wch: 22 }, { wch: 32 }, { wch: 12 },
     { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 4, hidden: true }, { wch: 4, hidden: true },
   ];
-  sheet["!freeze"] = { xSplit: 0, ySplit: 4 };
+  sheet["!freeze"] = { xSplit: 0, ySplit: 5 };
+
+  if (payload.rows.length > 0) {
+    sheet.B3 = { t: "n", f: `SUM(F${detailStartRow}:F${detailEndRow})`, v: baseWageTotal };
+    sheet.D3 = { t: "n", f: `SUM(G${detailStartRow}:G${detailEndRow})`, v: transportationFeeTotal };
+    sheet.F3 = { t: "n", f: `SUM(H${detailStartRow}:H${detailEndRow})`, v: classroomFeeTotal };
+    sheet.H3 = { t: "n", f: "B3+D3+F3", v: baseWageTotal + transportationFeeTotal + classroomFeeTotal };
+  }
 
   styleRange(XLSX, sheet, "A1:J1", { font: { bold: true, sz: 16 }, alignment: { horizontal: "center" }, fill: { fgColor: { rgb: "DDEBF7" } } });
-  styleRange(XLSX, sheet, "A3:J3", { font: { color: { rgb: "9C6500" } }, fill: { fgColor: { rgb: "FFF2CC" } } });
-  styleRange(XLSX, sheet, "A4:J4", { font: { bold: true }, fill: { fgColor: { rgb: "D9EAF7" } }, alignment: { horizontal: "center", wrapText: true } });
+  styleRange(XLSX, sheet, "A3:H3", { font: { bold: true }, fill: { fgColor: { rgb: "E2F0D9" } }, alignment: { horizontal: "center" } });
+  for (const cell of ["B3", "D3", "F3", "H3"]) {
+    if (sheet[cell]) sheet[cell].z = "#,##0";
+  }
+  styleRange(XLSX, sheet, "A4:J4", { font: { color: { rgb: "9C6500" } }, fill: { fgColor: { rgb: "FFF2CC" } } });
+  styleRange(XLSX, sheet, "A5:J5", { font: { bold: true }, fill: { fgColor: { rgb: "D9EAF7" } }, alignment: { horizontal: "center", wrapText: true } });
   if (payload.rows.length > 0) {
-    const endRow = payload.rows.length + 4;
-    styleRange(XLSX, sheet, `A5:F${endRow}`, { fill: { fgColor: { rgb: "F3F6FA" } } });
-    styleRange(XLSX, sheet, `G5:H${endRow}`, { fill: { fgColor: { rgb: "FFFCEB" } } });
-    styleRange(XLSX, sheet, `I5:J${endRow}`, { fill: { fgColor: { rgb: "F3F6FA" } } });
-    for (let row = 5; row <= endRow; row += 1) {
+    styleRange(XLSX, sheet, `A${detailStartRow}:F${detailEndRow}`, { fill: { fgColor: { rgb: "F3F6FA" } } });
+    styleRange(XLSX, sheet, `G${detailStartRow}:H${detailEndRow}`, { fill: { fgColor: { rgb: "FFFCEB" } } });
+    styleRange(XLSX, sheet, `I${detailStartRow}:J${detailEndRow}`, { fill: { fgColor: { rgb: "F3F6FA" } } });
+    for (let row = detailStartRow; row <= detailEndRow; row += 1) {
       if (sheet[`E${row}`]) sheet[`E${row}`].z = "0.##";
       if (sheet[`F${row}`]) sheet[`F${row}`].z = "#,##0";
       if (sheet[`G${row}`]) sheet[`G${row}`].z = "#,##0";
@@ -101,14 +123,22 @@ export async function parseTeacherAttendanceWorkbook(file: File): Promise<Teache
     throw new Error("勤务申报表的系统识别信息不完整。");
   }
 
-  const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(detailSheet, { range: 3, defval: "" });
+  const detailRows = XLSX.utils.sheet_to_json<unknown[]>(detailSheet, { header: 1, defval: "" });
+  const headerRowIndex = detailRows.findIndex((row) =>
+    String(row[0] ?? "").trim() === "业务归属" && String(row[9] ?? "").trim() === "明细 ID",
+  );
+  if (headerRowIndex < 0) {
+    throw new Error("勤务申报表的课时表头无法识别，请使用系统导出的原始文件。");
+  }
+
+  const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(detailSheet, { range: headerRowIndex, defval: "" });
   const parsedRows = records
     .filter((record) => String(record["明细 ID"] ?? "").trim())
     .map((record, index) => ({
-      snapshotId: requiredText(record["快照 ID"], `第 ${index + 5} 行快照映射`),
-      detailId: requiredText(record["明细 ID"], `第 ${index + 5} 行明细映射`),
-      transportationFeeJpy: nonNegativeJpy(record["交通费 JPY"], `第 ${index + 5} 行交通费`),
-      classroomFeeJpy: nonNegativeJpy(record["教室费 JPY"], `第 ${index + 5} 行教室费`),
+      snapshotId: requiredText(record["快照 ID"], `第 ${index + headerRowIndex + 2} 行快照映射`),
+      detailId: requiredText(record["明细 ID"], `第 ${index + headerRowIndex + 2} 行明细映射`),
+      transportationFeeJpy: nonNegativeJpy(record["交通费 JPY"], `第 ${index + headerRowIndex + 2} 行交通费`),
+      classroomFeeJpy: nonNegativeJpy(record["教室费 JPY"], `第 ${index + headerRowIndex + 2} 行教室费`),
     }));
   if (parsedRows.length === 0) {
     throw new Error("勤务申报表中没有可导入的课时明细。");

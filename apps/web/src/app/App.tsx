@@ -1451,7 +1451,12 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       actions.push({ label: row.status === "未导出" ? "下载勤务表" : "重新下载勤务表", icon: Download, variant: "primary", key: "teacherAttendance.export" });
     }
     if (canImport) {
-      actions.push({ label: "上传老师回传文件", icon: FileText, variant: "primary", key: "teacherAttendance.import" });
+      actions.push({
+        label: row.status === "已导入待确认" ? "重新上传回传文件" : "上传老师回传文件",
+        icon: FileText,
+        variant: "primary",
+        key: "teacherAttendance.import",
+      });
     }
     actions.push({ label: "查看工资快照", icon: Eye, variant: "secondary" });
     actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
@@ -2741,6 +2746,11 @@ function TeacherAttendanceImportModal({ state, onClose, onPreview, onConfirm }: 
             </section>
           )}
 
+          {state.group.snapshots.every((snapshot) => snapshot.adjustmentStatus === "imported") && (
+            <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+              重新上传并确认后，将覆盖上一次导入的交通费和教室费。工资调整确认后不可再上传。
+            </div>
+          )}
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">系统只读取交通费和教室费。业务归属、日期、学生、科目、课时和工资金额不会从 Excel 回写。</div>
           {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
         </div>
