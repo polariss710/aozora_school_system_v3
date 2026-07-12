@@ -219,6 +219,21 @@ export class ExpensesService {
 
     this.assertExpenseCanBeVoided(before);
 
+    if (
+      before.sourceType === teacherWageSourceType &&
+      before.cashStatus === CashRequestStatus.cash_rejected
+    ) {
+      const transactionCount = await this.prisma.accountTransaction.count({
+        where: { expenseRecordId: id },
+      });
+
+      if (transactionCount > 0) {
+        throw new BadRequestException(
+          "Rejected teacher wage expense with account transaction cannot be voided.",
+        );
+      }
+    }
+
     const shouldReverseAccountTransaction =
       before.cashStatus === CashRequestStatus.account_transaction_created;
 

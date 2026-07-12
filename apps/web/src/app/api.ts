@@ -1252,6 +1252,14 @@ export function createManualExpense(accessToken: string, input: ManualExpenseInp
   });
 }
 
+export function createExpenseFromTeacherWage(accessToken: string, snapshotId: string, memo?: string | null) {
+  return requestJson<{ expenseRecord: ExpenseRecord }>(`/expenses/from-wage/${snapshotId}`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ memo: memo || null }),
+  });
+}
+
 export function voidExpenseRecord(accessToken: string, expenseRecordId: string, input: VoidFinanceRecordInput = {}) {
   return requestJson<{ expenseRecord: ExpenseRecord }>(`/expenses/${expenseRecordId}/void`, {
     method: "POST",

@@ -49,6 +49,7 @@ import {
   confirmTeacherWageAdjustments,
   createTeacherWageRule,
   createReimbursementFromExpense,
+  createExpenseFromTeacherWage,
   createManualExpense,
   createManualIncome,
   createStudent,
@@ -265,6 +266,8 @@ type DrawerActionKey =
   | "teacherWageSnapshot.revoke"
   | "teacherWageSnapshot.adjust"
   | "teacherWageSnapshot.confirmAdjustments"
+  | "teacherWageSnapshot.generateExpense"
+  | "teacherWageSnapshot.viewExpense"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -1235,7 +1238,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const canVoid = row.financeRecord
       ? row.financeRecord.kind === "income"
         ? canVoidIncomeRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
-        : canVoidManualFinanceRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
+        : canVoidExpenseRecord(row.financeRecord.sourceType, row.financeRecord.recordStatus, row.financeRecord.cashStatus)
       : false;
 
     if (row.financeRecord && canSubmitCashRequest(row.financeRecord.recordStatus, row.financeRecord.cashStatus)) {
@@ -1243,7 +1246,12 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     }
 
     if (canVoid) {
-      actions.push({ label: "作废记录", icon: X, variant: "danger", key: actionKey });
+      actions.push({
+        label: row.financeRecord?.sourceType === "teacher_wage_snapshot" ? "作废工资支出" : "作废记录",
+        icon: X,
+        variant: "danger",
+        key: actionKey,
+      });
     }
 
     actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
@@ -1387,6 +1395,10 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         { label: "调整工资与查看课时", icon: PencilLine, variant: "primary", key: "teacherWageSnapshot.adjust" },
         { label: "确认调整", icon: CheckCircle2, variant: "primary", key: "teacherWageSnapshot.confirmAdjustments" },
       );
+    } else if (snapshot?.status === "adjustment_confirmed" && !snapshot.expenseRecordId) {
+      actions.push({ label: "生成支出记录", icon: ReceiptText, variant: "primary", key: "teacherWageSnapshot.generateExpense" });
+    } else if (snapshot?.status === "expense_created" && snapshot.expenseRecordId) {
+      actions.push({ label: "查看工资支出记录", icon: FileText, variant: "primary", key: "teacherWageSnapshot.viewExpense" });
     }
 
     if (snapshot && snapshot.status !== "locked") {
@@ -3344,6 +3356,8 @@ function formatApiError(error: unknown) {
       ["Student monthly settlements must be locked before teacher wage settlement.", "参与计薪课时对应的学生月度结算尚未全部锁定。"],
       ["Confirmed wage adjustments cannot be edited.", "工资调整已经确认，不能继续修改金额。请先撤销整份工资快照。"],
       ["Revoked wage snapshot cannot be adjusted.", "已撤销的工资快照不能调整。"],
+      ["Wage snapshot adjustments must be confirmed before generating expense.", "工资调整尚未确认，不能生成工资支出。"],
+      ["Rejected teacher wage expense with account transaction cannot be voided.", "该工资支出已经存在账户流水，不能按 Cash 拒绝分支直接作废。"],
     ] as const;
     for (const [source, translated] of wageErrorTranslations) {
       if (message.includes(source)) message = message.replace(source, translated);
@@ -5313,7 +5327,7 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
 
   return {
     ...basePage,
-    description: "真实 dev API 支出记录列表；手动新增、手动作废和 Cash 请求提交已接入，工资生成后续接入",
+    description: "真实 dev API 支出记录列表；手动支出和老师工资支出均可进入 Cash 请求链路",
     primaryAction: "新增手动支出",
     batchAction: undefined,
     selectable: false,
@@ -5585,7 +5599,7 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
   const businessEntityName = record.businessEntity?.name ?? "未设置业务归属";
   const amount = formatApiCurrencyAmount(record.originalCurrency, record.originalAmountJpy, record.originalAmountCny);
   const cashStatus = getCashStatusLabel(record.cashStatus);
-  const canVoid = canVoidManualFinanceRecord(record.sourceType, record.recordStatus, record.cashStatus);
+  const canVoid = canVoidExpenseRecord(record.sourceType, record.recordStatus, record.cashStatus);
   const canSubmitCash = canSubmitCashRequest(record.recordStatus, record.cashStatus);
 
   return {
@@ -5882,6 +5896,15 @@ function canVoidManualFinanceRecord(sourceType: string, recordStatus: string, ca
   const cashIsNotLocked = ["not_requested", "cash_rejected", "cash_withdrawn"].includes(cashStatus);
 
   return isManualRecord && isPending && cashIsNotLocked;
+}
+
+function canVoidExpenseRecord(sourceType: string, recordStatus: string, cashStatus: string) {
+  const canVoidManual = canVoidManualFinanceRecord(sourceType, recordStatus, cashStatus);
+  const isTeacherWage = sourceType === "teacher_wage_snapshot";
+  const isPending = recordStatus === "pending";
+  const cashIsNotLocked = ["not_requested", "cash_rejected", "cash_withdrawn"].includes(cashStatus);
+
+  return canVoidManual || (isTeacherWage && isPending && cashIsNotLocked);
 }
 
 function canVoidIncomeRecord(sourceType: string, recordStatus: string, cashStatus: string) {
@@ -9599,13 +9622,39 @@ export default function App() {
       actionKey === "teacherWageSnapshot.relock" ||
       actionKey === "teacherWageSnapshot.revoke" ||
       actionKey === "teacherWageSnapshot.adjust" ||
-      actionKey === "teacherWageSnapshot.confirmAdjustments"
+      actionKey === "teacherWageSnapshot.confirmAdjustments" ||
+      actionKey === "teacherWageSnapshot.generateExpense" ||
+      actionKey === "teacherWageSnapshot.viewExpense"
     ) {
       if (!authSession || !row.teacherWageSnapshotRecord) {
         setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的工资快照。" });
         return;
       }
       const snapshot = row.teacherWageSnapshotRecord;
+      if (actionKey === "teacherWageSnapshot.viewExpense") {
+        setDetailRow(null);
+        setActiveKey("expense-records");
+        setActionNotice({ tone: "emerald", text: "已切换到支出记录，请按工资名称或金额核对对应记录。" });
+        return;
+      }
+
+      if (actionKey === "teacherWageSnapshot.generateExpense") {
+        const confirmed = window.confirm(
+          `确认从「${snapshot.teacher.name}」${snapshot.yearMonth} / ${snapshot.businessEntity.name} 的工资快照生成支出记录？\n\n支出金额将使用后端已确认工资合计 ${formatApiJpyAmount(snapshot.totalWageJpy)}。`,
+        );
+        if (!confirmed) return;
+        try {
+          await createExpenseFromTeacherWage(authSession.accessToken, snapshot.id, snapshot.memo);
+          setDetailRow(null);
+          setWorkflowReloadKey((current) => current + 1);
+          setFinanceReloadKey((current) => current + 1);
+          setActionNotice({ tone: "emerald", text: "工资支出记录已生成，可前往支出记录提交 Cash 请求。" });
+        } catch (error) {
+          setActionNotice({ tone: "rose", text: formatApiError(error) });
+        }
+        return;
+      }
+
       if (actionKey === "teacherWageSnapshot.adjust") {
         setDetailRow(null);
         setTeacherWageAdjustmentDialog({ snapshot });
@@ -9775,7 +9824,12 @@ export default function App() {
         if (actionKey === "income.void") {
           setStudentChainReloadKey((current) => current + 1);
         }
-        setActionNotice({ tone: "emerald", text: "财务记录已作废。" });
+        if (actionKey === "expense.void" && row.financeRecord?.sourceType === "teacher_wage_snapshot") {
+          setWorkflowReloadKey((current) => current + 1);
+          setActionNotice({ tone: "emerald", text: "老师工资支出已作废，工资快照已释放，可继续撤销或重新生成。" });
+        } else {
+          setActionNotice({ tone: "emerald", text: "财务记录已作废。" });
+        }
       } catch (error) {
         setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
