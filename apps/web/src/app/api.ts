@@ -157,6 +157,29 @@ export interface IncomeRecord {
   updatedAt: string;
   student: RelatedStudentRecord | null;
   businessEntity: RelatedBusinessEntityRecord | null;
+  receiptEligible: boolean;
+  receiptIneligibleReason: string | null;
+}
+
+export interface TuitionReceiptPayload {
+  incomeRecordId: string;
+  studentId: string;
+  studentName: string;
+  businessEntityName: string;
+  businessMonth: string | null;
+  itemName: string;
+  description: string;
+  paymentDate: string;
+  paymentCurrency: "JPY" | "CNY";
+  paymentAmountJpy: ApiAmountValue;
+  paymentAmountCny: ApiAmountValue;
+  incomeTitle: string;
+  memo: string | null;
+  authoritySource: "account_transaction" | "cash_inbound" | "cash_confirmation";
+  cashRequestId: string;
+  cashTransactionId: string | null;
+  externalCashRequestId: string | null;
+  externalCashEventId: string | null;
 }
 
 export interface ManualIncomeInput {
@@ -1308,6 +1331,12 @@ export function listAuditEvents(accessToken: string) {
 
 export function listIncomeRecords(accessToken: string) {
   return requestJson<ListResponse<IncomeRecord>>("/income?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function getTuitionReceipt(accessToken: string, incomeRecordId: string) {
+  return requestJson<{ receipt: TuitionReceiptPayload }>(`/income/${incomeRecordId}/receipt`, {
     headers: authorizedHeaders(accessToken),
   });
 }

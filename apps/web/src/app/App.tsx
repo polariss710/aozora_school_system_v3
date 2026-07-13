@@ -87,6 +87,7 @@ import {
   generateTuitionBill,
   generateTuitionBillIncome,
   generateActualLesson,
+  getTuitionReceipt,
   getCurrentUser,
   markPlannedLessonMakeupPending,
   previewStudentSettlement,
@@ -152,6 +153,7 @@ import type {
   TeacherAttendanceWorkbookImportPreview,
   TeacherWriteInput,
   TuitionBillRecord,
+  TuitionReceiptPayload,
 } from "./api";
 import {
   downloadTeacherAttendanceWorkbook,
@@ -242,6 +244,7 @@ interface DataRow {
     originalCurrency: "JPY" | "CNY";
     amountJpy: number | null;
     amountCny: number | null;
+    receiptEligible?: boolean;
   };
   cashRequest?: {
     status: string;
@@ -280,6 +283,7 @@ type DrawerActionKey =
   | "teacherWageSnapshot.viewExpense"
   | "teacherAttendance.export"
   | "teacherAttendance.import"
+  | "income.receipt"
   | "income.void"
   | "expense.void"
   | "reimbursement.void";
@@ -442,6 +446,7 @@ interface TeacherAttendanceGroup {
 }
 type TeacherAttendanceImportDialogState = { group: TeacherAttendanceGroup };
 type CashRequestDialogState = { row: DataRow };
+type TuitionReceiptDialogState = { receipt: TuitionReceiptPayload };
 type ReimbursementDialogState = {
   isLoading: boolean;
   candidates: ReimbursementCandidateExpenseRecord[];
@@ -1262,6 +1267,10 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
 
     if (row.financeRecord && canSubmitCashRequest(row.financeRecord.recordStatus, row.financeRecord.cashStatus)) {
       actions.push({ label: "提交 Cash 请求", icon: Send, variant: "primary", key: "cash.submit" });
+    }
+
+    if (row.apiRef.resource === "income" && row.financeRecord?.receiptEligible) {
+      actions.push({ label: "生成学费收据", icon: ReceiptText, variant: "secondary", key: "income.receipt" });
     }
 
     if (canVoid) {
@@ -3029,6 +3038,156 @@ function FinanceRecordFormModal({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function formatReceiptAmount(receipt: TuitionReceiptPayload) {
+  const amount = parseApiAmount(
+    receipt.paymentCurrency === "JPY" ? receipt.paymentAmountJpy : receipt.paymentAmountCny,
+  );
+
+  if (amount === null) {
+    return `${receipt.paymentCurrency} -`;
+  }
+
+  return receipt.paymentCurrency === "JPY"
+    ? `￥${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 }).format(amount)}`
+    : `CNY ${new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)}`;
+}
+
+function escapeReceiptHtml(value: string | null | undefined) {
+  return (value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function printTuitionReceipt(receipt: TuitionReceiptPayload) {
+  const printWindow = window.open("", "_blank", "width=900,height=1000");
+  if (!printWindow) {
+    throw new Error("浏览器阻止了打印窗口，请允许此页面打开弹窗后重试。");
+  }
+
+  printWindow.opener = null;
+  const paymentDate = receipt.paymentDate.replace(/-/g, "/");
+  const receiptHtml = `<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>領収書 - ${escapeReceiptHtml(receipt.studentName)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 18mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif; }
+    .sheet { width: 100%; min-height: 250mm; padding: 18mm 16mm; border: 1px solid #cfd8e6; }
+    h1 { margin: 0; text-align: center; font-size: 30px; font-weight: 600; letter-spacing: 0; }
+    .date { margin-top: 24px; text-align: right; font-size: 13px; }
+    .recipient { margin-top: 34px; width: 70%; padding: 0 8px 8px; border-bottom: 1px solid #172033; font-size: 20px; }
+    .amount { margin: 42px auto 0; width: 72%; padding: 14px 12px; border-top: 2px solid #172033; border-bottom: 2px solid #172033; text-align: center; font-size: 28px; font-weight: 700; }
+    .tax { margin-top: 10px; text-align: center; font-size: 12px; color: #596579; }
+    .description { margin-top: 38px; padding: 18px; border: 1px solid #cfd8e6; font-size: 15px; line-height: 1.8; }
+    .issuer { margin-top: 64px; display: flex; justify-content: flex-end; }
+    .issuer-box { min-width: 240px; font-size: 14px; line-height: 1.9; }
+    .issuer-name { font-size: 19px; font-weight: 600; }
+    .source { margin-top: 72px; border-top: 1px solid #e2e7ef; padding-top: 10px; color: #7a8494; font-size: 9px; }
+    @media print { .sheet { border: 0; min-height: auto; } }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <h1>領収書</h1>
+    <div class="date">受領日：${escapeReceiptHtml(paymentDate)}</div>
+    <div class="recipient">${escapeReceiptHtml(receipt.studentName)} 様</div>
+    <div class="amount">${escapeReceiptHtml(formatReceiptAmount(receipt))}</div>
+    <div class="tax">上記正に領収いたしました</div>
+    <div class="description">但し、${escapeReceiptHtml(receipt.description)}として</div>
+    <div class="issuer"><div class="issuer-box"><div class="issuer-name">${escapeReceiptHtml(receipt.businessEntityName)}</div></div></div>
+    <div class="source">Income record: ${escapeReceiptHtml(receipt.incomeRecordId)}</div>
+  </main>
+  <script>window.addEventListener("load", () => { window.focus(); window.print(); });<\/script>
+</body>
+</html>`;
+
+  printWindow.document.open();
+  printWindow.document.write(receiptHtml);
+  printWindow.document.close();
+}
+
+function TuitionReceiptModal({
+  state,
+  onClose,
+  onPrintError,
+}: {
+  state: TuitionReceiptDialogState;
+  onClose: () => void;
+  onPrintError: (message: string) => void;
+}) {
+  const { receipt } = state;
+  const authorityLabel =
+    receipt.authoritySource === "account_transaction"
+      ? "账户流水"
+      : receipt.authoritySource === "cash_inbound"
+        ? "Cash 入站"
+        : "Cash 确认";
+
+  const printReceipt = () => {
+    try {
+      printTuitionReceipt(receipt);
+    } catch (error) {
+      onPrintError(error instanceof Error ? error.message : "打开打印窗口失败。");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭收据预览" />
+      <section className="relative z-10 flex max-h-[92vh] w-[min(720px,96vw)] flex-col overflow-hidden rounded-lg border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">学费收据预览</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{receipt.studentName} / {receipt.description}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto bg-[#f5f7fa] p-5 md:p-7">
+          <article className="mx-auto min-h-[560px] max-w-[560px] border border-border bg-white px-10 py-9 shadow-sm">
+            <h3 className="text-center text-2xl font-semibold text-foreground">領収書</h3>
+            <div className="mt-6 text-right text-xs text-muted-foreground">受領日：{receipt.paymentDate.replace(/-/g, "/")}</div>
+            <div className="mt-9 w-4/5 border-b border-foreground px-2 pb-2 text-lg font-medium">{receipt.studentName} 様</div>
+            <div className="mx-auto mt-10 w-4/5 border-y-2 border-foreground py-3 text-center text-2xl font-semibold">
+              {formatReceiptAmount(receipt)}
+            </div>
+            <div className="mt-2 text-center text-xs text-muted-foreground">上記正に領収いたしました</div>
+            <div className="mt-9 border border-border px-4 py-4 text-sm">但し、{receipt.description}として</div>
+            <div className="mt-14 text-right">
+              <div className="text-lg font-semibold">{receipt.businessEntityName}</div>
+            </div>
+          </article>
+
+          <div className="mx-auto mt-3 flex max-w-[560px] flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+            <span>金额来源：{authorityLabel}</span>
+            <span>Cash 请求：{receipt.cashRequestId}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-white px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>关闭</ActionButton>
+          <button
+            type="button"
+            onClick={printReceipt}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd]"
+          >
+            <Download className="h-3.5 w-3.5" />
+            打印 / 保存 PDF
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -5756,7 +5915,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       resource: "income",
       id: record.id,
     },
-    readOnlyActions: !canVoid && !canSubmitCash,
+    readOnlyActions: !canVoid && !canSubmitCash && !record.receiptEligible,
     financeRecord: {
       kind: "income",
       sourceType: record.sourceType,
@@ -5765,6 +5924,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       originalCurrency: record.originalCurrency,
       amountJpy: parseApiAmount(record.originalAmountJpy),
       amountCny: parseApiAmount(record.originalAmountCny),
+      receiptEligible: record.receiptEligible,
     },
     cells: {
       source: sourceLabel,
@@ -5781,6 +5941,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
           { label: "学生", value: record.student?.name ?? "-" },
           { label: "原始金额", value: amount },
           { label: "Cash 状态", value: cashStatus },
+          { label: "学费收据", value: record.receiptEligible ? "可生成" : record.receiptIneligibleReason ?? "不可生成" },
           { label: "备注", value: record.memo ?? "-" },
         ],
       },
@@ -8736,6 +8897,7 @@ export default function App() {
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
   const [isFinanceSubmitting, setIsFinanceSubmitting] = useState(false);
   const [financeMutationError, setFinanceMutationError] = useState<string | null>(null);
+  const [tuitionReceiptDialog, setTuitionReceiptDialog] = useState<TuitionReceiptDialogState | null>(null);
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
   const [isCashRequestSubmitting, setIsCashRequestSubmitting] = useState(false);
   const [cashRequestError, setCashRequestError] = useState<string | null>(null);
@@ -9958,6 +10120,22 @@ export default function App() {
       return;
     }
 
+    if (actionKey === "income.receipt") {
+      if (!authSession || row.apiRef?.resource !== "income") {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再生成学费收据。" });
+        return;
+      }
+
+      try {
+        const result = await getTuitionReceipt(authSession.accessToken, row.apiRef.id);
+        setDetailRow(null);
+        setTuitionReceiptDialog({ receipt: result.receipt });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
+      }
+      return;
+    }
+
     if (actionKey === "cash.submit") {
       if (!authSession || !row.apiRef || !row.financeRecord) {
         setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再执行该动作。" });
@@ -10275,6 +10453,7 @@ export default function App() {
     setTuitionBillDialog(null);
     setStudentSettlementDialog(null);
     setFinanceDialog(null);
+    setTuitionReceiptDialog(null);
     setCashRequestDialog(null);
     setReimbursementDialog(null);
     setLessonActionSubmittingId(null);
@@ -10466,6 +10645,13 @@ export default function App() {
           error={financeMutationError}
           onClose={() => setFinanceDialog(null)}
           onSubmit={submitFinanceForm}
+        />
+      )}
+      {tuitionReceiptDialog && (
+        <TuitionReceiptModal
+          state={tuitionReceiptDialog}
+          onClose={() => setTuitionReceiptDialog(null)}
+          onPrintError={(message) => setActionNotice({ tone: "rose", text: message })}
         />
       )}
       {cashRequestDialog && (

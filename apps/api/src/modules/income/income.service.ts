@@ -5,8 +5,10 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import {
+  AccountTransactionDirection,
   AccountTransactionStatus,
   AuditRiskLevel,
+  CashInboundEventStatus,
   CashRequestStatus,
   CurrencyCode,
   ExternalWorkSettlementStatus,
@@ -30,6 +32,11 @@ const maxLimit = 500;
 const manualIncomeSourceType = "manual_income";
 const tuitionBillSourceType = "student_tuition_bill";
 const externalWorkSourceType = "external_work";
+
+const receiptCashRequestStatuses = [
+  CashRequestStatus.cash_confirmed,
+  CashRequestStatus.account_transaction_created,
+];
 
 const incomeRecordSelect = {
   id: true,
@@ -70,6 +77,37 @@ const incomeRecordSelect = {
       carryoverAmountCny: true,
     },
   },
+  cashRequests: {
+    where: { status: { in: receiptCashRequestStatuses } },
+    orderBy: [{ updatedAt: "desc" as const }],
+    take: 1,
+    select: {
+      id: true,
+      status: true,
+      requestedCurrency: true,
+      requestedAmountJpy: true,
+      requestedAmountCny: true,
+      externalCashRequestId: true,
+      externalCashEventId: true,
+      updatedAt: true,
+    },
+  },
+  accountTransactions: {
+    where: {
+      direction: AccountTransactionDirection.in,
+      status: AccountTransactionStatus.active,
+    },
+    orderBy: [{ transactionDate: "desc" as const }, { createdAt: "desc" as const }],
+    take: 1,
+    select: {
+      id: true,
+      transactionDate: true,
+      currency: true,
+      amountJpy: true,
+      amountCny: true,
+      externalEventId: true,
+    },
+  },
 } satisfies Prisma.IncomeRecordSelect;
 
 type IncomeRecordSnapshot = Prisma.IncomeRecordGetPayload<{
@@ -98,13 +136,97 @@ export class IncomeService {
       this.prisma.incomeRecord.count({ where }),
     ]);
 
-    return { items, total, limit };
+    return {
+      items: items.map((item) => this.withReceiptEligibility(item)),
+      total,
+      limit,
+    };
   }
 
   async getIncomeRecord(id: string) {
     const incomeRecord = await this.findIncomeRecord(id);
 
-    return { incomeRecord };
+    return { incomeRecord: this.withReceiptEligibility(incomeRecord) };
+  }
+
+  async getTuitionReceipt(id: string) {
+    const incomeRecord = await this.findIncomeRecord(id);
+    const eligibility = this.getReceiptEligibility(incomeRecord);
+
+    if (!eligibility.eligible) {
+      throw new BadRequestException(eligibility.reason);
+    }
+
+    const cashRequest = incomeRecord.cashRequests[0];
+    const accountTransaction = incomeRecord.accountTransactions[0] ?? null;
+    const cashInboundEvent = accountTransaction
+      ? null
+      : await this.prisma.cashInboundEvent.findFirst({
+          where: {
+            linkedIncomeRecordIds: { has: incomeRecord.id },
+            status: CashInboundEventStatus.account_transaction_created,
+          },
+          orderBy: [{ eventDate: "desc" }, { createdAt: "desc" }],
+          select: {
+            id: true,
+            externalCashEventId: true,
+            eventDate: true,
+          },
+        });
+
+    const paymentCurrency = accountTransaction?.currency ?? cashRequest.requestedCurrency;
+    const paymentAmountJpy =
+      paymentCurrency === CurrencyCode.JPY
+        ? accountTransaction?.amountJpy ?? cashRequest.requestedAmountJpy
+        : null;
+    const paymentAmountCny =
+      paymentCurrency === CurrencyCode.CNY
+        ? accountTransaction?.amountCny ?? cashRequest.requestedAmountCny
+        : null;
+
+    if (
+      (paymentCurrency === CurrencyCode.JPY && (!paymentAmountJpy || paymentAmountJpy <= 0)) ||
+      (paymentCurrency === CurrencyCode.CNY &&
+        (!paymentAmountCny || new Prisma.Decimal(paymentAmountCny).lessThanOrEqualTo(0)))
+    ) {
+      throw new BadRequestException("Cash 确认金额无效，不能生成收据。");
+    }
+
+    const paymentDate =
+      accountTransaction?.transactionDate ?? cashInboundEvent?.eventDate ?? cashRequest.updatedAt;
+    const description = incomeRecord.yearMonth
+      ? `${this.formatYearMonth(incomeRecord.yearMonth)} 学费`
+      : "学费";
+
+    return {
+      receipt: {
+        incomeRecordId: incomeRecord.id,
+        studentId: incomeRecord.student!.id,
+        studentName: incomeRecord.student!.name,
+        businessEntityName: incomeRecord.businessEntity?.name ?? "青空进学塾",
+        businessMonth: incomeRecord.yearMonth,
+        itemName: "学费",
+        description,
+        paymentDate: paymentDate.toISOString().slice(0, 10),
+        paymentCurrency,
+        paymentAmountJpy,
+        paymentAmountCny,
+        incomeTitle: incomeRecord.title,
+        memo: incomeRecord.memo,
+        authoritySource: accountTransaction
+          ? "account_transaction"
+          : cashInboundEvent
+            ? "cash_inbound"
+            : "cash_confirmation",
+        cashRequestId: cashRequest.id,
+        cashTransactionId: accountTransaction?.id ?? null,
+        externalCashRequestId: cashRequest.externalCashRequestId,
+        externalCashEventId:
+          accountTransaction?.externalEventId ??
+          cashInboundEvent?.externalCashEventId ??
+          cashRequest.externalCashEventId,
+      },
+    };
   }
 
   async createManualIncome(body: ManualIncomeBody, actorUserId: string) {
@@ -259,6 +381,61 @@ export class IncomeService {
     }
 
     throw new BadRequestException("Income downstream status does not allow void.");
+  }
+
+  private withReceiptEligibility(incomeRecord: IncomeRecordSnapshot) {
+    const eligibility = this.getReceiptEligibility(incomeRecord);
+
+    return {
+      ...incomeRecord,
+      receiptEligible: eligibility.eligible,
+      receiptIneligibleReason: eligibility.eligible ? null : eligibility.reason,
+    };
+  }
+
+  private getReceiptEligibility(incomeRecord: IncomeRecordSnapshot) {
+    if (incomeRecord.sourceType !== tuitionBillSourceType) {
+      return { eligible: false, reason: "仅学费收入可以生成学费收据。" } as const;
+    }
+    if (!incomeRecord.student) {
+      return { eligible: false, reason: "该收入没有学生归属，不能生成收据。" } as const;
+    }
+    if (incomeRecord.recordStatus !== IncomeRecordStatus.cash_confirmed) {
+      return { eligible: false, reason: "该收入尚未完成 Cash 确认，不能生成收据。" } as const;
+    }
+    if (
+      incomeRecord.cashStatus !== CashRequestStatus.cash_confirmed &&
+      incomeRecord.cashStatus !== CashRequestStatus.account_transaction_created
+    ) {
+      return { eligible: false, reason: "该收入的 Cash 状态不允许生成收据。" } as const;
+    }
+    if (!incomeRecord.tuitionBill || incomeRecord.tuitionBill.status !== TuitionBillStatus.income_created) {
+      return { eligible: false, reason: "关联学费账单已失效，不能生成收据。" } as const;
+    }
+
+    const cashRequest = incomeRecord.cashRequests[0];
+    if (!cashRequest) {
+      return { eligible: false, reason: "未找到有效的 Cash 确认记录，不能生成收据。" } as const;
+    }
+
+    const hasPositiveAmount =
+      cashRequest.requestedCurrency === CurrencyCode.JPY
+        ? Boolean(cashRequest.requestedAmountJpy && cashRequest.requestedAmountJpy > 0)
+        : Boolean(
+            cashRequest.requestedAmountCny &&
+              new Prisma.Decimal(cashRequest.requestedAmountCny).greaterThan(0),
+          );
+
+    if (!hasPositiveAmount) {
+      return { eligible: false, reason: "Cash 确认金额无效，不能生成收据。" } as const;
+    }
+
+    return { eligible: true, reason: null } as const;
+  }
+
+  private formatYearMonth(yearMonth: string) {
+    const [year, month] = yearMonth.split("-");
+    return `${year}年${Number(month)}月`;
   }
 
   private async findIncomeRecord(id: string): Promise<IncomeRecordSnapshot> {

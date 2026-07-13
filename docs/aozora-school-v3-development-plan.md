@@ -995,6 +995,8 @@ V2 v10.3.52 对照结论：
 - 后端 API 必须校验收入记录存在、已 Cash 确认、未作废 / 未冲销、学费类或 `allow_receipt = true`、存在学生归属、存在 confirmed amount / actual received amount，并校验当前用户权限。
 - 生成收据按钮的第一阶段显示条件应收紧到主链路事实：收入状态已收款 / received，收入分类为 tuition 或来源为 `student_tuition_bill`，存在学生归属，存在最新 Cash income linkage event，linkage `sync_status = synced`，`payment_amount > 0`，`payment_currency` 存在。
 - 阶段 1 不做复杂收据台账，可重复生成 PDF，但内容必须始终来自同一条已确认收入记录。
+- 阶段 1 已实装：收入抽屉按后端 `receiptEligible` 显示入口，`GET /api/income/:id/receipt` 返回权威收据数据，前端提供固定版式预览和浏览器打印 / 保存 PDF。
+- 当前权威金额按“有效收入账户流水优先，其次已确认 Cash 请求”选择；收款日期按“有效收入流水、关联 Cash 入站、Cash 确认时间”依次选择。接入正式 Cash 系统后，仍由该接口吸收 linkage 字段差异，前端合同保持不变。
 - 阶段 2 增加 `receipt_records`，记录 `receipt_no`、`income_record_id`、`issued_at`、`issued_by`、`snapshot_amount`、`snapshot_student_name`、`snapshot_item`、`pdf_metadata`，支持历史查看和重新下载。生成后展示以 snapshot 为准。
 - 阶段 3 支持作废 / 重开、一张收据对应多笔 Cash 收款、部分付款、预收款、多月合并付款、收据编号规则和审计日志。
 - 如果未来支持部分付款，收据必须基于实际 Cash 收款金额，而不是账单应收金额；账单应收和实际收款通过核销 / 分配关系连接。

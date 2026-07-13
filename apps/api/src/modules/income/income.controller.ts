@@ -39,6 +39,12 @@ export class IncomeController {
     return this.incomeService.getIncomeRecord(id);
   }
 
+  @Get(":id/receipt")
+  @RequirePermissions("income.manage")
+  getTuitionReceipt(@Param("id") id: string) {
+    return this.incomeService.getTuitionReceipt(id);
+  }
+
   @Post("manual")
   @RequirePermissions("income.manage")
   createManualIncome(
