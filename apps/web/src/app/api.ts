@@ -484,6 +484,20 @@ export interface StudentPlannedLessonRecord {
   } | null;
 }
 
+export interface CreatePlannedLessonInput {
+  studentId: string;
+  teacherId: string;
+  subjectId: string;
+  weekAnchorDate: string;
+  lessonNo?: number | null;
+  plannedStartTime?: string | null;
+  plannedEndTime?: string | null;
+  durationHours: number;
+  plannedFeeJpy: number;
+  content?: string | null;
+  memo?: string | null;
+}
+
 export interface StudentActualLessonRecord {
   id: string;
   plannedLessonId: string | null;
@@ -1083,6 +1097,14 @@ export function listExternalWorkplaces(accessToken: string) {
 export function listPlannedLessons(accessToken: string) {
   return requestJson<ListResponse<StudentPlannedLessonRecord>>("/lessons/planned?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function createPlannedLesson(accessToken: string, input: CreatePlannedLessonInput) {
+  return requestJson<{ plannedLesson: StudentPlannedLessonRecord }>("/lessons/planned", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
   });
 }
 

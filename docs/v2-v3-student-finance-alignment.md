@@ -1,6 +1,6 @@
 # V2 / V3 学生链路与财务边界对齐
 
-更新时间：2026-07-11
+更新时间：2026-07-14
 
 迁移边界补充（2026-07-13）：本文件用于业务规则对齐，不代表 V2 历史数据需要全量进入 V3。V3 prod 只承接 `2026-07+` 青空进学塾正式运营数据，具体范围见 `docs/v3-prod-migration-boundary.md`。
 
@@ -28,13 +28,14 @@
 | 规则 | V3 状态 | 结论 |
 | --- | --- | --- |
 | 正式 planned 课时参与学费账单 | 已对齐 | 保留 |
+| 手动单条新增正式 planned 课时 | 前后端已对齐 | 课时管理页填写学生、老师、科目、周一锚点、时长和权威 JPY 课时费；业务归属由后端固定为运营归属 |
 | planned 生成 actual、取消、待补课、补课完成 | 已对齐 | 保留 |
 | 全新 planned 允许物理删除 | 后端已实现，前端入口本轮补齐 | 删除只适用于 `scheduled`、未作废、无 actual、无任何下游引用的记录 |
 | 删除需要显式确认 | 已对齐 | API 要求 `confirmDelete = true`，前端二次确认 |
 | 删除需要乐观锁 | 已对齐 | API 要求 `expectedUpdatedAt`，版本不一致时拒绝 |
 | 删除最终由后端判断 | 已对齐 | 前端只做候选显示，不能绕过后端 guard |
 
-V2 的删除 guard 必须覆盖：实际课时、取消课/补课记录、学生月度结算、结算调整、老师工资明细、学费账单快照和收入快照。V3 后端已覆盖对应的 actual、settlement、tuition bill 和 wage detail 引用检查；本轮前端已接入 `POST /lessons/planned/:id/delete-fresh`。
+V2 的删除 guard 必须覆盖：实际课时、取消课/补课记录、学生月度结算、结算调整、老师工资明细、学费账单快照和收入快照。V3 后端已覆盖对应的 actual、settlement、tuition bill 和 wage detail 引用检查；前端已接入 `POST /lessons/planned` 手动单条新增和 `POST /lessons/planned/:id/delete-fresh` 全新课时删除。
 
 ### 2. 学费账单
 

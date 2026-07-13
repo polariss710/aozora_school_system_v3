@@ -48,6 +48,7 @@ import {
   cancelPlannedLesson,
   confirmTeacherWageAdjustments,
   confirmTeacherAttendanceWorkbookImport,
+  createPlannedLesson,
   createTeacherWageRule,
   createReimbursementFromExpense,
   createExpenseFromTeacherWage,
@@ -122,6 +123,7 @@ import type {
   CashInboundEventRecord,
   CashRequestRecord,
   CreateReimbursementInput,
+  CreatePlannedLessonInput,
   ExpenseRecord,
   ExternalWorkLessonRecord,
   ExternalWorkSettlementRecord,
@@ -422,6 +424,7 @@ type TeacherDialogState =
   | { mode: "edit"; row: DataRow };
 
 type FinanceDialogState = { kind: "income" | "expense" };
+type PlannedLessonDialogState = { defaultStudentId?: string };
 type TuitionBillDialogState = { yearMonth: string };
 type StudentSettlementDialogState = {
   mode: "lock" | "relock";
@@ -473,6 +476,7 @@ type SettingsApiState =
       rows: DataRow[];
       counts: SettingsApiCounts;
       businessEntities: BusinessEntityRecord[];
+      subjects: SubjectRecord[];
       message?: string;
     }
   | {
@@ -480,6 +484,7 @@ type SettingsApiState =
       rows: DataRow[];
       counts: SettingsApiCounts;
       businessEntities: BusinessEntityRecord[];
+      subjects: SubjectRecord[];
       message?: string;
     }
   | {
@@ -487,6 +492,7 @@ type SettingsApiState =
       rows: DataRow[];
       counts: SettingsApiCounts;
       businessEntities: BusinessEntityRecord[];
+      subjects: SubjectRecord[];
       message: string;
     };
 
@@ -3676,6 +3682,19 @@ function formatApiError(error: unknown) {
       return "该学生已归档或停用，当前操作不可用。请先恢复学生状态后再操作。";
     }
 
+    const lessonErrorTranslations = [
+      ["weekAnchorDate must be a Monday.", "周起始日期必须选择周一。"],
+      ["Active teacher is required.", "该老师已归档或停用，请选择有效老师。"],
+      ["Active subject is required.", "该科目已归档或停用，请选择有效科目。"],
+      ["Student settlement is locked for this month.", "该学生当前月份已经锁定结算，不能新增预定课时。"],
+      ["durationHours must be greater than 0.", "课时数必须大于 0 且不超过 24。"],
+      ["plannedFeeJpy must be a non-negative integer.", "预定课时费必须是非负整数日元。"],
+    ] as const;
+
+    for (const [source, translated] of lessonErrorTranslations) {
+      if (message.includes(source)) message = message.replace(source, translated);
+    }
+
     const settlementErrorTranslations = [
       ["No planned lessons exist for this student/month.", "该学生本月没有预定课时。"],
       ["Scheduled planned lessons must be processed before settlement lock.", "仍有未处理的预定课时，请先处理完毕后再锁定结算。"],
@@ -4418,13 +4437,13 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
 
   return {
     ...basePage,
-    description: "真实 dev API 课时列表；第一层只读展示预定课时和实际课时对应关系",
-    primaryAction: undefined,
+    description: "真实 dev API 课时列表；支持新增预定课时、生成实际、取消、待补课和全新课时删除",
+    primaryAction: "新增预定课时",
     secondaryAction: undefined,
     metrics: [
       { label: "预定课时", value: `${plannedState.total}`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
       { label: "实际课时", value: `${actualState.total}`, sub: "已生成或已完成", tone: "emerald", icon: ClipboardCheck },
-      { label: "待生成实际", value: `${pendingActualCount}`, sub: "第二层再接动作", tone: "amber", icon: Clock },
+      { label: "待生成实际", value: `${pendingActualCount}`, sub: "可继续处理", tone: "amber", icon: Clock },
       { label: "跨月补课", value: `${makeupCount}`, sub: "待补课 / 补课完成", tone: "cyan", icon: RefreshCw },
     ],
     rows: [],
@@ -6904,17 +6923,19 @@ function LessonActualColumn({
 function LessonManagementPage({
   page,
   pairs,
+  onPrimary,
   onLessonAction,
   lessonActionSubmittingId,
 }: {
   page: PageConfig;
   pairs: LessonPair[];
+  onPrimary?: () => void;
   onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
   lessonActionSubmittingId?: string | null;
 }) {
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
-      <PageHeader page={page} />
+      <PageHeader page={page} onPrimary={onPrimary} />
       <FilterPanel filters={page.filters} />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {page.metrics.map((metric) => (
@@ -6965,6 +6986,226 @@ function LessonManagementPage({
         </div>
       </section>
     </main>
+  );
+}
+
+function getCurrentWeekMondayInput() {
+  const today = new Date();
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, "0");
+  const day = String(monday.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isMondayDateInput(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.getUTCDay() === 1;
+}
+
+function PlannedLessonCreateModal({
+  state,
+  students,
+  teachers,
+  subjects,
+  businessEntities,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: PlannedLessonDialogState;
+  students: StudentRecord[];
+  teachers: TeacherRecord[];
+  subjects: SubjectRecord[];
+  businessEntities: BusinessEntityRecord[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: CreatePlannedLessonInput) => void;
+}) {
+  const activeStudents = students.filter((student) => student.status === "active");
+  const activeTeachers = teachers.filter((teacher) => teacher.status === "active");
+  const activeSubjects = subjects.filter((subject) => subject.status === "active");
+  const operationalEntity = getOperationalBusinessEntity(businessEntities);
+  const [studentId, setStudentId] = useState(state.defaultStudentId ?? activeStudents[0]?.id ?? "");
+  const [teacherId, setTeacherId] = useState(activeTeachers[0]?.id ?? "");
+  const [subjectId, setSubjectId] = useState(activeSubjects[0]?.id ?? "");
+  const [weekAnchorDate, setWeekAnchorDate] = useState(getCurrentWeekMondayInput);
+  const [lessonNo, setLessonNo] = useState("1");
+  const [plannedStartTime, setPlannedStartTime] = useState("10:00");
+  const [plannedEndTime, setPlannedEndTime] = useState("11:00");
+  const [durationHours, setDurationHours] = useState("1");
+  const [plannedFeeJpy, setPlannedFeeJpy] = useState("");
+  const [content, setContent] = useState("");
+  const [memo, setMemo] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!studentId && activeStudents[0]) setStudentId(activeStudents[0].id);
+    if (!teacherId && activeTeachers[0]) setTeacherId(activeTeachers[0].id);
+    if (!subjectId && activeSubjects[0]) setSubjectId(activeSubjects[0].id);
+  }, [activeStudents, activeTeachers, activeSubjects, studentId, teacherId, subjectId]);
+
+  const durationNumber = Number(durationHours);
+  const feeNumber = Number(plannedFeeJpy);
+  const lessonNoNumber = lessonNo.trim() ? Number(lessonNo) : null;
+  const timePairComplete = Boolean(plannedStartTime) === Boolean(plannedEndTime);
+  const timeOrderValid =
+    !plannedStartTime || !plannedEndTime || plannedEndTime > plannedStartTime;
+  const canSubmit =
+    Boolean(studentId && teacherId && subjectId && operationalEntity) &&
+    isMondayDateInput(weekAnchorDate) &&
+    Number.isFinite(durationNumber) &&
+    durationNumber > 0 &&
+    durationNumber <= 24 &&
+    Number.isInteger(feeNumber) &&
+    feeNumber >= 0 &&
+    (lessonNoNumber === null || (Number.isInteger(lessonNoNumber) && lessonNoNumber > 0)) &&
+    timePairComplete &&
+    timeOrderValid;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setValidationError(null);
+
+    if (!isMondayDateInput(weekAnchorDate)) {
+      setValidationError("周起始日期必须选择周一。");
+      return;
+    }
+    if (!timePairComplete) {
+      setValidationError("开始时间和结束时间需要同时填写，或同时留空。");
+      return;
+    }
+    if (!timeOrderValid) {
+      setValidationError("结束时间必须晚于开始时间。");
+      return;
+    }
+    if (!canSubmit) {
+      setValidationError("请完整填写学生、老师、科目、时长和非负整数课时费。");
+      return;
+    }
+
+    onSubmit({
+      studentId,
+      teacherId,
+      subjectId,
+      weekAnchorDate,
+      lessonNo: lessonNoNumber,
+      plannedStartTime: normalizeOptionalFormValue(plannedStartTime),
+      plannedEndTime: normalizeOptionalFormValue(plannedEndTime),
+      durationHours: durationNumber,
+      plannedFeeJpy: feeNumber,
+      content: normalizeOptionalFormValue(content),
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭新增预定课时弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex max-h-[94vh] w-[min(760px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">新增预定课时</h2>
+            <p className="mt-1 text-xs text-muted-foreground">正式预定课时会进入学费账单；业务月份由周起始日期确定。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">学生</span>
+              <select required value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+                <option value="">请选择学生</option>
+                {activeStudents.map((student) => <option key={student.id} value={student.id}>{student.name}{student.code ? `（${student.code}）` : ""}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">老师</span>
+              <select required value={teacherId} onChange={(event) => setTeacherId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+                <option value="">请选择老师</option>
+                {activeTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.code ? `（${teacher.code}）` : ""}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">科目</span>
+              <select required value={subjectId} onChange={(event) => setSubjectId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+                <option value="">请选择科目</option>
+                {activeSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}（{subject.code}）</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">周起始日期（周一）</span>
+              <input required type="date" value={weekAnchorDate} onChange={(event) => setWeekAnchorDate(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">课时序号</span>
+              <input type="number" min="1" step="1" value={lessonNo} onChange={(event) => setLessonNo(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">课时数</span>
+              <input required type="number" min="0.25" max="24" step="0.25" value={durationHours} onChange={(event) => setDurationHours(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+            </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">开始时间</span>
+              <input type="time" value={plannedStartTime} onChange={(event) => setPlannedStartTime(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">结束时间</span>
+              <input type="time" value={plannedEndTime} onChange={(event) => setPlannedEndTime(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">预定课时费（JPY）</span>
+              <input required type="number" min="0" step="1" value={plannedFeeJpy} onChange={(event) => setPlannedFeeJpy(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="例如：6000" />
+            </label>
+          </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">授课内容</span>
+            <input value={content} onChange={(event) => setContent(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" />
+          </label>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[76px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" />
+          </label>
+
+          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+            业务归属：{operationalEntity?.name ?? "未找到可用运营归属"}。新业务归属由后端固定，不在此处自由选择。
+          </div>
+          {!activeStudents.length || !activeTeachers.length || !activeSubjects.length ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">需要至少一名有效学生、老师和科目后才能新增预定课时。</div>
+          ) : null}
+          {(validationError || error) && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{validationError ?? error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="submit" disabled={isSubmitting || !studentId || !teacherId || !subjectId || !operationalEntity} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CalendarDays className="h-3.5 w-3.5" />}
+            {isSubmitting ? "保存中" : "保存预定课时"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -8921,9 +9162,13 @@ export default function App() {
     rows: [],
     counts: emptySettingsCounts,
     businessEntities: [],
+    subjects: [],
   });
   const [studentChainApi, setStudentChainApi] = useState<StudentChainApiState>(createEmptyStudentChainApiState);
   const [studentChainReloadKey, setStudentChainReloadKey] = useState(0);
+  const [plannedLessonDialog, setPlannedLessonDialog] = useState<PlannedLessonDialogState | null>(null);
+  const [isPlannedLessonSubmitting, setIsPlannedLessonSubmitting] = useState(false);
+  const [plannedLessonMutationError, setPlannedLessonMutationError] = useState<string | null>(null);
   const [tuitionBillDialog, setTuitionBillDialog] = useState<TuitionBillDialogState | null>(null);
   const [isTuitionBillSubmitting, setIsTuitionBillSubmitting] = useState(false);
   const [tuitionBillMutationError, setTuitionBillMutationError] = useState<string | null>(null);
@@ -9212,7 +9457,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authSession) {
-      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts, businessEntities: [] });
+      setSettingsApi({ status: "idle", rows: [], counts: emptySettingsCounts, businessEntities: [], subjects: [] });
       return;
     }
 
@@ -9223,6 +9468,7 @@ export default function App() {
       rows: current.rows,
       counts: current.counts,
       businessEntities: current.businessEntities,
+      subjects: current.subjects,
     }));
 
     void Promise.all([
@@ -9251,6 +9497,7 @@ export default function App() {
             externalWorkplaces: externalWorkplaces.items.length,
           },
           businessEntities: businessEntities.items,
+          subjects: subjects.items,
         });
       })
       .catch((error) => {
@@ -9263,6 +9510,7 @@ export default function App() {
           rows: [],
           counts: emptySettingsCounts,
           businessEntities: [],
+          subjects: [],
           message: error instanceof Error ? error.message : "Settings API request failed",
         });
       });
@@ -9609,6 +9857,32 @@ export default function App() {
   const openTuitionBillCreate = () => {
     setTuitionBillMutationError(null);
     setTuitionBillDialog({ yearMonth: new Date().toISOString().slice(0, 7) });
+  };
+
+  const openPlannedLessonCreate = () => {
+    setPlannedLessonMutationError(null);
+    setPlannedLessonDialog({});
+  };
+
+  const submitPlannedLessonForm = async (input: CreatePlannedLessonInput) => {
+    if (!authSession) {
+      setPlannedLessonMutationError("请先使用真实 API 登录后再新增预定课时。");
+      return;
+    }
+
+    setIsPlannedLessonSubmitting(true);
+    setPlannedLessonMutationError(null);
+
+    try {
+      await createPlannedLesson(authSession.accessToken, input);
+      setPlannedLessonDialog(null);
+      setStudentChainReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: "预定课时已创建，并已刷新课时管理列表。" });
+    } catch (error) {
+      setPlannedLessonMutationError(formatApiError(error));
+    } finally {
+      setIsPlannedLessonSubmitting(false);
+    }
   };
 
   const openStudentSettlementCreate = () => {
@@ -10530,6 +10804,7 @@ export default function App() {
     setTuitionBillDialog(null);
     setStudentSettlementDialog(null);
     setFinanceDialog(null);
+    setPlannedLessonDialog(null);
     setTuitionReceiptDialog(null);
     setCashRequestDialog(null);
     setReimbursementDialog(null);
@@ -10582,6 +10857,7 @@ export default function App() {
           <LessonManagementPage
             page={activePage}
             pairs={activeLessonPairs}
+            onPrimary={openPlannedLessonCreate}
             onLessonAction={handleLessonAction}
             lessonActionSubmittingId={lessonActionSubmittingId}
           />
@@ -10657,6 +10933,19 @@ export default function App() {
           error={teacherMutationError}
           onClose={() => setTeacherDialog(null)}
           onSubmit={submitTeacherForm}
+        />
+      )}
+      {plannedLessonDialog && (
+        <PlannedLessonCreateModal
+          state={plannedLessonDialog}
+          students={studentApi.rows.flatMap((row) => (row.studentRecord ? [row.studentRecord] : []))}
+          teachers={teacherApi.rows.flatMap((row) => (row.teacherRecord ? [row.teacherRecord] : []))}
+          subjects={settingsApi.subjects}
+          businessEntities={settingsApi.businessEntities}
+          isSubmitting={isPlannedLessonSubmitting}
+          error={plannedLessonMutationError}
+          onClose={() => setPlannedLessonDialog(null)}
+          onSubmit={submitPlannedLessonForm}
         />
       )}
       {tuitionBillDialog && (
