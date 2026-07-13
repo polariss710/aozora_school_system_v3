@@ -2091,7 +2091,7 @@ function TuitionBillGenerateModal({
       <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
       <form
         onSubmit={submit}
-        className="relative z-10 flex w-[min(520px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+        className="relative z-10 flex w-[min(520px,94vw)] min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl"
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
           <div>
@@ -2103,14 +2103,14 @@ function TuitionBillGenerateModal({
           </button>
         </div>
 
-        <div className="grid gap-4 px-6 py-5">
-          <label className="grid gap-1.5">
+        <div className="grid min-w-0 gap-4 px-6 py-5">
+          <label className="grid min-w-0 gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">学生</span>
             <select
               required
               value={studentId}
               onChange={(event) => setStudentId(event.target.value)}
-              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
             >
               <option value="">请选择学生</option>
               {activeStudents.map((student) => (
@@ -2121,18 +2121,18 @@ function TuitionBillGenerateModal({
             </select>
           </label>
 
-          <label className="grid gap-1.5">
+          <label className="grid min-w-0 gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">业务月份</span>
             <input
               required
               type="month"
               value={yearMonth}
               onChange={(event) => setYearMonth(event.target.value)}
-              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
             />
           </label>
 
-          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+          <div className="min-w-0 break-words rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
             本操作只生成或更新账单快照，不会手动输入金额，也不会自动创建收入记录。
           </div>
 
