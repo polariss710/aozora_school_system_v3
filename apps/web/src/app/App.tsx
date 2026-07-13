@@ -7125,23 +7125,23 @@ function PlannedLessonCreateModal({
 
         <div className="grid gap-4 overflow-y-auto px-6 py-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <label className="grid gap-1.5">
+            <label className="grid min-w-0 gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">学生</span>
-              <select required value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+              <select required value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
                 <option value="">请选择学生</option>
                 {activeStudents.map((student) => <option key={student.id} value={student.id}>{student.name}{student.code ? `（${student.code}）` : ""}</option>)}
               </select>
             </label>
-            <label className="grid gap-1.5">
+            <label className="grid min-w-0 gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">老师</span>
-              <select required value={teacherId} onChange={(event) => setTeacherId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+              <select required value={teacherId} onChange={(event) => setTeacherId(event.target.value)} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
                 <option value="">请选择老师</option>
                 {activeTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.code ? `（${teacher.code}）` : ""}</option>)}
               </select>
             </label>
-            <label className="grid gap-1.5">
+            <label className="grid min-w-0 gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">科目</span>
-              <select required value={subjectId} onChange={(event) => setSubjectId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+              <select required value={subjectId} onChange={(event) => setSubjectId(event.target.value)} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
                 <option value="">请选择科目</option>
                 {activeSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}（{subject.code}）</option>)}
               </select>
