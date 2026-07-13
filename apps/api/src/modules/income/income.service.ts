@@ -26,6 +26,7 @@ import {
   ManualIncomeBody,
   VoidIncomeRecordBody,
 } from "./income.types";
+import { AuthenticatedUser } from "../users/users.types";
 
 const defaultLimit = 100;
 const maxLimit = 500;
@@ -37,6 +38,40 @@ const receiptCashRequestStatuses = [
   CashRequestStatus.cash_confirmed,
   CashRequestStatus.account_transaction_created,
 ];
+
+const receiptRecordSelect = {
+  id: true,
+  receiptNo: true,
+  incomeRecordId: true,
+  issuedAt: true,
+  snapshotIssuedByName: true,
+  snapshotPaymentDate: true,
+  snapshotCurrency: true,
+  snapshotAmountJpy: true,
+  snapshotAmountCny: true,
+  snapshotStudentName: true,
+  snapshotBusinessEntityName: true,
+  snapshotItem: true,
+  snapshotDescription: true,
+  snapshotBusinessMonth: true,
+  snapshotIncomeTitle: true,
+  snapshotMemo: true,
+  authoritySource: true,
+  sourceCashRequestId: true,
+  sourceAccountTransactionId: true,
+  externalCashRequestId: true,
+  externalCashEventId: true,
+  pdfMetadata: true,
+  incomeRecord: {
+    select: {
+      studentId: true,
+    },
+  },
+} satisfies Prisma.ReceiptRecordSelect;
+
+type ReceiptRecordSnapshot = Prisma.ReceiptRecordGetPayload<{
+  select: typeof receiptRecordSelect;
+}>;
 
 const incomeRecordSelect = {
   id: true,
@@ -108,6 +143,15 @@ const incomeRecordSelect = {
       externalEventId: true,
     },
   },
+  receiptRecords: {
+    orderBy: [{ issuedAt: "desc" as const }],
+    take: 1,
+    select: {
+      id: true,
+      receiptNo: true,
+      issuedAt: true,
+    },
+  },
 } satisfies Prisma.IncomeRecordSelect;
 
 type IncomeRecordSnapshot = Prisma.IncomeRecordGetPayload<{
@@ -150,7 +194,127 @@ export class IncomeService {
   }
 
   async getTuitionReceipt(id: string) {
+    const receiptRecord = await this.findReceiptRecordByIncomeId(id);
+
+    if (receiptRecord) {
+      return { receipt: this.toSnapshotReceipt(receiptRecord) };
+    }
+
     const incomeRecord = await this.findIncomeRecord(id);
+    return { receipt: await this.buildLiveTuitionReceipt(incomeRecord) };
+  }
+
+  async issueTuitionReceipt(id: string, actor: AuthenticatedUser) {
+    const existing = await this.findReceiptRecordByIncomeId(id);
+
+    if (existing) {
+      return { receipt: this.toSnapshotReceipt(existing), created: false };
+    }
+
+    const incomeRecord = await this.findIncomeRecord(id);
+    const liveReceipt = await this.buildLiveTuitionReceipt(incomeRecord);
+    const issuedAt = new Date();
+
+    try {
+      const created = await this.prisma.$transaction(async (tx) => {
+        const sequenceRows = await tx.$queryRaw<Array<{ receipt_serial: bigint }>>`
+          SELECT nextval(pg_get_serial_sequence('receipt_records', 'receipt_serial')) AS receipt_serial
+        `;
+        const receiptSerial = sequenceRows[0]?.receipt_serial;
+
+        if (receiptSerial === undefined) {
+          throw new BadRequestException("无法生成收据编号，请稍后重试。");
+        }
+
+        const receiptRecord = await tx.receiptRecord.create({
+          data: {
+            receiptSerial,
+            receiptNo: this.formatReceiptNo(issuedAt, receiptSerial),
+            incomeRecordId: incomeRecord.id,
+            issuedAt,
+            issuedById: actor.id,
+            snapshotIssuedByName: actor.displayName,
+            snapshotPaymentDate: new Date(`${liveReceipt.paymentDate}T00:00:00.000Z`),
+            snapshotCurrency: liveReceipt.paymentCurrency,
+            snapshotAmountJpy: liveReceipt.paymentAmountJpy,
+            snapshotAmountCny: liveReceipt.paymentAmountCny,
+            snapshotStudentName: liveReceipt.studentName,
+            snapshotBusinessEntityName: liveReceipt.businessEntityName,
+            snapshotItem: liveReceipt.itemName,
+            snapshotDescription: liveReceipt.description,
+            snapshotBusinessMonth: liveReceipt.businessMonth,
+            snapshotIncomeTitle: liveReceipt.incomeTitle,
+            snapshotMemo: liveReceipt.memo,
+            authoritySource: liveReceipt.authoritySource,
+            sourceCashRequestId: liveReceipt.cashRequestId,
+            sourceAccountTransactionId: liveReceipt.cashTransactionId,
+            externalCashRequestId: liveReceipt.externalCashRequestId,
+            externalCashEventId: liveReceipt.externalCashEventId,
+            pdfMetadata: liveReceipt.pdfMetadata,
+          },
+          select: receiptRecordSelect,
+        });
+
+        await this.auditService.recordEvent(
+          {
+            actorUserId: actor.id,
+            action: "tuition_receipt.issue",
+            targetType: "receipt_record",
+            targetId: receiptRecord.id,
+            riskLevel: AuditRiskLevel.medium,
+            afterSnapshot: receiptRecord,
+            metadata: {
+              incomeRecordId: incomeRecord.id,
+              receiptNo: receiptRecord.receiptNo,
+            },
+          },
+          tx,
+        );
+
+        return receiptRecord;
+      });
+
+      return { receipt: this.toSnapshotReceipt(created), created: true };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const concurrentReceipt = await this.findReceiptRecordByIncomeId(id);
+        if (concurrentReceipt) {
+          return { receipt: this.toSnapshotReceipt(concurrentReceipt), created: false };
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  async listTuitionReceipts(id: string) {
+    await this.assertIncomeRecordExists(id);
+    const receiptRecords = await this.prisma.receiptRecord.findMany({
+      where: { incomeRecordId: id },
+      orderBy: [{ issuedAt: "desc" }],
+      select: receiptRecordSelect,
+    });
+
+    return {
+      items: receiptRecords.map((record) => this.toSnapshotReceipt(record)),
+      total: receiptRecords.length,
+    };
+  }
+
+  async getIssuedTuitionReceipt(id: string, receiptId: string) {
+    const receiptRecord = await this.prisma.receiptRecord.findFirst({
+      where: { id: receiptId, incomeRecordId: id },
+      select: receiptRecordSelect,
+    });
+
+    if (!receiptRecord) {
+      throw new NotFoundException("Receipt record not found.");
+    }
+
+    return { receipt: this.toSnapshotReceipt(receiptRecord) };
+  }
+
+  private async buildLiveTuitionReceipt(incomeRecord: IncomeRecordSnapshot) {
     const eligibility = this.getReceiptEligibility(incomeRecord);
 
     if (!eligibility.eligible) {
@@ -199,32 +363,40 @@ export class IncomeService {
       : "学费";
 
     return {
-      receipt: {
-        incomeRecordId: incomeRecord.id,
-        studentId: incomeRecord.student!.id,
-        studentName: incomeRecord.student!.name,
-        businessEntityName: incomeRecord.businessEntity?.name ?? "青空进学塾",
-        businessMonth: incomeRecord.yearMonth,
-        itemName: "学费",
-        description,
-        paymentDate: paymentDate.toISOString().slice(0, 10),
-        paymentCurrency,
-        paymentAmountJpy,
-        paymentAmountCny,
-        incomeTitle: incomeRecord.title,
-        memo: incomeRecord.memo,
-        authoritySource: accountTransaction
-          ? "account_transaction"
-          : cashInboundEvent
-            ? "cash_inbound"
-            : "cash_confirmation",
-        cashRequestId: cashRequest.id,
-        cashTransactionId: accountTransaction?.id ?? null,
-        externalCashRequestId: cashRequest.externalCashRequestId,
-        externalCashEventId:
-          accountTransaction?.externalEventId ??
-          cashInboundEvent?.externalCashEventId ??
-          cashRequest.externalCashEventId,
+      receiptRecordId: null,
+      receiptNo: null,
+      issuedAt: null,
+      issuedByName: null,
+      snapshotLocked: false,
+      incomeRecordId: incomeRecord.id,
+      studentId: incomeRecord.student!.id,
+      studentName: incomeRecord.student!.name,
+      businessEntityName: incomeRecord.businessEntity?.name ?? "青空进学塾",
+      businessMonth: incomeRecord.yearMonth,
+      itemName: "学费",
+      description,
+      paymentDate: paymentDate.toISOString().slice(0, 10),
+      paymentCurrency,
+      paymentAmountJpy,
+      paymentAmountCny,
+      incomeTitle: incomeRecord.title,
+      memo: incomeRecord.memo,
+      authoritySource: accountTransaction
+        ? "account_transaction"
+        : cashInboundEvent
+          ? "cash_inbound"
+          : "cash_confirmation",
+      cashRequestId: cashRequest.id,
+      cashTransactionId: accountTransaction?.id ?? null,
+      externalCashRequestId: cashRequest.externalCashRequestId,
+      externalCashEventId:
+        accountTransaction?.externalEventId ??
+        cashInboundEvent?.externalCashEventId ??
+        cashRequest.externalCashEventId,
+      pdfMetadata: {
+        layoutVersion: "tuition_receipt_v1",
+        pageSize: "A4",
+        locale: "ja-JP",
       },
     };
   }
@@ -385,12 +557,78 @@ export class IncomeService {
 
   private withReceiptEligibility(incomeRecord: IncomeRecordSnapshot) {
     const eligibility = this.getReceiptEligibility(incomeRecord);
+    const latestReceipt = incomeRecord.receiptRecords[0] ?? null;
 
     return {
       ...incomeRecord,
       receiptEligible: eligibility.eligible,
       receiptIneligibleReason: eligibility.eligible ? null : eligibility.reason,
+      receiptIssued: Boolean(latestReceipt),
+      latestReceipt,
     };
+  }
+
+  private toSnapshotReceipt(receiptRecord: ReceiptRecordSnapshot) {
+    return {
+      receiptRecordId: receiptRecord.id,
+      receiptNo: receiptRecord.receiptNo,
+      issuedAt: receiptRecord.issuedAt.toISOString(),
+      issuedByName: receiptRecord.snapshotIssuedByName,
+      snapshotLocked: true,
+      incomeRecordId: receiptRecord.incomeRecordId,
+      studentId: receiptRecord.incomeRecord.studentId,
+      studentName: receiptRecord.snapshotStudentName,
+      businessEntityName: receiptRecord.snapshotBusinessEntityName,
+      businessMonth: receiptRecord.snapshotBusinessMonth,
+      itemName: receiptRecord.snapshotItem,
+      description: receiptRecord.snapshotDescription,
+      paymentDate: receiptRecord.snapshotPaymentDate.toISOString().slice(0, 10),
+      paymentCurrency: receiptRecord.snapshotCurrency,
+      paymentAmountJpy: receiptRecord.snapshotAmountJpy,
+      paymentAmountCny: receiptRecord.snapshotAmountCny,
+      incomeTitle: receiptRecord.snapshotIncomeTitle,
+      memo: receiptRecord.snapshotMemo,
+      authoritySource: receiptRecord.authoritySource,
+      cashRequestId: receiptRecord.sourceCashRequestId,
+      cashTransactionId: receiptRecord.sourceAccountTransactionId,
+      externalCashRequestId: receiptRecord.externalCashRequestId,
+      externalCashEventId: receiptRecord.externalCashEventId,
+      pdfMetadata: receiptRecord.pdfMetadata,
+    };
+  }
+
+  private async findReceiptRecordByIncomeId(incomeRecordId: string) {
+    return this.prisma.receiptRecord.findUnique({
+      where: { incomeRecordId },
+      select: receiptRecordSelect,
+    });
+  }
+
+  private async assertIncomeRecordExists(id: string) {
+    const incomeRecord = await this.prisma.incomeRecord.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!incomeRecord) {
+      throw new NotFoundException("Income record not found.");
+    }
+  }
+
+  private formatReceiptNo(issuedAt: Date, serial: bigint) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+    }).formatToParts(issuedAt);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+
+    if (!year || !month) {
+      throw new BadRequestException("无法生成收据编号，请稍后重试。");
+    }
+
+    return `AOZ-${year}${month}-${serial.toString().padStart(6, "0")}`;
   }
 
   private getReceiptEligibility(incomeRecord: IncomeRecordSnapshot) {

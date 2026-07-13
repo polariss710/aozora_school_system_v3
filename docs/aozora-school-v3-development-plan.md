@@ -997,7 +997,7 @@ V2 v10.3.52 对照结论：
 - 阶段 1 不做复杂收据台账，可重复生成 PDF，但内容必须始终来自同一条已确认收入记录。
 - 阶段 1 已实装：收入抽屉按后端 `receiptEligible` 显示入口，`GET /api/income/:id/receipt` 返回权威收据数据，前端提供固定版式预览和浏览器打印 / 保存 PDF。
 - 当前权威金额按“有效收入账户流水优先，其次已确认 Cash 请求”选择；收款日期按“有效收入流水、关联 Cash 入站、Cash 确认时间”依次选择。接入正式 Cash 系统后，仍由该接口吸收 linkage 字段差异，前端合同保持不变。
-- 阶段 2 增加 `receipt_records`，记录 `receipt_no`、`income_record_id`、`issued_at`、`issued_by`、`snapshot_amount`、`snapshot_student_name`、`snapshot_item`、`pdf_metadata`，支持历史查看和重新下载。生成后展示以 snapshot 为准。
+- 阶段 2 已实装 `receipt_records`：记录 `receipt_no`、`income_record_id`、`issued_at`、`issued_by`、权威金额、学生名、业务归属、项目、收款日期、Cash 来源追踪和 `pdf_metadata` 快照；支持历史查询和基于快照重新打印。开具接口幂等，同一收入当前只生成一张收据，编号采用 `AOZ-YYYYMM-######`。生成后展示以 snapshot 为准，不再读取可变主数据重算。
 - 阶段 3 支持作废 / 重开、一张收据对应多笔 Cash 收款、部分付款、预收款、多月合并付款、收据编号规则和审计日志。
 - 如果未来支持部分付款，收据必须基于实际 Cash 收款金额，而不是账单应收金额；账单应收和实际收款通过核销 / 分配关系连接。
 

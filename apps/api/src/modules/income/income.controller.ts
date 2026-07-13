@@ -45,6 +45,30 @@ export class IncomeController {
     return this.incomeService.getTuitionReceipt(id);
   }
 
+  @Post(":id/receipt")
+  @RequirePermissions("income.manage")
+  issueTuitionReceipt(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.incomeService.issueTuitionReceipt(id, user);
+  }
+
+  @Get(":id/receipts")
+  @RequirePermissions("income.manage")
+  listTuitionReceipts(@Param("id") id: string) {
+    return this.incomeService.listTuitionReceipts(id);
+  }
+
+  @Get(":id/receipts/:receiptId")
+  @RequirePermissions("income.manage")
+  getIssuedTuitionReceipt(
+    @Param("id") id: string,
+    @Param("receiptId") receiptId: string,
+  ) {
+    return this.incomeService.getIssuedTuitionReceipt(id, receiptId);
+  }
+
   @Post("manual")
   @RequirePermissions("income.manage")
   createManualIncome(

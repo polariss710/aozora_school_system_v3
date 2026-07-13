@@ -88,6 +88,7 @@ import {
   generateTuitionBillIncome,
   generateActualLesson,
   getTuitionReceipt,
+  issueTuitionReceipt,
   getCurrentUser,
   markPlannedLessonMakeupPending,
   previewStudentSettlement,
@@ -245,6 +246,7 @@ interface DataRow {
     amountJpy: number | null;
     amountCny: number | null;
     receiptEligible?: boolean;
+    receiptIssued?: boolean;
   };
   cashRequest?: {
     status: string;
@@ -1269,8 +1271,16 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       actions.push({ label: "提交 Cash 请求", icon: Send, variant: "primary", key: "cash.submit" });
     }
 
-    if (row.apiRef.resource === "income" && row.financeRecord?.receiptEligible) {
-      actions.push({ label: "生成学费收据", icon: ReceiptText, variant: "secondary", key: "income.receipt" });
+    if (
+      row.apiRef.resource === "income" &&
+      (row.financeRecord?.receiptEligible || row.financeRecord?.receiptIssued)
+    ) {
+      actions.push({
+        label: row.financeRecord.receiptIssued ? "查看学费收据" : "生成学费收据",
+        icon: ReceiptText,
+        variant: "secondary",
+        key: "income.receipt",
+      });
     }
 
     if (canVoid) {
@@ -3077,7 +3087,7 @@ function printTuitionReceipt(receipt: TuitionReceiptPayload) {
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>領収書 - ${escapeReceiptHtml(receipt.studentName)}</title>
+  <title>${escapeReceiptHtml(receipt.receiptNo ?? "領収書")} - ${escapeReceiptHtml(receipt.studentName)}</title>
   <style>
     @page { size: A4 portrait; margin: 18mm; }
     * { box-sizing: border-box; }
@@ -3093,19 +3103,21 @@ function printTuitionReceipt(receipt: TuitionReceiptPayload) {
     .issuer-box { min-width: 240px; font-size: 14px; line-height: 1.9; }
     .issuer-name { font-size: 19px; font-weight: 600; }
     .source { margin-top: 72px; border-top: 1px solid #e2e7ef; padding-top: 10px; color: #7a8494; font-size: 9px; }
+    .receipt-no { margin-top: 8px; text-align: right; color: #596579; font-size: 11px; }
     @media print { .sheet { border: 0; min-height: auto; } }
   </style>
 </head>
 <body>
   <main class="sheet">
     <h1>領収書</h1>
+    <div class="receipt-no">No. ${escapeReceiptHtml(receipt.receiptNo)}</div>
     <div class="date">受領日：${escapeReceiptHtml(paymentDate)}</div>
     <div class="recipient">${escapeReceiptHtml(receipt.studentName)} 様</div>
     <div class="amount">${escapeReceiptHtml(formatReceiptAmount(receipt))}</div>
     <div class="tax">上記正に領収いたしました</div>
     <div class="description">但し、${escapeReceiptHtml(receipt.description)}として</div>
     <div class="issuer"><div class="issuer-box"><div class="issuer-name">${escapeReceiptHtml(receipt.businessEntityName)}</div></div></div>
-    <div class="source">Income record: ${escapeReceiptHtml(receipt.incomeRecordId)}</div>
+    <div class="source">Receipt record: ${escapeReceiptHtml(receipt.receiptRecordId)} / Income record: ${escapeReceiptHtml(receipt.incomeRecordId)}</div>
   </main>
   <script>window.addEventListener("load", () => { window.focus(); window.print(); });<\/script>
 </body>
@@ -3118,11 +3130,15 @@ function printTuitionReceipt(receipt: TuitionReceiptPayload) {
 
 function TuitionReceiptModal({
   state,
+  isIssuing,
   onClose,
+  onIssue,
   onPrintError,
 }: {
   state: TuitionReceiptDialogState;
+  isIssuing: boolean;
   onClose: () => void;
+  onIssue: () => void;
   onPrintError: (message: string) => void;
 }) {
   const { receipt } = state;
@@ -3147,7 +3163,9 @@ function TuitionReceiptModal({
       <section className="relative z-10 flex max-h-[92vh] w-[min(720px,96vw)] flex-col overflow-hidden rounded-lg border border-border bg-white shadow-2xl">
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
           <div>
-            <h2 className="text-base font-semibold text-foreground">学费收据预览</h2>
+            <h2 className="text-base font-semibold text-foreground">
+              {receipt.snapshotLocked ? "学费收据" : "学费收据开具预览"}
+            </h2>
             <p className="mt-1 text-xs text-muted-foreground">{receipt.studentName} / {receipt.description}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
@@ -3158,6 +3176,9 @@ function TuitionReceiptModal({
         <div className="overflow-y-auto bg-[#f5f7fa] p-5 md:p-7">
           <article className="mx-auto min-h-[560px] max-w-[560px] border border-border bg-white px-10 py-9 shadow-sm">
             <h3 className="text-center text-2xl font-semibold text-foreground">領収書</h3>
+            <div className="mt-2 text-right text-[11px] text-muted-foreground">
+              {receipt.receiptNo ? `No. ${receipt.receiptNo}` : "开具后生成收据编号"}
+            </div>
             <div className="mt-6 text-right text-xs text-muted-foreground">受領日：{receipt.paymentDate.replace(/-/g, "/")}</div>
             <div className="mt-9 w-4/5 border-b border-foreground px-2 pb-2 text-lg font-medium">{receipt.studentName} 様</div>
             <div className="mx-auto mt-10 w-4/5 border-y-2 border-foreground py-3 text-center text-2xl font-semibold">
@@ -3173,19 +3194,38 @@ function TuitionReceiptModal({
           <div className="mx-auto mt-3 flex max-w-[560px] flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
             <span>金额来源：{authorityLabel}</span>
             <span>Cash 请求：{receipt.cashRequestId}</span>
+            {receipt.issuedAt && <span>开具时间：{new Date(receipt.issuedAt).toLocaleString("ja-JP")}</span>}
+            {receipt.issuedByName && <span>开具人：{receipt.issuedByName}</span>}
           </div>
+          {!receipt.snapshotLocked && (
+            <div className="mx-auto mt-3 max-w-[560px] rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              开具后，学生名、金额、项目、收款日期和来源追踪会固定为收据快照；本阶段不支持作废或重开。
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-border bg-white px-6 py-4">
           <ActionButton variant="quiet" onClick={onClose}>关闭</ActionButton>
-          <button
-            type="button"
-            onClick={printReceipt}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd]"
-          >
-            <Download className="h-3.5 w-3.5" />
-            打印 / 保存 PDF
-          </button>
+          {receipt.snapshotLocked ? (
+            <button
+              type="button"
+              onClick={printReceipt}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd]"
+            >
+              <Download className="h-3.5 w-3.5" />
+              打印 / 保存 PDF
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onIssue}
+              disabled={isIssuing}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
+            >
+              {isIssuing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <FileCheck2 className="h-3.5 w-3.5" />}
+              {isIssuing ? "开具中" : "开具并固定快照"}
+            </button>
+          )}
         </div>
       </section>
     </div>
@@ -5915,7 +5955,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       resource: "income",
       id: record.id,
     },
-    readOnlyActions: !canVoid && !canSubmitCash && !record.receiptEligible,
+    readOnlyActions: !canVoid && !canSubmitCash && !record.receiptEligible && !record.receiptIssued,
     financeRecord: {
       kind: "income",
       sourceType: record.sourceType,
@@ -5925,6 +5965,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       amountJpy: parseApiAmount(record.originalAmountJpy),
       amountCny: parseApiAmount(record.originalAmountCny),
       receiptEligible: record.receiptEligible,
+      receiptIssued: record.receiptIssued,
     },
     cells: {
       source: sourceLabel,
@@ -5941,7 +5982,14 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
           { label: "学生", value: record.student?.name ?? "-" },
           { label: "原始金额", value: amount },
           { label: "Cash 状态", value: cashStatus },
-          { label: "学费收据", value: record.receiptEligible ? "可生成" : record.receiptIneligibleReason ?? "不可生成" },
+          {
+            label: "学费收据",
+            value: record.receiptIssued
+              ? `已开具 ${record.latestReceipt?.receiptNo ?? ""}`.trim()
+              : record.receiptEligible
+                ? "可生成"
+                : record.receiptIneligibleReason ?? "不可生成",
+          },
           { label: "备注", value: record.memo ?? "-" },
         ],
       },
@@ -8898,6 +8946,7 @@ export default function App() {
   const [isFinanceSubmitting, setIsFinanceSubmitting] = useState(false);
   const [financeMutationError, setFinanceMutationError] = useState<string | null>(null);
   const [tuitionReceiptDialog, setTuitionReceiptDialog] = useState<TuitionReceiptDialogState | null>(null);
+  const [isTuitionReceiptIssuing, setIsTuitionReceiptIssuing] = useState(false);
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
   const [isCashRequestSubmitting, setIsCashRequestSubmitting] = useState(false);
   const [cashRequestError, setCashRequestError] = useState<string | null>(null);
@@ -10392,6 +10441,34 @@ export default function App() {
     }
   };
 
+  const issueCurrentTuitionReceipt = async () => {
+    if (!authSession || !tuitionReceiptDialog) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再开具学费收据。" });
+      return;
+    }
+
+    setIsTuitionReceiptIssuing(true);
+
+    try {
+      const result = await issueTuitionReceipt(
+        authSession.accessToken,
+        tuitionReceiptDialog.receipt.incomeRecordId,
+      );
+      setTuitionReceiptDialog({ receipt: result.receipt });
+      setFinanceReloadKey((current) => current + 1);
+      setActionNotice({
+        tone: "emerald",
+        text: result.created
+          ? `学费收据 ${result.receipt.receiptNo ?? ""} 已开具并固定快照。`
+          : `已读取现有学费收据 ${result.receipt.receiptNo ?? ""}。`,
+      });
+    } catch (error) {
+      setActionNotice({ tone: "rose", text: formatApiError(error) });
+    } finally {
+      setIsTuitionReceiptIssuing(false);
+    }
+  };
+
   const submitReimbursementForm = async (input: ReimbursementFormInput) => {
     if (!authSession) {
       setReimbursementMutationError("请先使用真实 API 登录后再生成报销。");
@@ -10650,7 +10727,9 @@ export default function App() {
       {tuitionReceiptDialog && (
         <TuitionReceiptModal
           state={tuitionReceiptDialog}
+          isIssuing={isTuitionReceiptIssuing}
           onClose={() => setTuitionReceiptDialog(null)}
+          onIssue={issueCurrentTuitionReceipt}
           onPrintError={(message) => setActionNotice({ tone: "rose", text: message })}
         />
       )}

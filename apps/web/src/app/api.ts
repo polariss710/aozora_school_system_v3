@@ -159,11 +159,22 @@ export interface IncomeRecord {
   businessEntity: RelatedBusinessEntityRecord | null;
   receiptEligible: boolean;
   receiptIneligibleReason: string | null;
+  receiptIssued: boolean;
+  latestReceipt: {
+    id: string;
+    receiptNo: string;
+    issuedAt: string;
+  } | null;
 }
 
 export interface TuitionReceiptPayload {
+  receiptRecordId: string | null;
+  receiptNo: string | null;
+  issuedAt: string | null;
+  issuedByName: string | null;
+  snapshotLocked: boolean;
   incomeRecordId: string;
-  studentId: string;
+  studentId: string | null;
   studentName: string;
   businessEntityName: string;
   businessMonth: string | null;
@@ -180,6 +191,12 @@ export interface TuitionReceiptPayload {
   cashTransactionId: string | null;
   externalCashRequestId: string | null;
   externalCashEventId: string | null;
+  pdfMetadata: {
+    layoutVersion?: string;
+    pageSize?: string;
+    locale?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface ManualIncomeInput {
@@ -1339,6 +1356,26 @@ export function getTuitionReceipt(accessToken: string, incomeRecordId: string) {
   return requestJson<{ receipt: TuitionReceiptPayload }>(`/income/${incomeRecordId}/receipt`, {
     headers: authorizedHeaders(accessToken),
   });
+}
+
+export function issueTuitionReceipt(accessToken: string, incomeRecordId: string) {
+  return requestJson<{ receipt: TuitionReceiptPayload; created: boolean }>(`/income/${incomeRecordId}/receipt`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listTuitionReceipts(accessToken: string, incomeRecordId: string) {
+  return requestJson<{ items: TuitionReceiptPayload[]; total: number }>(`/income/${incomeRecordId}/receipts`, {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function getIssuedTuitionReceipt(accessToken: string, incomeRecordId: string, receiptRecordId: string) {
+  return requestJson<{ receipt: TuitionReceiptPayload }>(
+    `/income/${incomeRecordId}/receipts/${receiptRecordId}`,
+    { headers: authorizedHeaders(accessToken) },
+  );
 }
 
 export function createManualIncome(accessToken: string, input: ManualIncomeInput) {

@@ -7,9 +7,9 @@ Current stage:
 - First-round dev API for the v3 main business chain.
 - Supabase dev PostgreSQL is connected through local environment variables.
 - NestJS runtime uses `PrismaService` with the PostgreSQL driver adapter.
-- Prisma migrations cover foundation master data, lessons, settlements, tuition bills, income, expenses, Cash requests, Cash inbound events, account transactions, reimbursements, external work, and teacher wages.
+- Prisma migrations cover foundation master data, lessons, settlements, tuition bills, income, tuition receipt snapshots, expenses, Cash requests, Cash inbound events, account transactions, reimbursements, external work, and teacher wages.
 - The seed script initializes the minimum v3 roles, permissions, business entities, and School-side accounts.
-- Controller route count: 145 as of 2026-07-06.
+- Controller route count: 153 as of 2026-07-13.
 
 API contract principles:
 
@@ -151,9 +151,19 @@ Income endpoints:
 ```text
 GET /api/income
 GET /api/income/:id
+GET /api/income/:id/receipt
+POST /api/income/:id/receipt
+GET /api/income/:id/receipts
+GET /api/income/:id/receipts/:receiptId
 POST /api/income/manual
 POST /api/income/:id/void
 ```
+
+Tuition receipt contract:
+
+- `GET /api/income/:id/receipt` returns a live authority-backed preview before issuance and the immutable receipt snapshot after issuance.
+- `POST /api/income/:id/receipt` is idempotent. The first call writes `receipt_records`, assigns `AOZ-YYYYMM-######`, records the issuer and audit event, and freezes the receipt fields; later calls return the existing snapshot.
+- Receipt history and exact snapshot retrieval use the plural endpoints. Stage 2 currently allows one issued receipt per income record; void/reissue and multiple allocations remain stage 3 work.
 
 Expense endpoints:
 
