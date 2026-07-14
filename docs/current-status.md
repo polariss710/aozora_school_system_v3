@@ -1,0 +1,34 @@
+# Aozora School System V3 当前状态
+
+更新日期：2026-07-15
+
+## 当前开发状态
+
+- V3 当前处于 dev 主链路实装与稳定测试阶段。
+- 前端、NestJS API、Prisma schema 和 dev PostgreSQL 已建立，正式运营仍未切换到 V3。
+- 学费账单已完成生成预览、来源明细、版本判断和来源指纹保护；本轮人工验收延后进行。
+- staging / prod 数据库和正式迁移程序尚未建立或执行。
+
+## V2 → V3 Prod 数据迁移状态
+
+### 已确定迁移政策
+
+- 不采用全系统统一日期截断，按业务模块定义迁移范围。
+- 普通教学业务事实原则上迁移 `2026-07` 及以后；主数据按引用闭包迁移。
+- 私塾打工迁移完整 2026 结算年度，即 `2025-12` 至 `2026-11`。
+- 私塾打工范围以 `year_month` 为准，必须保留课时、结算、明细、收入、个人 Cash 联动事件和必要 legacy request 的完整审计链。
+- 原 UUID、历史导入批次、原始行、snapshot、来源文件哈希、历史业务归属和 Cash transaction ID 不得被重新生成或改写。
+- Cash DB 如继续复用，只迁移 School 引用；如 Cash 也迁库，另立 Cash ledger 迁移阶段。
+- 正式切换采用“全量初始迁移 → 对账 → 最终增量 / 冻结 → 单点切换”，禁止长期双写。
+
+正式政策详见 `docs/v3-prod-migration-boundary.md`。
+
+### 尚未执行
+
+- 未运行任何迁移 SQL、RPC 或数据复制程序。
+- 未写入 V2、V3 dev、staging、prod 或 Cash 数据库。
+- 未创建正式迁移批次或修改生产数据。
+- 未执行 V2 只读盘点、逐字段 mapping、staging 演练或 prod 切换。
+- 未补充 V3 承载历史导入批次、原始行快照、来源文件哈希和个人 Cash linkage 身份所需的 schema。
+
+下一阶段开始前，需要先完成只读盘点、schema / mapping 设计、Cash 拓扑确认、迁移与回滚程序设计，再进入 staging 演练。
