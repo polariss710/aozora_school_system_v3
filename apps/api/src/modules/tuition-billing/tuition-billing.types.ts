@@ -1,6 +1,7 @@
 export type GenerateTuitionBillBody = {
   studentId?: unknown;
   yearMonth?: unknown;
+  expectedPreviewFingerprint?: unknown;
 };
 
 export type VoidTuitionBillBody = {

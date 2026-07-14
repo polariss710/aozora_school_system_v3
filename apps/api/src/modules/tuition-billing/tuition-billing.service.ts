@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import {
   AuditRiskLevel,
   CashRequestStatus,
@@ -90,9 +91,57 @@ const incomeRecordSelect = {
   },
 } satisfies Prisma.IncomeRecordSelect;
 
+const tuitionPreviewPlannedLessonSelect = {
+  id: true,
+  teacherId: true,
+  subjectId: true,
+  businessEntityId: true,
+  weekAnchorDate: true,
+  lessonNo: true,
+  durationHours: true,
+  plannedFeeJpy: true,
+  status: true,
+  teacher: { select: { id: true, code: true, name: true } },
+  subject: { select: { id: true, code: true, name: true } },
+  businessEntity: { select: { id: true, code: true, name: true } },
+} satisfies Prisma.StudentPlannedLessonSelect;
+
 type TuitionBillSnapshot = Prisma.StudentTuitionBillGetPayload<{
   select: typeof tuitionBillSelect;
 }>;
+
+type TuitionPreviewPlannedLesson = Prisma.StudentPlannedLessonGetPayload<{
+  select: typeof tuitionPreviewPlannedLessonSelect;
+}>;
+
+type TuitionPreviewIssue = {
+  code: string;
+  message: string;
+};
+
+type TuitionBillGenerationContext = {
+  studentId: string;
+  yearMonth: string;
+  student: { id: string; code: string | null; name: string };
+  latest: TuitionBillSnapshot | null;
+  latestIncomeWasVoided: boolean;
+  plannedLessons: TuitionPreviewPlannedLesson[];
+  plannedAmountJpy: number;
+  previousYearMonth: string;
+  previousSettlement: {
+    id: string;
+    status: StudentSettlementStatus;
+    carryoverAmountCny: Prisma.Decimal;
+    lockedAt: Date;
+  } | null;
+  carryoverAmountCny: Prisma.Decimal;
+  businessEntityIds: string[];
+  calculationSnapshot: Prisma.InputJsonObject;
+  blockingIssues: TuitionPreviewIssue[];
+  notices: TuitionPreviewIssue[];
+  sameAsLatest: boolean;
+  previewFingerprint: string;
+};
 
 const tuitionExportLessonRelationSelect = {
   id: true,
@@ -171,120 +220,49 @@ export class TuitionBillingService {
     };
   }
 
+  async previewTuitionBill(body: GenerateTuitionBillBody) {
+    const context = await this.buildTuitionBillGenerationContext(body);
+
+    return { preview: this.toTuitionBillPreview(context) };
+  }
+
   async generateTuitionBill(
     body: GenerateTuitionBillBody,
     actorUserId: string,
   ) {
-    const studentId = this.normalizeRequiredString(body.studentId, "studentId");
-    const yearMonth = this.normalizeYearMonth(body.yearMonth);
+    const context = await this.buildTuitionBillGenerationContext(body);
+    const {
+      studentId,
+      yearMonth,
+      latest,
+      latestIncomeWasVoided,
+      plannedLessons,
+      plannedAmountJpy,
+      carryoverAmountCny,
+      calculationSnapshot,
+      blockingIssues,
+      sameAsLatest,
+    } = context;
 
-    const student = await this.prisma.student.findFirst({
-      where: { id: studentId, status: RecordStatus.active },
-      select: { id: true, name: true },
-    });
-
-    if (!student) {
-      throw new BadRequestException("Active student is required.");
-    }
-
-    const latest = await this.prisma.studentTuitionBill.findFirst({
-      where: { studentId, yearMonth },
-      orderBy: { version: "desc" },
-      select: tuitionBillSelect,
-    });
-
-    const latestIncomeWasVoided =
-      latest?.status === TuitionBillStatus.income_created &&
-      latest.incomeRecord?.recordStatus === IncomeRecordStatus.voided;
-
-    if (latest?.status === TuitionBillStatus.income_created && !latestIncomeWasVoided) {
+    const expectedPreviewFingerprint = this.normalizeOptionalString(
+      body.expectedPreviewFingerprint,
+    );
+    if (
+      expectedPreviewFingerprint &&
+      expectedPreviewFingerprint !== context.previewFingerprint
+    ) {
       throw new BadRequestException(
-        "Tuition bill already generated income record.",
+        "Tuition bill sources changed after preview. Refresh preview before generating.",
       );
     }
 
-    const plannedLessons = await this.prisma.studentPlannedLesson.findMany({
-      where: {
-        studentId,
-        yearMonth,
-        status: { not: PlannedLessonStatus.cancelled },
-      },
-      orderBy: [{ weekAnchorDate: "asc" }, { lessonNo: "asc" }],
-      select: {
-        id: true,
-        teacherId: true,
-        subjectId: true,
-        businessEntityId: true,
-        weekAnchorDate: true,
-        lessonNo: true,
-        durationHours: true,
-        plannedFeeJpy: true,
-        status: true,
-      },
-    });
-
-    const plannedAmountJpy = plannedLessons.reduce(
-      (sum, lesson) => sum + lesson.plannedFeeJpy,
-      0,
-    );
-    const previousYearMonth = this.addMonths(yearMonth, -1);
-    const previousSettlement =
-      await this.prisma.studentMonthlySettlement.findUnique({
-        where: {
-          studentId_yearMonth: {
-            studentId,
-            yearMonth: previousYearMonth,
-          },
-        },
-        select: {
-          id: true,
-          status: true,
-          carryoverAmountCny: true,
-          lockedAt: true,
-        },
-      });
-    const carryoverAmountCny =
-      previousSettlement?.status === StudentSettlementStatus.locked
-        ? previousSettlement.carryoverAmountCny
-        : new Prisma.Decimal(0);
-    const businessEntityIds = [
-      ...new Set(plannedLessons.map((lesson) => lesson.businessEntityId)),
-    ];
-    const calculationSnapshot = {
-      source: "student_planned_lessons",
-      studentId,
-      yearMonth,
-      excludedStatuses: [PlannedLessonStatus.cancelled],
-      plannedLessonIds: plannedLessons.map((lesson) => lesson.id),
-      businessEntityIds,
-      plannedLessons: plannedLessons.map((lesson) => ({
-        id: lesson.id,
-        teacherId: lesson.teacherId,
-        subjectId: lesson.subjectId,
-        businessEntityId: lesson.businessEntityId,
-        weekAnchorDate: lesson.weekAnchorDate.toISOString().slice(0, 10),
-        lessonNo: lesson.lessonNo,
-        durationHours: lesson.durationHours.toString(),
-        plannedFeeJpy: lesson.plannedFeeJpy,
-        status: lesson.status,
-      })),
-      carryoverSource: previousSettlement
-        ? {
-            type: "previous_locked_student_monthly_settlement",
-            yearMonth: previousYearMonth,
-            settlementId: previousSettlement.id,
-            settlementStatus: previousSettlement.status,
-            lockedAt: previousSettlement.lockedAt.toISOString(),
-          }
-        : {
-            type: "none",
-            yearMonth: previousYearMonth,
-          },
-    };
+    if (blockingIssues.length > 0) {
+      throw new BadRequestException(blockingIssues[0].message);
+    }
 
     if (
       latest?.status === TuitionBillStatus.generated &&
-      this.isSameTuitionBillCalculation(latest, plannedLessons, carryoverAmountCny)
+      sameAsLatest
     ) {
       return { tuitionBill: latest, created: false };
     }
@@ -481,6 +459,246 @@ export class TuitionBillingService {
     return { tuitionBill };
   }
 
+  private async buildTuitionBillGenerationContext(
+    body: GenerateTuitionBillBody,
+  ): Promise<TuitionBillGenerationContext> {
+    const studentId = this.normalizeRequiredString(body.studentId, "studentId");
+    const yearMonth = this.normalizeYearMonth(body.yearMonth);
+    const student = await this.prisma.student.findFirst({
+      where: { id: studentId, status: RecordStatus.active },
+      select: { id: true, code: true, name: true },
+    });
+
+    if (!student) {
+      throw new BadRequestException("Active student is required.");
+    }
+
+    const [latest, plannedLessons, previousSettlement] = await Promise.all([
+      this.prisma.studentTuitionBill.findFirst({
+        where: { studentId, yearMonth },
+        orderBy: { version: "desc" },
+        select: tuitionBillSelect,
+      }),
+      this.prisma.studentPlannedLesson.findMany({
+        where: {
+          studentId,
+          yearMonth,
+          status: { not: PlannedLessonStatus.cancelled },
+        },
+        orderBy: [{ weekAnchorDate: "asc" }, { lessonNo: "asc" }],
+        select: tuitionPreviewPlannedLessonSelect,
+      }),
+      this.prisma.studentMonthlySettlement.findUnique({
+        where: {
+          studentId_yearMonth: {
+            studentId,
+            yearMonth: this.addMonths(yearMonth, -1),
+          },
+        },
+        select: {
+          id: true,
+          status: true,
+          carryoverAmountCny: true,
+          lockedAt: true,
+        },
+      }),
+    ]);
+    const latestIncomeWasVoided =
+      latest?.status === TuitionBillStatus.income_created &&
+      latest.incomeRecord?.recordStatus === IncomeRecordStatus.voided;
+    const plannedAmountJpy = plannedLessons.reduce(
+      (sum, lesson) => sum + lesson.plannedFeeJpy,
+      0,
+    );
+    const previousYearMonth = this.addMonths(yearMonth, -1);
+    const carryoverAmountCny =
+      previousSettlement?.status === StudentSettlementStatus.locked
+        ? previousSettlement.carryoverAmountCny
+        : new Prisma.Decimal(0);
+    const businessEntityIds = [
+      ...new Set(plannedLessons.map((lesson) => lesson.businessEntityId)),
+    ];
+    const calculationSnapshot: Prisma.InputJsonObject = {
+      source: "student_planned_lessons",
+      studentId,
+      yearMonth,
+      excludedStatuses: [PlannedLessonStatus.cancelled],
+      plannedLessonIds: plannedLessons.map((lesson) => lesson.id),
+      businessEntityIds,
+      plannedLessons: plannedLessons.map((lesson) => ({
+        id: lesson.id,
+        teacherId: lesson.teacherId,
+        subjectId: lesson.subjectId,
+        businessEntityId: lesson.businessEntityId,
+        weekAnchorDate: this.formatDate(lesson.weekAnchorDate),
+        lessonNo: lesson.lessonNo,
+        durationHours: lesson.durationHours.toString(),
+        plannedFeeJpy: lesson.plannedFeeJpy,
+        status: lesson.status,
+      })),
+      carryoverSource:
+        previousSettlement?.status === StudentSettlementStatus.locked
+          ? {
+              type: "previous_locked_student_monthly_settlement",
+              yearMonth: previousYearMonth,
+              settlementId: previousSettlement.id,
+              settlementStatus: previousSettlement.status,
+              lockedAt: previousSettlement.lockedAt.toISOString(),
+            }
+          : {
+              type: "none",
+              yearMonth: previousYearMonth,
+              settlementId: previousSettlement?.id ?? null,
+              settlementStatus: previousSettlement?.status ?? null,
+            },
+    };
+    const sameAsLatest = Boolean(
+      latest?.status === TuitionBillStatus.generated &&
+        this.isSameTuitionBillCalculation(
+          latest,
+          plannedLessons,
+          carryoverAmountCny,
+        ),
+    );
+    const blockingIssues: TuitionPreviewIssue[] = [
+      ...(latest?.status === TuitionBillStatus.income_created && !latestIncomeWasVoided
+        ? [{
+            code: "income_already_created",
+            message: "Tuition bill already generated income record.",
+          }]
+        : []),
+      ...(plannedLessons.length === 0 && carryoverAmountCny.equals(0)
+        ? [{
+            code: "no_billable_sources",
+            message: "No billable planned lessons or locked carryover exist for this student/month.",
+          }]
+        : []),
+    ];
+    const notices: TuitionPreviewIssue[] = [
+      ...(!previousSettlement
+        ? [{
+            code: "no_previous_settlement",
+            message: "No previous-month settlement exists; carryover is zero.",
+          }]
+        : []),
+      ...(previousSettlement && previousSettlement.status !== StudentSettlementStatus.locked
+        ? [{
+            code: "previous_settlement_not_locked",
+            message: "Previous-month settlement is not locked; carryover is not applied.",
+          }]
+        : []),
+      ...(sameAsLatest
+        ? [{
+            code: "calculation_unchanged",
+            message: "The latest generated bill already matches this calculation.",
+          }]
+        : []),
+      ...(latestIncomeWasVoided
+        ? [{
+            code: "replace_voided_income_bill",
+            message: "The previous income was voided; generation will create a new bill version.",
+          }]
+        : []),
+    ];
+    const previewFingerprint = createHash("sha256")
+      .update(JSON.stringify({
+        calculationSnapshot,
+        carryoverAmountCny: carryoverAmountCny.toString(),
+        latestBill: latest
+          ? {
+              id: latest.id,
+              version: latest.version,
+              status: latest.status,
+              incomeRecordId: latest.incomeRecordId,
+              incomeRecordStatus: latest.incomeRecord?.recordStatus ?? null,
+            }
+          : null,
+      }))
+      .digest("hex");
+
+    return {
+      studentId,
+      yearMonth,
+      student,
+      latest,
+      latestIncomeWasVoided,
+      plannedLessons,
+      plannedAmountJpy,
+      previousYearMonth,
+      previousSettlement,
+      carryoverAmountCny,
+      businessEntityIds,
+      calculationSnapshot,
+      blockingIssues,
+      notices,
+      sameAsLatest,
+      previewFingerprint,
+    };
+  }
+
+  private toTuitionBillPreview(context: TuitionBillGenerationContext) {
+    const mode = context.blockingIssues.length > 0
+      ? "blocked"
+      : context.sameAsLatest
+        ? "unchanged"
+        : context.latest
+          ? "regenerate"
+          : "create";
+    const nextVersion = mode === "unchanged"
+      ? context.latest?.version ?? 1
+      : (context.latest?.version ?? 0) + 1;
+
+    return {
+      student: context.student,
+      studentId: context.studentId,
+      yearMonth: context.yearMonth,
+      previousYearMonth: context.previousYearMonth,
+      plannedLessonCount: context.plannedLessons.length,
+      plannedAmountJpy: context.plannedAmountJpy,
+      carryoverAmountCny: context.carryoverAmountCny.toNumber(),
+      businessEntityIds: context.businessEntityIds,
+      generationMode: mode,
+      previewFingerprint: context.previewFingerprint,
+      willCreate: mode === "create" || mode === "regenerate",
+      nextVersion,
+      blockingIssues: context.blockingIssues,
+      notices: context.notices,
+      latestBill: context.latest
+        ? {
+            id: context.latest.id,
+            version: context.latest.version,
+            status: context.latest.status,
+            plannedLessonCount: context.latest.plannedLessonCount,
+            plannedAmountJpy: context.latest.plannedAmountJpy,
+            carryoverAmountCny: context.latest.carryoverAmountCny.toNumber(),
+            incomeRecordId: context.latest.incomeRecordId,
+          }
+        : null,
+      carryoverSource: context.previousSettlement
+        ? {
+            settlementId: context.previousSettlement.id,
+            yearMonth: context.previousYearMonth,
+            status: context.previousSettlement.status,
+            lockedAt: context.previousSettlement.lockedAt.toISOString(),
+            sourceAmountCny: context.previousSettlement.carryoverAmountCny.toNumber(),
+            applied: context.previousSettlement.status === StudentSettlementStatus.locked,
+          }
+        : null,
+      plannedLessons: context.plannedLessons.map((lesson) => ({
+        id: lesson.id,
+        weekAnchorDate: this.formatDate(lesson.weekAnchorDate),
+        weekLabel: this.formatWeekLabel(lesson.weekAnchorDate),
+        lessonNo: lesson.lessonNo,
+        durationHours: lesson.durationHours.toNumber(),
+        plannedFeeJpy: lesson.plannedFeeJpy,
+        status: lesson.status,
+        teacher: lesson.teacher,
+        subject: lesson.subject,
+        businessEntity: lesson.businessEntity,
+      })),
+    };
+  }
+
   private async findTuitionBill(id: string): Promise<TuitionBillSnapshot> {
     const tuitionBill = await this.prisma.studentTuitionBill.findUnique({
       where: { id },
@@ -599,22 +817,70 @@ export class TuitionBillingService {
       : [];
   }
 
+  private getSnapshotRecordArray(snapshot: Prisma.JsonValue, field: string) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return [];
+    }
+
+    const value = (snapshot as Record<string, unknown>)[field];
+
+    return Array.isArray(value)
+      ? value.filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        )
+      : [];
+  }
+
   private isSameTuitionBillCalculation(
     bill: TuitionBillSnapshot,
-    plannedLessons: Array<{ id: string; plannedFeeJpy: number }>,
+    plannedLessons: Array<{
+      id: string;
+      teacherId: string;
+      subjectId: string;
+      businessEntityId: string;
+      weekAnchorDate: Date;
+      lessonNo: number | null;
+      durationHours: Prisma.Decimal;
+      plannedFeeJpy: number;
+      status: PlannedLessonStatus;
+    }>,
     carryoverAmountCny: Prisma.Decimal,
   ) {
     const plannedLessonIds = this.getSnapshotStringArray(
       bill.calculationSnapshot,
       "plannedLessonIds",
     );
+    const snapshotLessons = this.getSnapshotRecordArray(
+      bill.calculationSnapshot,
+      "plannedLessons",
+    );
+    const sourceDetailsMatch =
+      snapshotLessons.length === plannedLessons.length &&
+      snapshotLessons.every((snapshotLesson, index) => {
+        const lesson = plannedLessons[index];
+
+        return Boolean(
+          lesson &&
+            snapshotLesson.id === lesson.id &&
+            snapshotLesson.teacherId === lesson.teacherId &&
+            snapshotLesson.subjectId === lesson.subjectId &&
+            snapshotLesson.businessEntityId === lesson.businessEntityId &&
+            snapshotLesson.weekAnchorDate === this.formatDate(lesson.weekAnchorDate) &&
+            snapshotLesson.lessonNo === lesson.lessonNo &&
+            snapshotLesson.durationHours === lesson.durationHours.toString() &&
+            snapshotLesson.plannedFeeJpy === lesson.plannedFeeJpy &&
+            snapshotLesson.status === lesson.status,
+        );
+      });
 
     return (
       bill.plannedLessonCount === plannedLessons.length &&
       bill.plannedAmountJpy === plannedLessons.reduce((sum, lesson) => sum + lesson.plannedFeeJpy, 0) &&
       bill.carryoverAmountCny.toString() === carryoverAmountCny.toString() &&
       plannedLessonIds.length === plannedLessons.length &&
-      plannedLessonIds.every((id, index) => id === plannedLessons[index]?.id)
+      plannedLessonIds.every((id, index) => id === plannedLessons[index]?.id) &&
+      sourceDetailsMatch
     );
   }
 

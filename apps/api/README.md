@@ -141,10 +141,19 @@ Tuition billing endpoints:
 GET /api/tuition-bills
 GET /api/tuition-bills/:id
 GET /api/tuition-bills/:id/export-payload
+POST /api/tuition-bills/preview
 POST /api/tuition-bills/generate
 POST /api/tuition-bills/:id/generate-income
 POST /api/tuition-bills/:id/void
 ```
+
+Tuition bill preview contract:
+
+- `POST /api/tuition-bills/preview` is read-only and uses the same authoritative calculation context as `POST /api/tuition-bills/generate`.
+- The preview returns included planned-lesson rows, locked previous-month carryover, the latest bill/version, the next version, notices, and blocking issues.
+- A bill cannot be generated when an active downstream income already exists, or when both billable planned lessons and locked carryover are absent.
+- Unchanged source details return `generationMode = unchanged` and `willCreate = false`; teacher, subject, business entity, week anchor, lesson number, duration, fee, status, or carryover changes require a new version.
+- The frontend passes `previewFingerprint` back as `expectedPreviewFingerprint`; generation rejects stale previews when lesson, carryover, or latest-bill state changed after preview.
 
 Income endpoints:
 

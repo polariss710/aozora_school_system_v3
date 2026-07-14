@@ -568,6 +568,57 @@ export interface TuitionBillRecord {
   } | null;
 }
 
+export interface TuitionBillPreviewIssue {
+  code: string;
+  message: string;
+}
+
+export interface TuitionBillPreview {
+  student: RelatedStudentRecord;
+  studentId: string;
+  yearMonth: string;
+  previousYearMonth: string;
+  plannedLessonCount: number;
+  plannedAmountJpy: ApiAmountValue;
+  carryoverAmountCny: ApiAmountValue;
+  businessEntityIds: string[];
+  generationMode: "create" | "regenerate" | "unchanged" | "blocked";
+  previewFingerprint: string;
+  willCreate: boolean;
+  nextVersion: number;
+  blockingIssues: TuitionBillPreviewIssue[];
+  notices: TuitionBillPreviewIssue[];
+  latestBill: {
+    id: string;
+    version: number;
+    status: string;
+    plannedLessonCount: number;
+    plannedAmountJpy: ApiAmountValue;
+    carryoverAmountCny: ApiAmountValue;
+    incomeRecordId: string | null;
+  } | null;
+  carryoverSource: {
+    settlementId: string;
+    yearMonth: string;
+    status: string;
+    lockedAt: string;
+    sourceAmountCny: ApiAmountValue;
+    applied: boolean;
+  } | null;
+  plannedLessons: Array<{
+    id: string;
+    weekAnchorDate: string;
+    weekLabel: string;
+    lessonNo: number | null;
+    durationHours: ApiAmountValue;
+    plannedFeeJpy: ApiAmountValue;
+    status: string;
+    teacher: RelatedTeacherRecord;
+    subject: RelatedSubjectRecord;
+    businessEntity: RelatedBusinessEntityRecord;
+  }>;
+}
+
 export interface StudentSettlementRecord {
   id: string;
   studentId: string;
@@ -1177,6 +1228,15 @@ export function listTuitionBills(accessToken: string) {
 export interface GenerateTuitionBillInput {
   studentId: string;
   yearMonth: string;
+  expectedPreviewFingerprint?: string;
+}
+
+export function previewTuitionBill(accessToken: string, input: GenerateTuitionBillInput) {
+  return requestJson<{ preview: TuitionBillPreview }>("/tuition-bills/preview", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
 }
 
 export function generateTuitionBill(accessToken: string, input: GenerateTuitionBillInput) {

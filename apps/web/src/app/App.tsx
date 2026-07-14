@@ -92,6 +92,7 @@ import {
   issueTuitionReceipt,
   getCurrentUser,
   markPlannedLessonMakeupPending,
+  previewTuitionBill,
   previewStudentSettlement,
   previewTeacherWage,
   previewTeacherAttendanceWorkbookImport,
@@ -156,6 +157,7 @@ import type {
   TeacherAttendanceWorkbookImportPreview,
   TeacherWriteInput,
   TuitionBillRecord,
+  TuitionBillPreview,
   TuitionReceiptPayload,
 } from "./api";
 import {
@@ -425,7 +427,11 @@ type TeacherDialogState =
 
 type FinanceDialogState = { kind: "income" | "expense" };
 type PlannedLessonDialogState = { defaultStudentId?: string };
-type TuitionBillDialogState = { yearMonth: string };
+type TuitionBillDialogState = {
+  mode: "create" | "regenerate";
+  yearMonth: string;
+  studentId?: string;
+};
 type StudentSettlementDialogState = {
   mode: "lock" | "relock";
   studentId?: string;
@@ -2052,12 +2058,32 @@ function StudentFormModal({
   );
 }
 
+function formatTuitionPreviewIssue(code: string, fallback: string) {
+  const labels: Record<string, string> = {
+    income_already_created: "该账单已经生成收入记录，不能直接重新生成。",
+    no_billable_sources: "该学生本月没有可计费预定课时，也没有可用的上月锁定结转。",
+    no_previous_settlement: "未找到上月结算，本次结转金额按 CNY 0.00 处理。",
+    previous_settlement_not_locked: "上月结算尚未锁定，本次不会计入结转金额。",
+    calculation_unchanged: "当前课时和结转与最新账单完全一致，无需重复生成。",
+    replace_voided_income_bill: "旧账单收入已经作废，本次将生成新的账单版本。",
+  };
+  return labels[code] ?? fallback;
+}
+
+function getTuitionGenerationModeLabel(mode: TuitionBillPreview["generationMode"]) {
+  if (mode === "create") return "首次生成";
+  if (mode === "regenerate") return "生成新版本";
+  if (mode === "unchanged") return "无需变更";
+  return "当前不可生成";
+}
+
 function TuitionBillGenerateModal({
   students,
   state,
   isSubmitting,
   error,
   onClose,
+  onPreview,
   onSubmit,
 }: {
   students: StudentRecord[];
@@ -2065,92 +2091,125 @@ function TuitionBillGenerateModal({
   isSubmitting: boolean;
   error: string | null;
   onClose: () => void;
+  onPreview: (input: GenerateTuitionBillInput) => Promise<TuitionBillPreview>;
   onSubmit: (input: GenerateTuitionBillInput) => void;
 }) {
   const activeStudents = students.filter((student) => student.status === "active");
-  const [studentId, setStudentId] = useState(activeStudents[0]?.id ?? "");
+  const [studentId, setStudentId] = useState(state.studentId ?? activeStudents[0]?.id ?? "");
   const [yearMonth, setYearMonth] = useState(state.yearMonth);
+  const [preview, setPreview] = useState<TuitionBillPreview | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!studentId && activeStudents[0]) {
-      setStudentId(activeStudents[0].id);
-    }
+    if (!studentId && activeStudents[0]) setStudentId(activeStudents[0].id);
   }, [activeStudents, studentId]);
 
+  const clearPreview = () => {
+    setPreview(null);
+    setPreviewError(null);
+  };
+  const input = studentId && yearMonth ? { studentId, yearMonth } : null;
+  const requestPreview = async () => {
+    if (!input) return;
+    setIsPreviewing(true);
+    setPreviewError(null);
+    try {
+      setPreview(await onPreview(input));
+    } catch (previewRequestError) {
+      setPreview(null);
+      setPreviewError(formatApiError(previewRequestError));
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+  const canGenerate = Boolean(
+    input && preview && preview.willCreate && preview.blockingIssues.length === 0,
+  );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!studentId || !yearMonth) {
-      return;
-    }
-
-    onSubmit({ studentId, yearMonth });
+    if (!input || !preview || !canGenerate) return;
+    onSubmit({
+      ...input,
+      expectedPreviewFingerprint: preview.previewFingerprint,
+    });
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
       <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
-      <form
-        onSubmit={submit}
-        className="relative z-10 flex w-[min(520px,94vw)] min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl"
-      >
+      <form onSubmit={submit} className="relative z-10 flex max-h-[94vh] w-[min(820px,96vw)] min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">生成学费账单</h2>
-            <p className="mt-1 text-xs text-muted-foreground">账单金额由服务端读取正式预定课时和上月已锁定结转计算。</p>
+          <div className="min-w-0 pr-4">
+            <h2 className="text-base font-semibold text-foreground">{state.mode === "regenerate" ? "重新生成学费账单" : "生成学费账单"}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">先读取后端权威预览；确认后才写入账单快照。</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
-            <X className="h-4 w-4" />
-          </button>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
 
-        <div className="grid min-w-0 gap-4 px-6 py-5">
-          <label className="grid min-w-0 gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">学生</span>
-            <select
-              required
-              value={studentId}
-              onChange={(event) => setStudentId(event.target.value)}
-              className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
-            >
-              <option value="">请选择学生</option>
-              {activeStudents.map((student) => (
-                <option key={student.id} value={student.id}>
-                  {student.name}{student.code ? `（${student.code}）` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="grid min-w-0 gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">业务月份</span>
-            <input
-              required
-              type="month"
-              value={yearMonth}
-              onChange={(event) => setYearMonth(event.target.value)}
-              className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
-            />
-          </label>
-
-          <div className="min-w-0 break-words rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
-            本操作只生成或更新账单快照，不会手动输入金额，也不会自动创建收入记录。
+        <div className="grid min-w-0 gap-4 overflow-y-auto px-6 py-5">
+          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">学生</span>
+              <select required disabled={state.mode === "regenerate"} value={studentId} onChange={(event) => { setStudentId(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 truncate rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15 disabled:bg-muted/40">
+                <option value="">请选择学生</option>
+                {activeStudents.map((student) => <option key={student.id} value={student.id}>{student.name}{student.code ? `（${student.code}）` : ""}</option>)}
+              </select>
+            </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">业务月份</span>
+              <input required disabled={state.mode === "regenerate"} type="month" value={yearMonth} onChange={(event) => { setYearMonth(event.target.value); clearPreview(); }} className="h-10 w-full min-w-0 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15 disabled:bg-muted/40" />
+            </label>
           </div>
 
-          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+          {preview && (
+            <section className="min-w-0 overflow-hidden rounded-lg border border-border">
+              <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2.5">
+                <span className="text-xs font-semibold">后端账单预览</span>
+                <span className="rounded-full bg-white px-2 py-1 text-[11px] text-muted-foreground">{getTuitionGenerationModeLabel(preview.generationMode)}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">
+                {[
+                  ["计费课时", `${preview.plannedLessonCount} 节`],
+                  ["JPY 学费", formatApiJpyAmount(preview.plannedAmountJpy)],
+                  ["上月结转", formatApiCnyAmount(preview.carryoverAmountCny)],
+                  ["目标版本", `v${preview.nextVersion}`],
+                ].map(([label, value]) => <div key={label} className="min-w-0 bg-white px-3 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 truncate text-sm font-medium" title={value}>{value}</div></div>)}
+              </div>
+              <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+                {preview.carryoverSource?.applied
+                  ? `结转来源：${formatYearMonth(preview.carryoverSource.yearMonth)}已锁定月结（${formatApiCnyAmount(preview.carryoverSource.sourceAmountCny)}）`
+                  : `结转来源：${formatYearMonth(preview.previousYearMonth)}无可用锁定月结`}
+                {preview.latestBill ? `；最新账单：v${preview.latestBill.version} / ${getTuitionBillStatusView(preview.latestBill.status).label}` : "；当前没有历史账单"}
+              </div>
+              <div className="border-t border-border">
+                <div className="bg-muted/20 px-4 py-2 text-[11px] font-medium text-muted-foreground">计费来源明细</div>
+                {preview.plannedLessons.length > 0 ? (
+                  <div className="max-h-52 overflow-y-auto">
+                    {preview.plannedLessons.map((lesson) => (
+                      <div key={lesson.id} className="grid min-w-0 grid-cols-[84px_52px_minmax(0,1fr)_auto] gap-3 border-t border-border/70 px-4 py-2.5 text-xs first:border-t-0">
+                        <span>{lesson.weekLabel}</span>
+                        <span>{lesson.lessonNo ? `第${lesson.lessonNo}回` : "-"}</span>
+                        <span className="truncate" title={`${lesson.teacher.name} / ${lesson.subject.name}`}>{lesson.teacher.name} / {lesson.subject.name} / {formatDurationHours(lesson.durationHours)}</span>
+                        <span className="font-medium">{formatApiJpyAmount(lesson.plannedFeeJpy)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : <div className="px-4 py-4 text-xs text-muted-foreground">没有可计费预定课时。</div>}
+              </div>
+            </section>
+          )}
+
+          {preview?.notices.length ? <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">{preview.notices.map((notice) => <div key={notice.code}>{formatTuitionPreviewIssue(notice.code, notice.message)}</div>)}</div> : null}
+          {preview?.blockingIssues.length ? <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{preview.blockingIssues.map((issue) => <div key={issue.code}>{formatTuitionPreviewIssue(issue.code, issue.message)}</div>)}</div> : null}
+          <div className="min-w-0 break-words rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">预览和正式生成使用同一套后端金额逻辑；前端不计算或提交账单金额，也不会自动创建收入记录。</div>
+          {(previewError || error) && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{previewError ?? error}</div>}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
-          <ActionButton variant="quiet" onClick={onClose}>
-            取消
-          </ActionButton>
-          <button
-            type="submit"
-            disabled={isSubmitting || !studentId || !yearMonth}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]"
-          >
-            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ReceiptText className="h-3.5 w-3.5" />}
-            {isSubmitting ? "生成中" : "生成账单"}
-          </button>
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="button" disabled={isPreviewing || isSubmitting || !input} onClick={requestPreview} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[#1687D9] bg-white px-3 text-xs font-medium text-[#1264a8] hover:bg-[#EDF6FD] disabled:cursor-not-allowed disabled:opacity-50">{isPreviewing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}{isPreviewing ? "预览中" : preview ? "刷新预览" : "生成预览"}</button>
+          <button type="submit" disabled={isSubmitting || isPreviewing || !canGenerate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ReceiptText className="h-3.5 w-3.5" />}{isSubmitting ? "生成中" : preview?.generationMode === "unchanged" ? "无需生成" : state.mode === "regenerate" ? "确认生成新版本" : "确认生成账单"}</button>
         </div>
       </form>
     </div>
@@ -3692,6 +3751,16 @@ function formatApiError(error: unknown) {
     ] as const;
 
     for (const [source, translated] of lessonErrorTranslations) {
+      if (message.includes(source)) message = message.replace(source, translated);
+    }
+
+    const tuitionBillErrorTranslations = [
+      ["Tuition bill already generated income record.", "该学费账单已经生成收入记录，不能直接重新生成。"],
+      ["No billable planned lessons or locked carryover exist for this student/month.", "该学生本月没有可计费预定课时，也没有可用的上月锁定结转。"],
+      ["Tuition bill sources changed after preview. Refresh preview before generating.", "预览后课时或结转来源已经变化，请刷新预览后再生成账单。"],
+    ] as const;
+
+    for (const [source, translated] of tuitionBillErrorTranslations) {
       if (message.includes(source)) message = message.replace(source, translated);
     }
 
@@ -9856,7 +9925,7 @@ export default function App() {
 
   const openTuitionBillCreate = () => {
     setTuitionBillMutationError(null);
-    setTuitionBillDialog({ yearMonth: new Date().toISOString().slice(0, 7) });
+    setTuitionBillDialog({ mode: "create", yearMonth: new Date().toISOString().slice(0, 7) });
   };
 
   const openPlannedLessonCreate = () => {
@@ -10020,6 +10089,13 @@ export default function App() {
     } finally {
       setIsTuitionBillSubmitting(false);
     }
+  };
+
+  const requestTuitionBillPreview = async (input: GenerateTuitionBillInput) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再生成账单预览。");
+    setTuitionBillMutationError(null);
+    const result = await previewTuitionBill(authSession.accessToken, input);
+    return result.preview;
   };
 
   const openReimbursementCreate = async () => {
@@ -10221,28 +10297,13 @@ export default function App() {
           return;
         }
 
-        const confirmed = window.confirm(`确认重新生成「${tuitionBill.student.name}」${tuitionBill.yearMonth} 的学费账单？`);
-        if (!confirmed) {
-          return;
-        }
-
-        try {
-          const result = await generateTuitionBill(authSession.accessToken, {
-            studentId: tuitionBill.studentId,
-            yearMonth: tuitionBill.yearMonth,
-          });
-          setDetailRow(null);
-          setStudentChainReloadKey((current) => current + 1);
-          const wasCreated = result.created ?? result.tuitionBill.id !== tuitionBill.id;
-          setActionNotice({
-            tone: wasCreated ? "emerald" : "amber",
-            text: wasCreated
-              ? "学费账单已重新生成。"
-              : "相同账单已经存在，本次没有重复生成。",
-          });
-        } catch (error) {
-          setActionNotice({ tone: "rose", text: formatApiError(error) });
-        }
+        setDetailRow(null);
+        setTuitionBillMutationError(null);
+        setTuitionBillDialog({
+          mode: "regenerate",
+          studentId: tuitionBill.studentId,
+          yearMonth: tuitionBill.yearMonth,
+        });
         return;
       }
 
@@ -10955,6 +11016,7 @@ export default function App() {
           isSubmitting={isTuitionBillSubmitting}
           error={tuitionBillMutationError}
           onClose={() => setTuitionBillDialog(null)}
+          onPreview={requestTuitionBillPreview}
           onSubmit={submitTuitionBillForm}
         />
       )}

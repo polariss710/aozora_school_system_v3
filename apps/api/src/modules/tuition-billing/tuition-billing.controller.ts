@@ -55,6 +55,12 @@ export class TuitionBillingController {
     return this.tuitionBillingService.generateTuitionBill(body, user.id);
   }
 
+  @Post("preview")
+  @RequirePermissions("tuition_billing.manage")
+  previewTuitionBill(@Body() body: GenerateTuitionBillBody) {
+    return this.tuitionBillingService.previewTuitionBill(body);
+  }
+
   @Post(":id/generate-income")
   @RequirePermissions("income.manage")
   generateIncomeRecord(
