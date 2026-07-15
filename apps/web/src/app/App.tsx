@@ -785,15 +785,27 @@ function MetricCard({ metric }: { metric: Metric }) {
   );
 }
 
-function FilterSelect({ filter }: { filter: Filter }) {
+function FilterSelect({
+  filter,
+  value,
+  onChange,
+}: {
+  filter: Filter;
+  value?: string;
+  onChange?: (value: string) => void;
+}) {
   return (
     <label className="flex flex-col gap-1">
       <span className="text-xs font-medium text-muted-foreground">{filter.label}</span>
       <span className="relative">
-        <select className="h-9 w-full appearance-none rounded-md border border-border bg-white py-1.5 pl-3 pr-8 text-sm text-foreground outline-none transition focus:ring-2 focus:ring-ring">
-          <option>全部</option>
+        <select
+          className="h-9 w-full appearance-none rounded-md border border-border bg-white py-1.5 pl-3 pr-8 text-sm text-foreground outline-none transition focus:ring-2 focus:ring-ring"
+          value={value}
+          onChange={onChange ? (event) => onChange(event.target.value) : undefined}
+        >
+          <option value="">全部</option>
           {filter.options.map((option) => (
-            <option key={option}>{option}</option>
+            <option key={option} value={option}>{option}</option>
           ))}
         </select>
         <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1016,12 +1028,33 @@ function PageHeader({
   );
 }
 
-function FilterPanel({ filters }: { filters: Filter[] }) {
+function FilterPanel({
+  filters,
+  values,
+  keyword,
+  onFilterChange,
+  onKeywordChange,
+  onQuery,
+  onReset,
+}: {
+  filters: Filter[];
+  values?: Record<string, string>;
+  keyword?: string;
+  onFilterChange?: (label: string, value: string) => void;
+  onKeywordChange?: (value: string) => void;
+  onQuery?: () => void;
+  onReset?: () => void;
+}) {
   return (
     <section className="rounded-lg border border-border bg-white px-5 py-4">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         {filters.map((filter) => (
-          <FilterSelect key={filter.label} filter={filter} />
+          <FilterSelect
+            key={filter.label}
+            filter={filter}
+            value={values?.[filter.label]}
+            onChange={onFilterChange ? (value) => onFilterChange(filter.label, value) : undefined}
+          />
         ))}
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted-foreground">关键词</span>
@@ -1030,13 +1063,18 @@ function FilterPanel({ filters }: { filters: Filter[] }) {
             <input
               className="h-9 w-full rounded-md border border-border bg-white py-1.5 pl-8 pr-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-ring"
               placeholder="搜索姓名、对象或备注"
+              value={keyword}
+              onChange={onKeywordChange ? (event) => onKeywordChange(event.target.value) : undefined}
+              onKeyDown={onQuery ? (event) => {
+                if (event.key === "Enter") onQuery();
+              } : undefined}
             />
           </span>
         </label>
       </div>
       <div className="mt-3 flex items-center gap-2 border-t border-border/70 pt-3">
-        <ActionButton icon={Search}>查询</ActionButton>
-        <ActionButton icon={RotateCcw} variant="quiet">
+        <ActionButton icon={Search} onClick={onQuery}>查询</ActionButton>
+        <ActionButton icon={RotateCcw} variant="quiet" onClick={onReset}>
           重置
         </ActionButton>
       </div>
@@ -3992,17 +4030,79 @@ function BusinessPage({
   onOpenDetail: (row: DataRow) => void;
   onPrimary?: () => void;
 }) {
+  const [draftFilterValues, setDraftFilterValues] = useState<Record<string, string>>({});
+  const [appliedFilterValues, setAppliedFilterValues] = useState<Record<string, string>>({});
+  const [draftKeyword, setDraftKeyword] = useState("");
+  const [appliedKeyword, setAppliedKeyword] = useState("");
+  const isTuitionBillPage = page.key === "tuition-bills";
+
+  useEffect(() => {
+    setDraftFilterValues({});
+    setAppliedFilterValues({});
+    setDraftKeyword("");
+    setAppliedKeyword("");
+  }, [page.key]);
+
+  const visibleRows = useMemo(() => {
+    if (!isTuitionBillPage) return page.rows;
+
+    const selectedMonth = appliedFilterValues[commonFilters.month.label];
+    const selectedStudent = appliedFilterValues[commonFilters.student.label];
+    const selectedStatus = appliedFilterValues[commonFilters.status.label];
+    const normalizedKeyword = appliedKeyword.trim().toLocaleLowerCase();
+
+    return page.rows.filter((row) => {
+      const record = row.tuitionBillRecord;
+      if (selectedMonth && record?.yearMonth !== selectedMonth) return false;
+      if (selectedStudent && row.title !== selectedStudent) return false;
+      if (selectedStatus && row.status !== selectedStatus) return false;
+      if (!normalizedKeyword) return true;
+
+      return [
+        row.title,
+        row.subtitle,
+        row.status,
+        record?.student.code,
+        record?.id,
+      ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
+    });
+  }, [appliedFilterValues, appliedKeyword, isTuitionBillPage, page.rows]);
+  const visiblePage = useMemo(
+    () => isTuitionBillPage ? { ...page, rows: visibleRows } : page,
+    [isTuitionBillPage, page, visibleRows],
+  );
+
+  const resetTuitionBillFilters = () => {
+    setDraftFilterValues({});
+    setAppliedFilterValues({});
+    setDraftKeyword("");
+    setAppliedKeyword("");
+  };
+
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-28">
       <PageHeader page={page} onPrimary={onPrimary} />
-      <FilterPanel filters={page.filters} />
+      <FilterPanel
+        filters={page.filters}
+        values={isTuitionBillPage ? draftFilterValues : undefined}
+        keyword={isTuitionBillPage ? draftKeyword : undefined}
+        onFilterChange={isTuitionBillPage ? (label, value) => {
+          setDraftFilterValues((current) => ({ ...current, [label]: value }));
+        } : undefined}
+        onKeywordChange={isTuitionBillPage ? setDraftKeyword : undefined}
+        onQuery={isTuitionBillPage ? () => {
+          setAppliedFilterValues(draftFilterValues);
+          setAppliedKeyword(draftKeyword);
+        } : undefined}
+        onReset={isTuitionBillPage ? resetTuitionBillFilters : undefined}
+      />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {page.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
       <DataTable
-        page={page}
+        page={visiblePage}
         selected={selected}
         onToggleAll={onToggleAll}
         onToggleRow={onToggleRow}
@@ -4686,6 +4786,25 @@ function getActualLessonStatusView(status: string): { label: string; tone: Tone 
 }
 
 function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListState): PageConfig {
+  const recordMonths = tuitionApi.rows.flatMap((row) =>
+    row.tuitionBillRecord ? [row.tuitionBillRecord.yearMonth] : [],
+  );
+  const recordStudents = tuitionApi.rows.map((row) => row.title);
+  const recordStatuses = tuitionApi.rows.map((row) => row.status);
+  const dynamicOptions = new Map<string, string[]>([
+    [
+      commonFilters.month.label,
+      [...new Set([...recordMonths, ...commonFilters.month.options])].sort((left, right) => right.localeCompare(left)),
+    ],
+    [
+      commonFilters.student.label,
+      [...new Set(recordStudents)].sort((left, right) => left.localeCompare(right, "zh-CN")),
+    ],
+    [
+      commonFilters.status.label,
+      [...new Set(recordStatuses)],
+    ],
+  ]);
   const readonlyBasePage: PageConfig = {
     ...basePage,
     description:
@@ -4696,6 +4815,10 @@ function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListStat
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
+    filters: basePage.filters.map((filter) => ({
+      ...filter,
+      options: dynamicOptions.get(filter.label) ?? filter.options,
+    })),
     columns: [
       { key: "plannedCount", label: "预定课时", align: "right" },
       { key: "plannedAmount", label: "预定课时金额", align: "right" },
