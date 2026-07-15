@@ -787,29 +787,38 @@ model ExpenseRecord {
 }
 
 model CashRequest {
-  id                    String               @id @default(uuid()) @db.Uuid
-  direction             CashRequestDirection
-  sourceType            String               @map("source_type")
-  sourceId              String?              @map("source_id")
-  incomeRecordId        String?              @map("income_record_id") @db.Uuid
-  expenseRecordId       String?              @map("expense_record_id") @db.Uuid
-  status                CashRequestStatus    @default(cash_requested)
-  expectedCurrency      CurrencyCode         @map("expected_currency")
-  expectedAmountJpy     Int?                 @map("expected_amount_jpy")
-  expectedAmountCny     Decimal?             @map("expected_amount_cny") @db.Decimal(12, 2)
-  carryoverAmountCny    Decimal?             @map("carryover_amount_cny") @db.Decimal(12, 2)
-  requestedCurrency     CurrencyCode         @map("requested_currency")
-  requestedAmountJpy    Int?                 @map("requested_amount_jpy")
-  requestedAmountCny    Decimal?             @map("requested_amount_cny") @db.Decimal(12, 2)
-  exchangeRate          Decimal?             @map("exchange_rate") @db.Decimal(18, 8)
-  exchangeRateSource    String?              @map("exchange_rate_source")
-  conversionMethod      String?              @map("conversion_method")
-  cashAccountCode       String?              @map("cash_account_code")
-  externalCashRequestId String?              @map("external_cash_request_id")
-  externalCashEventId   String?              @map("external_cash_event_id")
-  rejectionReason       String?              @map("rejection_reason")
-  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                        String               @id @default(uuid()) @db.Uuid
+  direction                 CashRequestDirection
+  sourceType                String               @map("source_type")
+  sourceId                  String?              @map("source_id")
+  incomeRecordId            String?              @map("income_record_id") @db.Uuid
+  expenseRecordId           String?              @map("expense_record_id") @db.Uuid
+  status                    CashRequestStatus    @default(cash_requested)
+  expectedCurrency          CurrencyCode         @map("expected_currency")
+  expectedAmountJpy         Int?                 @map("expected_amount_jpy")
+  expectedAmountCny         Decimal?             @map("expected_amount_cny") @db.Decimal(12, 2)
+  carryoverAmountCny        Decimal?             @map("carryover_amount_cny") @db.Decimal(12, 2)
+  requestedCurrency         CurrencyCode         @map("requested_currency")
+  requestedAmountJpy        Int?                 @map("requested_amount_jpy")
+  requestedAmountCny        Decimal?             @map("requested_amount_cny") @db.Decimal(12, 2)
+  exchangeRate              Decimal?             @map("exchange_rate") @db.Decimal(18, 8)
+  exchangeRateSource        String?              @map("exchange_rate_source")
+  conversionMethod          String?              @map("conversion_method")
+  cashAccountCode           String?              @map("cash_account_code")
+  cashAccountId             String?              @map("cash_account_id") @db.Uuid
+  cashAccountNameSnapshot   String?              @map("cash_account_name_snapshot")
+  cashAccountTypeSnapshot   String?              @map("cash_account_type_snapshot")
+  cashTransactedAt          DateTime?            @map("cash_transacted_at") @db.Date
+  externalCashRequestId     String?              @unique @map("external_cash_request_id")
+  externalCashEventId       String?              @map("external_cash_event_id")
+  externalCashTransactionId String?              @map("external_cash_transaction_id")
+  cashConfirmedAt           DateTime?            @map("cash_confirmed_at") @db.Timestamptz(6)
+  rejectionReason           String?              @map("rejection_reason")
+  syncAttemptCount          Int                  @default(0) @map("sync_attempt_count")
+  lastSyncAttemptAt         DateTime?            @map("last_sync_attempt_at") @db.Timestamptz(6)
+  lastSyncError             String?              @map("last_sync_error")
+  createdAt                 DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   incomeRecord  IncomeRecord?  @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
   expenseRecord ExpenseRecord? @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
@@ -819,7 +828,7 @@ model CashRequest {
   @@index([incomeRecordId])
   @@index([expenseRecordId])
   @@index([status])
-  @@index([externalCashRequestId])
+  @@index([cashAccountId])
   @@map("cash_requests")
 }
 

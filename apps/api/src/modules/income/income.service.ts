@@ -124,6 +124,8 @@ const incomeRecordSelect = {
       requestedAmountCny: true,
       externalCashRequestId: true,
       externalCashEventId: true,
+      externalCashTransactionId: true,
+      cashConfirmedAt: true,
       updatedAt: true,
     },
   },
@@ -357,7 +359,10 @@ export class IncomeService {
     }
 
     const paymentDate =
-      accountTransaction?.transactionDate ?? cashInboundEvent?.eventDate ?? cashRequest.updatedAt;
+      accountTransaction?.transactionDate ??
+      cashInboundEvent?.eventDate ??
+      cashRequest.cashConfirmedAt ??
+      cashRequest.updatedAt;
     const description = incomeRecord.yearMonth
       ? `${this.formatYearMonth(incomeRecord.yearMonth)} 学费`
       : "学费";
@@ -392,6 +397,7 @@ export class IncomeService {
       externalCashEventId:
         accountTransaction?.externalEventId ??
         cashInboundEvent?.externalCashEventId ??
+        cashRequest.externalCashTransactionId ??
         cashRequest.externalCashEventId,
       pdfMetadata: {
         layoutVersion: "tuition_receipt_v1",

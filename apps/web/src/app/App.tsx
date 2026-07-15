@@ -64,6 +64,7 @@ import {
   listAuditEvents,
   listBusinessEntities,
   listCashInboundEvents,
+  listCashEligibleAccounts,
   listCashRequests,
   listExpenseRecords,
   listExternalWorkLessons,
@@ -122,6 +123,7 @@ import type {
   AuthSession,
   BusinessEntityRecord,
   CashInboundEventRecord,
+  CashEligibleAccountRecord,
   CashRequestRecord,
   CreateReimbursementInput,
   CreatePlannedLessonInput,
@@ -3337,12 +3339,16 @@ function TuitionReceiptModal({
 
 function CashRequestFormModal({
   state,
+  accounts,
+  integrationMode,
   isSubmitting,
   error,
   onClose,
   onSubmit,
 }: {
   state: CashRequestDialogState;
+  accounts: CashEligibleAccountRecord[];
+  integrationMode: "mock" | "supabase" | "disabled";
   isSubmitting: boolean;
   error: string | null;
   onClose: () => void;
@@ -3354,10 +3360,19 @@ function CashRequestFormModal({
   const [exchangeRate, setExchangeRate] = useState("");
   const [exchangeRateSource, setExchangeRateSource] = useState("");
   const [conversionMethod, setConversionMethod] = useState<"half-up" | "ceil" | "floor">("half-up");
-  const [cashAccountCode, setCashAccountCode] = useState("");
+  const [cashAccountId, setCashAccountId] = useState("");
+  const [transactedAt, setTransactedAt] = useState(new Date().toISOString().slice(0, 10));
   const requiresExchangeRate = originalCurrency === "JPY" && requestedCurrency === "CNY";
   const exchangeRateNumber = Number(exchangeRate);
-  const canSubmit = !requiresExchangeRate || (Number.isFinite(exchangeRateNumber) && exchangeRateNumber > 0);
+  const eligibleAccounts = accounts.filter((account) => account.currency === requestedCurrency);
+  const canSubmit = Boolean(cashAccountId && transactedAt) &&
+    (!requiresExchangeRate || (Number.isFinite(exchangeRateNumber) && exchangeRateNumber > 0));
+
+  useEffect(() => {
+    if (!eligibleAccounts.some((account) => account.id === cashAccountId)) {
+      setCashAccountId(eligibleAccounts[0]?.id ?? "");
+    }
+  }, [cashAccountId, eligibleAccounts]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -3371,7 +3386,8 @@ function CashRequestFormModal({
       exchangeRate: requiresExchangeRate ? exchangeRateNumber : null,
       exchangeRateSource: normalizeOptionalFormValue(exchangeRateSource),
       conversionMethod,
-      cashAccountCode: normalizeOptionalFormValue(cashAccountCode),
+      cashAccountId,
+      transactedAt,
     });
   };
 
@@ -3385,7 +3401,13 @@ function CashRequestFormModal({
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
           <div>
             <h2 className="text-base font-semibold text-foreground">提交 Cash 请求</h2>
-            <p className="mt-1 text-xs text-muted-foreground">提交后记录会进入 Cash 待确认状态</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {integrationMode === "supabase"
+                ? "提交后会在真实 Cash 系统生成待确认请求"
+                : integrationMode === "mock"
+                  ? "当前为 dev mock，仅生成 V3 本地请求"
+                  : "Cash 联动当前已停用"}
+            </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
             <X className="h-4 w-4" />
@@ -3413,15 +3435,33 @@ function CashRequestFormModal({
               </select>
             </label>
             <label className="grid gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Cash 账户编码</span>
-              <input
-                value={cashAccountCode}
-                onChange={(event) => setCashAccountCode(event.target.value)}
-                className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
-                placeholder="选填，例如 alipay-main"
-              />
+              <span className="text-xs font-medium text-muted-foreground">Cash 账户</span>
+              <select
+                required
+                value={cashAccountId}
+                onChange={(event) => setCashAccountId(event.target.value)}
+                className="h-10 min-w-0 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+              >
+                <option value="">请选择 {requestedCurrency} 账户</option>
+                {eligibleAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} / {account.accountType}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">预计实际收 / 付款日期</span>
+            <input
+              required
+              type="date"
+              value={transactedAt}
+              onChange={(event) => setTransactedAt(event.target.value)}
+              className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+            />
+          </label>
 
           {requiresExchangeRate && (
             <div className="grid gap-4 md:grid-cols-[1fr_160px]">
@@ -6114,7 +6154,7 @@ function mapCashRequestToRow(record: CashRequestRecord): DataRow {
       direction,
       source: sourceTitle,
       requestedAmount,
-      cashAccount: record.cashAccountCode ?? "-",
+      cashAccount: record.cashAccountNameSnapshot ?? record.cashAccountCode ?? "-",
       createdAt: formatApiDate(record.createdAt),
     },
     detail: [
@@ -6125,7 +6165,8 @@ function mapCashRequestToRow(record: CashRequestRecord): DataRow {
           { label: "来源记录", value: sourceTitle },
           { label: "预期金额", value: expectedAmount },
           { label: "请求金额", value: requestedAmount },
-          { label: "Cash 账户", value: record.cashAccountCode ?? "-" },
+          { label: "Cash 账户", value: record.cashAccountNameSnapshot ?? record.cashAccountCode ?? "-" },
+          { label: "预期收 / 付款日", value: record.cashTransactedAt ? formatApiDate(record.cashTransactedAt) : "-" },
           { label: "汇率", value: record.exchangeRate === null ? "-" : String(record.exchangeRate) },
           { label: "取舍方式", value: getConversionMethodLabel(record.conversionMethod) },
           { label: "拒绝原因", value: record.rejectionReason ?? "-" },
@@ -6141,6 +6182,9 @@ function mapCashRequestToRow(record: CashRequestRecord): DataRow {
           { label: "expenseRecordId", value: record.expenseRecordId ?? "-" },
           { label: "externalCashRequestId", value: record.externalCashRequestId ?? "-" },
           { label: "externalCashEventId", value: record.externalCashEventId ?? "-" },
+          { label: "externalCashTransactionId", value: record.externalCashTransactionId ?? "-" },
+          { label: "同步尝试", value: `${record.syncAttemptCount} 次` },
+          { label: "最近同步错误", value: record.lastSyncError ?? "-" },
         ],
       },
     ],
@@ -9387,6 +9431,8 @@ export default function App() {
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
   const [isCashRequestSubmitting, setIsCashRequestSubmitting] = useState(false);
   const [cashRequestError, setCashRequestError] = useState<string | null>(null);
+  const [cashEligibleAccounts, setCashEligibleAccounts] = useState<CashEligibleAccountRecord[]>([]);
+  const [cashIntegrationMode, setCashIntegrationMode] = useState<"mock" | "supabase" | "disabled">("disabled");
   const [reimbursementDialog, setReimbursementDialog] = useState<ReimbursementDialogState | null>(null);
   const [isReimbursementSubmitting, setIsReimbursementSubmitting] = useState(false);
   const [reimbursementMutationError, setReimbursementMutationError] = useState<string | null>(null);
@@ -10899,6 +10945,34 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!authSession || !cashRequestDialog) {
+      return;
+    }
+
+    let isMounted = true;
+    setCashRequestError(null);
+    void listCashEligibleAccounts(authSession.accessToken)
+      .then((result) => {
+        if (!isMounted) return;
+        setCashEligibleAccounts(result.items);
+        setCashIntegrationMode(result.mode);
+        if (result.items.length === 0) {
+          setCashRequestError("当前环境没有可用的 Cash 账户，请先检查联动配置。");
+        }
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        setCashEligibleAccounts([]);
+        setCashIntegrationMode("disabled");
+        setCashRequestError(formatApiError(error));
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession, cashRequestDialog]);
+
   const issueCurrentTuitionReceipt = async () => {
     if (!authSession || !tuitionReceiptDialog) {
       setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再开具学费收据。" });
@@ -11210,6 +11284,8 @@ export default function App() {
       {cashRequestDialog && (
         <CashRequestFormModal
           state={cashRequestDialog}
+          accounts={cashEligibleAccounts}
+          integrationMode={cashIntegrationMode}
           isSubmitting={isCashRequestSubmitting}
           error={cashRequestError}
           onClose={() => setCashRequestDialog(null)}

@@ -219,7 +219,17 @@ export interface SubmitCashRequestInput {
   exchangeRate?: number | null;
   exchangeRateSource?: string | null;
   conversionMethod?: "ceil" | "floor" | "half-up" | "round" | null;
+  cashAccountId: string;
   cashAccountCode?: string | null;
+  transactedAt: string;
+  note?: string | null;
+}
+
+export interface CashEligibleAccountRecord {
+  id: string;
+  name: string;
+  currency: "JPY" | "CNY";
+  accountType: string;
 }
 
 export interface RejectCashRequestInput {
@@ -259,9 +269,18 @@ export interface CashRequestRecord {
   exchangeRateSource: string | null;
   conversionMethod: string | null;
   cashAccountCode: string | null;
+  cashAccountId: string | null;
+  cashAccountNameSnapshot: string | null;
+  cashAccountTypeSnapshot: string | null;
+  cashTransactedAt: string | null;
   externalCashRequestId: string | null;
   externalCashEventId: string | null;
+  externalCashTransactionId: string | null;
+  cashConfirmedAt: string | null;
   rejectionReason: string | null;
+  syncAttemptCount: number;
+  lastSyncAttemptAt: string | null;
+  lastSyncError: string | null;
   createdAt: string;
   updatedAt: string;
   incomeRecord: {
@@ -1530,6 +1549,15 @@ export function submitExpenseCashRequest(accessToken: string, expenseRecordId: s
 
 export function listCashRequests(accessToken: string) {
   return requestJson<ListResponse<CashRequestRecord>>("/cash/requests?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listCashEligibleAccounts(accessToken: string) {
+  return requestJson<{
+    mode: "mock" | "supabase" | "disabled";
+    items: CashEligibleAccountRecord[];
+  }>("/cash/accounts", {
     headers: authorizedHeaders(accessToken),
   });
 }

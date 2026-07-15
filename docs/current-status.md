@@ -1,13 +1,34 @@
 # Aozora School System V3 当前状态
 
-更新日期：2026-07-15
+更新日期：2026-07-16
 
 ## 当前开发状态
 
 - V3 当前处于 dev 主链路实装与稳定测试阶段。
 - 前端、NestJS API、Prisma schema 和 dev PostgreSQL 已建立，正式运营仍未切换到 V3。
-- 学费账单已完成生成预览、来源明细、版本判断和来源指纹保护；本轮人工验收延后进行。
+- 学费账单已完成生成预览、来源明细、版本判断和来源指纹保护；2026-07-16 人工验收第 1～8 项已全部通过，包括学费账单月份动态筛选修复。
+- School ↔ Cash 第一阶段服务端适配层已实装：环境隔离配置、Cash 可用账户只读、canonical income / expense pending request、approve/reject callback 验证、幂等 ID、失败复核和重试审计已进入 V3 API。
+- V3 dev schema migration `20260716090000_add_cash_system_integration` 已执行成功。当前未配置真实 Cash dev 凭据时默认使用 dev-only mock；不将 mock 请求视为已完成外部 Cash 联动。
 - staging / prod 数据库和正式迁移程序尚未建立或执行。
+
+## School ↔ Cash 联动状态
+
+### 已实装
+
+- 现行对端确认为 `home_account_book` Cash System，新业务只使用 `school_income_records / income_received` 和 `school_expense_records / expense_paid`。
+- V3 只读取 Cash `is_active = true` 且 `allow_school_requests = true` 的账户，前端按请求币种选择，不再自由填写账户编码。
+- V3 本地 `cash_request.id` 用作每次尝试的 `external_event_id`，幂等键为 `aozora-v3:cash-request:<uuid>`。
+- Cash request ID、Cash transaction ID、账户 snapshot、预期收/付款日、确认时间、同步尝试和最近错误已分字段保存。
+- Cash callback 只接收 Cash 登录 token，服务端会重新读取 Cash request，并校验用户、引用、类型、金额、币种、账户和 transaction ID 后才回写 School。
+- 真实联动模式下，School 的手动 confirm/reject 和已提交撤回被禁止；Cash 状态只能通过经验证 callback 回写。
+- 联动合同、字段、状态、环境和失败策略详见 `docs/cash-system-integration-contract.md`。
+
+### 尚未完成
+
+- 尚未在 V3 dev 部署环境配置 `CASH_DEV_SUPABASE_URL` / `CASH_DEV_SERVICE_ROLE_KEY` / `CASH_DEV_USER_ID`，因此尚未执行 V3 → Cash dev 真实 pending request E2E。
+- Cash dev 前端尚未将 callback URL 切到 V3 `/api/cash/callbacks/request-result`，也尚未验证 approve/reject 后 V3 状态回写。
+- Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
+- staging / prod Cash 凭据、callback URL、CORS 来源和运营告警尚未配置。
 
 ## V2 → V3 Prod 数据迁移状态
 

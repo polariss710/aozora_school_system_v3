@@ -34,6 +34,12 @@ export class CashController {
     return this.cashService.listCashRequests(query);
   }
 
+  @Get("accounts")
+  @RequirePermissions("cash_requests.manage")
+  listEligibleAccounts() {
+    return this.cashService.listEligibleAccounts();
+  }
+
   @Get("requests/:id")
   @RequirePermissions("cash_requests.manage")
   getCashRequest(@Param("id") id: string) {
@@ -96,5 +102,14 @@ export class CashController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.cashService.confirmCashRequest(id, body, user.id);
+  }
+
+  @Post("requests/:id/resubmit")
+  @RequirePermissions("cash_requests.manage")
+  resubmitCashRequest(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cashService.resubmitCashRequest(id, user.id);
   }
 }

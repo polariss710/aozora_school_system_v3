@@ -1,8 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
 } from "@nestjs/common";
 import {
   AuditRiskLevel,
@@ -18,6 +21,14 @@ import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import { RoundingMode } from "../money/money.types";
 import {
+  CASH_GATEWAY,
+  CashEligibleAccount,
+  CashExternalRequest,
+  CashGateway,
+  CashGatewayRequestError,
+} from "./cash.gateway";
+import {
+  CashRequestResultCallbackBody,
   ConfirmCashRequestBody,
   ListCashRequestsQuery,
   RejectCashRequestBody,
@@ -48,9 +59,18 @@ const cashRequestSelect = {
   exchangeRateSource: true,
   conversionMethod: true,
   cashAccountCode: true,
+  cashAccountId: true,
+  cashAccountNameSnapshot: true,
+  cashAccountTypeSnapshot: true,
+  cashTransactedAt: true,
   externalCashRequestId: true,
   externalCashEventId: true,
+  externalCashTransactionId: true,
+  cashConfirmedAt: true,
   rejectionReason: true,
+  syncAttemptCount: true,
+  lastSyncAttemptAt: true,
+  lastSyncError: true,
   createdAt: true,
   updatedAt: true,
   incomeRecord: {
@@ -63,6 +83,8 @@ const cashRequestSelect = {
       originalAmountJpy: true,
       originalAmountCny: true,
       carryoverAmountCny: true,
+      yearMonth: true,
+      memo: true,
     },
   },
   expenseRecord: {
@@ -74,6 +96,8 @@ const cashRequestSelect = {
       originalCurrency: true,
       originalAmountJpy: true,
       originalAmountCny: true,
+      yearMonth: true,
+      memo: true,
     },
   },
 } satisfies Prisma.CashRequestSelect;
@@ -89,6 +113,8 @@ const incomeRecordSelect = {
   carryoverAmountCny: true,
   recordStatus: true,
   cashStatus: true,
+  yearMonth: true,
+  memo: true,
 } satisfies Prisma.IncomeRecordSelect;
 
 const expenseRecordSelect = {
@@ -101,6 +127,8 @@ const expenseRecordSelect = {
   originalAmountCny: true,
   recordStatus: true,
   cashStatus: true,
+  yearMonth: true,
+  memo: true,
 } satisfies Prisma.ExpenseRecordSelect;
 
 type CashRequestSnapshot = Prisma.CashRequestGetPayload<{
@@ -121,7 +149,13 @@ export class CashService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(MoneyService) private readonly moneyService: MoneyService,
     @Inject(AuditService) private readonly auditService: AuditService,
+    @Inject(CASH_GATEWAY) private readonly cashGateway: CashGateway,
   ) {}
+
+  async listEligibleAccounts() {
+    const items = await this.cashGateway.listEligibleAccounts();
+    return { mode: this.cashGateway.mode, items };
+  }
 
   async listCashRequests(query: ListCashRequestsQuery) {
     const where = this.buildWhere(query);
@@ -155,6 +189,10 @@ export class CashService {
     this.assertIncomeCanRequestCash(incomeRecord);
     const input = this.normalizeSubmitInput(body);
     const amounts = this.calculateIncomeRequestAmounts(incomeRecord, input);
+    const cashAccount = await this.resolveEligibleAccount(
+      input.cashAccountId,
+      input.requestedCurrency,
+    );
 
     const result = await this.prisma.$transaction(async (tx) => {
       const cashRequest = await tx.cashRequest.create({
@@ -176,7 +214,11 @@ export class CashService {
             : null,
           exchangeRateSource: input.exchangeRateSource,
           conversionMethod: input.conversionMethod,
-          cashAccountCode: input.cashAccountCode,
+          cashAccountCode: cashAccount.name,
+          cashAccountId: cashAccount.id,
+          cashAccountNameSnapshot: cashAccount.name,
+          cashAccountTypeSnapshot: cashAccount.accountType,
+          cashTransactedAt: input.transactedAt,
         },
         select: cashRequestSelect,
       });
@@ -203,7 +245,7 @@ export class CashService {
       return { cashRequest, incomeRecord: updatedIncome };
     });
 
-    return result;
+    return this.submitCreatedRequest(result, actorUserId);
   }
 
   async submitExpenseCashRequest(
@@ -215,6 +257,10 @@ export class CashService {
     this.assertExpenseCanRequestCash(expenseRecord);
     const input = this.normalizeSubmitInput(body);
     const amounts = this.calculateExpenseRequestAmounts(expenseRecord, input);
+    const cashAccount = await this.resolveEligibleAccount(
+      input.cashAccountId,
+      input.requestedCurrency,
+    );
 
     const result = await this.prisma.$transaction(async (tx) => {
       const cashRequest = await tx.cashRequest.create({
@@ -236,7 +282,11 @@ export class CashService {
             : null,
           exchangeRateSource: input.exchangeRateSource,
           conversionMethod: input.conversionMethod,
-          cashAccountCode: input.cashAccountCode,
+          cashAccountCode: cashAccount.name,
+          cashAccountId: cashAccount.id,
+          cashAccountNameSnapshot: cashAccount.name,
+          cashAccountTypeSnapshot: cashAccount.accountType,
+          cashTransactedAt: input.transactedAt,
         },
         select: cashRequestSelect,
       });
@@ -263,7 +313,501 @@ export class CashService {
       return { cashRequest, expenseRecord: updatedExpense };
     });
 
-    return result;
+    return this.submitCreatedRequest(result, actorUserId);
+  }
+
+  async resubmitCashRequest(id: string, actorUserId: string) {
+    if (this.cashGateway.mode !== "supabase") {
+      throw new BadRequestException(
+        "Cash resubmit is available only for the Supabase integration.",
+      );
+    }
+
+    const cashRequest = await this.findCashRequest(id);
+    if (
+      cashRequest.status !== CashRequestStatus.needs_manual_review &&
+      !(
+        cashRequest.status === CashRequestStatus.cash_requested &&
+        !cashRequest.externalCashRequestId
+      )
+    ) {
+      throw new BadRequestException(
+        "Only an uncertain or incomplete Cash submission can be retried.",
+      );
+    }
+
+    return this.syncExternalPendingRequest(cashRequest, actorUserId);
+  }
+
+  async applyExternalRequestResult(
+    body: CashRequestResultCallbackBody,
+    accessToken: string,
+  ) {
+    if (this.cashGateway.mode !== "supabase") {
+      throw new ServiceUnavailableException("Cash callback is not enabled.");
+    }
+
+    const cashRequestId = this.normalizeRequiredUuid(
+      body.cash_request_id,
+      "cash_request_id",
+    );
+    const action = this.normalizeCallbackAction(body.action);
+
+    try {
+      await this.cashGateway.verifyCallbackAccessToken(accessToken);
+    } catch {
+      throw new UnauthorizedException("Cash callback authentication failed.");
+    }
+
+    const external = await this.cashGateway.getExternalRequest(cashRequestId);
+    const local = await this.prisma.cashRequest.findFirst({
+      where: {
+        OR: [
+          { externalCashRequestId: cashRequestId },
+          { id: external.externalEventId },
+        ],
+      },
+      select: cashRequestSelect,
+    });
+    if (!local) {
+      throw new NotFoundException("Matching V3 Cash request was not found.");
+    }
+
+    this.assertExternalRequestMatches(local, external, action);
+    const targetStatus = action === "approved"
+      ? CashRequestStatus.cash_confirmed
+      : CashRequestStatus.cash_rejected;
+
+    if (local.status === targetStatus) {
+      const sameTransaction = action === "rejected" ||
+        local.externalCashTransactionId === external.createdTransactionId;
+      if (
+        local.externalCashRequestId === external.id &&
+        sameTransaction
+      ) {
+        return { cashRequest: local, action, idempotent: true };
+      }
+      throw new ConflictException("Cash callback conflicts with the stored result.");
+    }
+
+    if (
+      local.status !== CashRequestStatus.cash_requested &&
+      local.status !== CashRequestStatus.needs_manual_review
+    ) {
+      throw new ConflictException("V3 Cash request status does not allow callback.");
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updateData: Prisma.CashRequestUpdateInput = action === "approved"
+        ? {
+            status: CashRequestStatus.cash_confirmed,
+            externalCashRequestId: external.id,
+            externalCashEventId: external.externalEventId,
+            externalCashTransactionId: external.createdTransactionId,
+            cashConfirmedAt: external.approvedAt
+              ? new Date(external.approvedAt)
+              : new Date(),
+            rejectionReason: null,
+            lastSyncError: null,
+          }
+        : {
+            status: CashRequestStatus.cash_rejected,
+            externalCashRequestId: external.id,
+            externalCashEventId: external.externalEventId,
+            externalCashTransactionId: null,
+            cashConfirmedAt: null,
+            rejectionReason: external.rejectedReason,
+            lastSyncError: null,
+          };
+
+      const cashRequest = await tx.cashRequest.update({
+        where: { id: local.id },
+        data: updateData,
+        select: cashRequestSelect,
+      });
+
+      let incomeRecord: IncomeRecordSnapshot | null = null;
+      let expenseRecord: ExpenseRecordSnapshot | null = null;
+      if (local.incomeRecordId) {
+        incomeRecord = await tx.incomeRecord.update({
+          where: { id: local.incomeRecordId },
+          data: action === "approved"
+            ? {
+                recordStatus: IncomeRecordStatus.cash_confirmed,
+                cashStatus: CashRequestStatus.cash_confirmed,
+              }
+            : { cashStatus: CashRequestStatus.cash_rejected },
+          select: incomeRecordSelect,
+        });
+      }
+      if (local.expenseRecordId) {
+        expenseRecord = await tx.expenseRecord.update({
+          where: { id: local.expenseRecordId },
+          data: action === "approved"
+            ? {
+                recordStatus: ExpenseRecordStatus.cash_confirmed,
+                cashStatus: CashRequestStatus.cash_confirmed,
+              }
+            : { cashStatus: CashRequestStatus.cash_rejected },
+          select: expenseRecordSelect,
+        });
+      }
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId: null,
+          action: action === "approved"
+            ? "cash_request.external_confirm"
+            : "cash_request.external_reject",
+          targetType: "cash_request",
+          targetId: local.id,
+          riskLevel: AuditRiskLevel.critical,
+          beforeSnapshot: local,
+          afterSnapshot: { cashRequest, incomeRecord, expenseRecord },
+          metadata: {
+            callbackSource: "cash_system",
+            externalCashRequestId: external.id,
+            externalCashTransactionId: external.createdTransactionId,
+          },
+        },
+        tx,
+      );
+
+      return { cashRequest, incomeRecord, expenseRecord };
+    });
+
+    return { ...result, action, idempotent: false };
+  }
+
+  private async submitCreatedRequest<
+    T extends { cashRequest: CashRequestSnapshot },
+  >(result: T, actorUserId: string) {
+    if (this.cashGateway.mode === "mock") {
+      return { ...result, integrationMode: "mock" as const };
+    }
+
+    return this.syncExternalPendingRequest(result.cashRequest, actorUserId);
+  }
+
+  private async syncExternalPendingRequest(
+    before: CashRequestSnapshot,
+    actorUserId: string,
+  ) {
+    const attemptAt = new Date();
+
+    try {
+      const referenceId = before.incomeRecordId ?? before.expenseRecordId;
+      if (!referenceId || !before.cashAccountId || !before.cashTransactedAt) {
+        throw new CashGatewayRequestError(
+          "V3 Cash request is missing its external submission snapshot.",
+          false,
+        );
+      }
+
+      const amount = before.requestedCurrency === CurrencyCode.JPY
+        ? before.requestedAmountJpy
+        : before.requestedAmountCny?.toNumber();
+      if (!amount || amount <= 0) {
+        throw new CashGatewayRequestError(
+          "V3 Cash request amount is invalid.",
+          false,
+        );
+      }
+
+      const external = await this.cashGateway.createPendingRequest({
+        localCashRequestId: before.id,
+        direction: before.direction,
+        referenceId,
+        transactedAt: before.cashTransactedAt.toISOString().slice(0, 10),
+        currency: before.requestedCurrency,
+        amount,
+        accountId: before.cashAccountId,
+        description: before.incomeRecord?.title ?? before.expenseRecord?.title ?? before.sourceType,
+        note: before.incomeRecord?.memo ?? before.expenseRecord?.memo ?? null,
+        payloadSnapshot: this.buildExternalPayload(before, amount),
+      });
+
+      if (external.status !== "pending") {
+        const verified = await this.cashGateway.getExternalRequest(external.requestId);
+        return this.applyVerifiedExternalResultFromRetry(
+          before,
+          verified,
+          actorUserId,
+        );
+      }
+
+      const result = await this.prisma.$transaction(async (tx) => {
+        const cashRequest = await tx.cashRequest.update({
+          where: { id: before.id },
+          data: {
+            status: CashRequestStatus.cash_requested,
+            externalCashRequestId: external.requestId,
+            externalCashEventId: before.id,
+            syncAttemptCount: { increment: 1 },
+            lastSyncAttemptAt: attemptAt,
+            lastSyncError: null,
+          },
+          select: cashRequestSelect,
+        });
+
+        if (before.incomeRecordId) {
+          await tx.incomeRecord.update({
+            where: { id: before.incomeRecordId },
+            data: { cashStatus: CashRequestStatus.cash_requested },
+          });
+        }
+        if (before.expenseRecordId) {
+          await tx.expenseRecord.update({
+            where: { id: before.expenseRecordId },
+            data: { cashStatus: CashRequestStatus.cash_requested },
+          });
+        }
+
+        await this.auditService.recordEvent(
+          {
+            actorUserId,
+            action: "cash_request.external_submit",
+            targetType: "cash_request",
+            targetId: before.id,
+            riskLevel: AuditRiskLevel.high,
+            beforeSnapshot: before,
+            afterSnapshot: cashRequest,
+            metadata: {
+              externalCashRequestId: external.requestId,
+              inserted: external.inserted,
+            },
+          },
+          tx,
+        );
+
+        return { cashRequest };
+      });
+
+      return { ...result, integrationMode: "supabase" as const };
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message.slice(0, 500)
+        : "Cash submission failed without a verified response.";
+
+      await this.prisma.$transaction(async (tx) => {
+        const cashRequest = await tx.cashRequest.update({
+          where: { id: before.id },
+          data: {
+            status: CashRequestStatus.needs_manual_review,
+            syncAttemptCount: { increment: 1 },
+            lastSyncAttemptAt: attemptAt,
+            lastSyncError: message,
+          },
+          select: cashRequestSelect,
+        });
+
+        if (before.incomeRecordId) {
+          await tx.incomeRecord.update({
+            where: { id: before.incomeRecordId },
+            data: { cashStatus: CashRequestStatus.needs_manual_review },
+          });
+        }
+        if (before.expenseRecordId) {
+          await tx.expenseRecord.update({
+            where: { id: before.expenseRecordId },
+            data: { cashStatus: CashRequestStatus.needs_manual_review },
+          });
+        }
+
+        await this.auditService.recordEvent(
+          {
+            actorUserId,
+            action: "cash_request.external_submit_failed",
+            targetType: "cash_request",
+            targetId: before.id,
+            riskLevel: AuditRiskLevel.critical,
+            beforeSnapshot: before,
+            afterSnapshot: cashRequest,
+            metadata: {
+              responseUncertain: error instanceof CashGatewayRequestError
+                ? error.uncertain
+                : true,
+            },
+          },
+          tx,
+        );
+      });
+
+      throw new ServiceUnavailableException(
+        `Cash request requires manual review: ${message}`,
+      );
+    }
+  }
+
+  private async applyVerifiedExternalResultFromRetry(
+    before: CashRequestSnapshot,
+    external: CashExternalRequest,
+    actorUserId: string,
+  ) {
+    const action = external.status === "approved"
+      ? "approved"
+      : external.status === "rejected"
+        ? "rejected"
+        : null;
+    if (!action) {
+      throw new CashGatewayRequestError(
+        "Cash retry returned an unsupported state.",
+        false,
+      );
+    }
+    this.assertExternalRequestMatches(before, external, action);
+
+    const cashRequest = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.cashRequest.update({
+        where: { id: before.id },
+        data: action === "approved"
+          ? {
+              status: CashRequestStatus.cash_confirmed,
+              externalCashRequestId: external.id,
+              externalCashEventId: external.externalEventId,
+              externalCashTransactionId: external.createdTransactionId,
+              cashConfirmedAt: external.approvedAt
+                ? new Date(external.approvedAt)
+                : new Date(),
+              rejectionReason: null,
+              syncAttemptCount: { increment: 1 },
+              lastSyncAttemptAt: new Date(),
+              lastSyncError: null,
+            }
+          : {
+              status: CashRequestStatus.cash_rejected,
+              externalCashRequestId: external.id,
+              externalCashEventId: external.externalEventId,
+              externalCashTransactionId: null,
+              cashConfirmedAt: null,
+              rejectionReason: external.rejectedReason,
+              syncAttemptCount: { increment: 1 },
+              lastSyncAttemptAt: new Date(),
+              lastSyncError: null,
+            },
+        select: cashRequestSelect,
+      });
+
+      if (before.incomeRecordId) {
+        await tx.incomeRecord.update({
+          where: { id: before.incomeRecordId },
+          data: action === "approved"
+            ? {
+                recordStatus: IncomeRecordStatus.cash_confirmed,
+                cashStatus: CashRequestStatus.cash_confirmed,
+              }
+            : { cashStatus: CashRequestStatus.cash_rejected },
+        });
+      }
+      if (before.expenseRecordId) {
+        await tx.expenseRecord.update({
+          where: { id: before.expenseRecordId },
+          data: action === "approved"
+            ? {
+                recordStatus: ExpenseRecordStatus.cash_confirmed,
+                cashStatus: CashRequestStatus.cash_confirmed,
+              }
+            : { cashStatus: CashRequestStatus.cash_rejected },
+        });
+      }
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "cash_request.external_reconcile",
+          targetType: "cash_request",
+          targetId: before.id,
+          riskLevel: AuditRiskLevel.critical,
+          beforeSnapshot: before,
+          afterSnapshot: updated,
+          metadata: {
+            externalCashRequestId: external.id,
+            externalStatus: external.status,
+          },
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return {
+      cashRequest,
+      integrationMode: "supabase" as const,
+      reconciled: true,
+    };
+  }
+
+  private buildExternalPayload(before: CashRequestSnapshot, amount: number) {
+    return {
+      schema_version: 1,
+      school_system: "aozora_school_v3",
+      local_cash_request_id: before.id,
+      external_source: "aozora_school",
+      external_event_id: before.id,
+      external_reference_type: before.direction === CashRequestDirection.income
+        ? "school_income_records"
+        : "school_expense_records",
+      external_reference_id: before.incomeRecordId ?? before.expenseRecordId,
+      request_type: before.direction === CashRequestDirection.income
+        ? "income_received"
+        : "expense_paid",
+      transaction_type: before.direction,
+      source_type: before.sourceType,
+      source_id: before.sourceId,
+      year_month: before.incomeRecord?.yearMonth ?? before.expenseRecord?.yearMonth,
+      original_currency: before.expectedCurrency,
+      original_amount_jpy: before.expectedAmountJpy,
+      original_amount_cny: before.expectedAmountCny?.toNumber() ?? null,
+      carryover_amount_cny: before.carryoverAmountCny?.toNumber() ?? null,
+      currency: before.requestedCurrency,
+      amount,
+      account_id: before.cashAccountId,
+      account_name_snapshot: before.cashAccountNameSnapshot,
+      account_type_snapshot: before.cashAccountTypeSnapshot,
+      transacted_at: before.cashTransactedAt?.toISOString().slice(0, 10),
+      exchange_rate: before.exchangeRate?.toNumber() ?? null,
+      exchange_rate_source: before.exchangeRateSource,
+      conversion_method: before.conversionMethod,
+      note: before.incomeRecord?.memo ?? before.expenseRecord?.memo ?? null,
+    };
+  }
+
+  private assertExternalRequestMatches(
+    local: CashRequestSnapshot,
+    external: CashExternalRequest,
+    action: "approved" | "rejected",
+  ) {
+    const isIncome = local.direction === CashRequestDirection.income;
+    const referenceId = local.incomeRecordId ?? local.expenseRecordId;
+    const amount = local.requestedCurrency === CurrencyCode.JPY
+      ? local.requestedAmountJpy
+      : local.requestedAmountCny?.toNumber();
+    const expectedStatus = action;
+
+    const matches =
+      external.externalSource === "aozora_school" &&
+      external.externalEventId === local.id &&
+      external.externalReferenceType === (isIncome
+        ? "school_income_records"
+        : "school_expense_records") &&
+      external.externalReferenceId === referenceId &&
+      external.requestType === (isIncome ? "income_received" : "expense_paid") &&
+      external.transactionType === local.direction &&
+      external.currency === local.requestedCurrency &&
+      external.amount === amount &&
+      external.accountId === local.cashAccountId &&
+      external.status === expectedStatus;
+
+    if (!matches) {
+      throw new ConflictException("Cash callback does not match the V3 request snapshot.");
+    }
+    if (action === "approved" && !external.createdTransactionId) {
+      throw new ConflictException("Approved Cash request has no transaction ID.");
+    }
+    if (action === "rejected" && external.createdTransactionId) {
+      throw new ConflictException("Rejected Cash request must not have a transaction ID.");
+    }
   }
 
   async rejectCashRequest(
@@ -271,6 +815,12 @@ export class CashService {
     body: RejectCashRequestBody,
     actorUserId: string,
   ) {
+    if (this.cashGateway.mode === "supabase") {
+      throw new BadRequestException(
+        "Cash rejection is owned by the external Cash System callback.",
+      );
+    }
+
     const before = await this.findCashRequest(id);
 
     if (before.status !== CashRequestStatus.cash_requested) {
@@ -332,6 +882,12 @@ export class CashService {
     body: WithdrawCashRequestBody,
     actorUserId: string,
   ) {
+    if (this.cashGateway.mode === "supabase") {
+      throw new BadRequestException(
+        "Submitted external Cash requests cannot be withdrawn until Cash supports cancellation.",
+      );
+    }
+
     const before = await this.findCashRequest(id);
 
     if (before.status !== CashRequestStatus.cash_requested) {
@@ -392,6 +948,12 @@ export class CashService {
     body: ConfirmCashRequestBody,
     actorUserId: string,
   ) {
+    if (this.cashGateway.mode === "supabase") {
+      throw new BadRequestException(
+        "Cash confirmation is owned by the external Cash System callback.",
+      );
+    }
+
     const before = await this.findCashRequest(id);
 
     if (before.status !== CashRequestStatus.cash_requested) {
@@ -669,8 +1231,24 @@ export class CashService {
   }
 
   private normalizeSubmitInput(body: SubmitIncomeCashRequestBody) {
+    const requestedCurrency = this.normalizeCurrency(body.requestedCurrency);
+    const fallbackAccountId = this.normalizeOptionalString(body.cashAccountCode);
+    const cashAccountId = this.normalizeOptionalString(body.cashAccountId) ??
+      (fallbackAccountId && this.isUuid(fallbackAccountId)
+        ? fallbackAccountId
+        : null);
+    const transactedAt = body.transactedAt === undefined || body.transactedAt === null || body.transactedAt === ""
+      ? this.cashGateway.mode === "mock"
+        ? new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`)
+        : null
+      : this.normalizeDate(body.transactedAt, "transactedAt");
+
+    if (!transactedAt) {
+      throw new BadRequestException("transactedAt is required.");
+    }
+
     return {
-      requestedCurrency: this.normalizeCurrency(body.requestedCurrency),
+      requestedCurrency,
       exchangeRate:
         body.exchangeRate === undefined || body.exchangeRate === null || body.exchangeRate === ""
           ? null
@@ -679,8 +1257,67 @@ export class CashService {
         this.normalizeOptionalString(body.exchangeRateSource)?.toLowerCase() ??
         null,
       conversionMethod: this.normalizeConversionMethod(body.conversionMethod),
-      cashAccountCode: this.normalizeOptionalString(body.cashAccountCode),
+      cashAccountId,
+      transactedAt,
+      note: this.normalizeOptionalString(body.note),
     };
+  }
+
+  private async resolveEligibleAccount(
+    accountId: string | null,
+    currency: CurrencyCode,
+  ): Promise<CashEligibleAccount> {
+    if (this.cashGateway.mode === "disabled") {
+      throw new ServiceUnavailableException("Cash integration is disabled.");
+    }
+
+    const accounts = await this.cashGateway.listEligibleAccounts();
+    const resolved = accountId
+      ? accounts.find((account) => account.id === accountId)
+      : this.cashGateway.mode === "mock"
+        ? accounts.find((account) => account.currency === currency)
+        : null;
+
+    if (!resolved) {
+      throw new BadRequestException("An eligible Cash account is required.");
+    }
+    if (resolved.currency !== currency) {
+      throw new BadRequestException(
+        "Cash account currency must match requested currency.",
+      );
+    }
+
+    return resolved;
+  }
+
+  private normalizeDate(value: unknown, fieldName: string) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${fieldName} must use YYYY-MM-DD.`);
+    }
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+      throw new BadRequestException(`${fieldName} is invalid.`);
+    }
+    return date;
+  }
+
+  private normalizeRequiredUuid(value: unknown, fieldName: string) {
+    const normalized = this.normalizeOptionalString(value);
+    if (!normalized || !this.isUuid(normalized)) {
+      throw new BadRequestException(`${fieldName} must be a UUID.`);
+    }
+    return normalized;
+  }
+
+  private isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  private normalizeCallbackAction(value: unknown): "approved" | "rejected" {
+    if (value !== "approved" && value !== "rejected") {
+      throw new BadRequestException("action must be approved or rejected.");
+    }
+    return value;
   }
 
   private normalizeCashStatus(value: unknown) {

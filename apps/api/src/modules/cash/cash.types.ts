@@ -13,7 +13,10 @@ export type SubmitIncomeCashRequestBody = {
   exchangeRate?: unknown;
   exchangeRateSource?: unknown;
   conversionMethod?: unknown;
+  cashAccountId?: unknown;
   cashAccountCode?: unknown;
+  transactedAt?: unknown;
+  note?: unknown;
 };
 
 export type SubmitExpenseCashRequestBody = SubmitIncomeCashRequestBody;
@@ -30,4 +33,9 @@ export type WithdrawCashRequestBody = {
 export type ConfirmCashRequestBody = {
   externalCashRequestId?: unknown;
   externalCashEventId?: unknown;
+};
+
+export type CashRequestResultCallbackBody = {
+  cash_request_id?: unknown;
+  action?: unknown;
 };
