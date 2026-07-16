@@ -32,6 +32,7 @@
 ### 尚未完成
 
 - Cash dev 前端实际登录后的人工 approve / reject 动作验收尚未执行；服务端 approve / reject 与 callback E2E 已通过。
+- 已准备两条仅用于前端人工验收的 pending 请求：`DEV-UI-CASH-APPROVE-20260717 收入`（Cash request `17f392d2-bc30-419f-99e1-fd7a8eab2995`）应确认并生成 JPY 1234 流水；`DEV-UI-CASH-REJECT-20260717 支出`（Cash request `aa1c4bb0-d8d7-487c-ad76-1864f724a1f0`）应拒绝且不生成 JPY 2345 流水。
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
 
