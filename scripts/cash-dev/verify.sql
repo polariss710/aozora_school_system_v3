@@ -44,13 +44,3 @@ where n.nspname = 'public'
     'home_create_external_cny_transaction'
   )
   and has_function_privilege('authenticated', p.oid, 'EXECUTE');
-
-select count(*) = 0 as cash_dev_starts_without_transactions
-from (
-  select id from public.home_jpy_transactions
-  union all
-  select id from public.home_cny_transactions
-) transactions;
-
-select count(*) = 0 as cash_dev_starts_without_external_requests
-from public.home_external_transaction_requests;

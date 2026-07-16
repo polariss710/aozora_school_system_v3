@@ -24,12 +24,14 @@
 - Cash callback 只接收 Cash 登录 token，服务端会重新读取 Cash request，并校验用户、引用、类型、金额、币种、账户和 transaction ID 后才回写 School。
 - 真实联动模式下，School 的手动 confirm/reject 和已提交撤回被禁止；Cash 状态只能通过经验证 callback 回写。
 - 联动合同、字段、状态、环境和失败策略详见 `docs/cash-system-integration-contract.md`。
+- `v3-dev` 已创建专用 Cash dev Auth 用户，并 seed 4 个 `DEV Cash` 账户，其中 3 个允许 School 请求。
+- 2026-07-17 已完成 V3 → Cash dev 真实服务端 E2E：CNY 88 收入经 Cash approve 后生成唯一 transaction 并回写 School `cash_confirmed`；JPY 3000 支出经 Cash reject 后回写 `cash_rejected` 且未生成 transaction；重复 approved callback 返回幂等成功。
+- Render dev API 已配置 `CASH_INTEGRATION_MODE=supabase`、`CASH_DEV_SUPABASE_URL`、`CASH_DEV_SERVICE_ROLE_KEY` 和 `CASH_DEV_USER_ID`，配置值未写入仓库；环境更新部署已成功变为 live。
+- 独立 Cash dev 静态站点 `https://aozora-cash-v3-dev.onrender.com` 已创建，来源为 Cash 仓库隔离分支 `codex/cash-dev-environment`（commit `5d2e3ed`），指向 `v3-dev` Supabase 和 V3 `/api/cash/callbacks/request-result`；现有 Cash production 前端和本地未提交修改均未改动。
 
 ### 尚未完成
 
-- `v3-dev` 当前 `auth.users = 0`，尚未创建专用 Cash dev Auth 用户或 seed 测试账户。
-- 尚未在 V3 dev 部署环境配置 `CASH_INTEGRATION_MODE=supabase`、`CASH_DEV_SUPABASE_URL` / `CASH_DEV_SERVICE_ROLE_KEY` / `CASH_DEV_USER_ID`，因此尚未执行 V3 → Cash dev 真实 pending request E2E。
-- Cash dev 前端尚未将 callback URL 切到 V3 `/api/cash/callbacks/request-result`，也尚未验证 approve/reject 后 V3 状态回写。
+- Cash dev 前端实际登录后的人工 approve / reject 动作验收尚未执行；服务端 approve / reject 与 callback E2E 已通过。
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
 
