@@ -1,6 +1,6 @@
 # Aozora School System V3 当前状态
 
-更新日期：2026-07-16
+更新日期：2026-07-17
 
 ## 当前开发状态
 
@@ -9,6 +9,8 @@
 - 学费账单已完成生成预览、来源明细、版本判断和来源指纹保护；2026-07-16 人工验收第 1～8 项已全部通过，包括学费账单月份动态筛选修复。
 - School ↔ Cash 第一阶段服务端适配层已实装：环境隔离配置、Cash 可用账户只读、canonical income / expense pending request、approve/reject callback 验证、幂等 ID、失败复核和重试审计已进入 V3 API。
 - V3 dev schema migration `20260716090000_add_cash_system_integration` 已执行成功。当前未配置真实 Cash dev 凭据时默认使用 dev-only mock；不将 mock 请求视为已完成外部 Cash 联动。
+- V3 环境拓扑已确定为每个环境共置 School + Cash：当前 `v3-dev`，未来 `v3-staging`、`v3-prod`，峰值 Supabase project 数为 5，不另建三套 Cash project。
+- 2026-07-17 已只向 `v3-dev` 安装 Cash dev 结构：7 张 `home_*` 表、42 个函数、7 个 RLS policy；没有复制生产数据、`shop_*` 对象或生产 ACL，现行 School / Cash production project 均未修改。
 - staging / prod 数据库和正式迁移程序尚未建立或执行。
 
 ## School ↔ Cash 联动状态
@@ -25,10 +27,11 @@
 
 ### 尚未完成
 
-- 尚未在 V3 dev 部署环境配置 `CASH_DEV_SUPABASE_URL` / `CASH_DEV_SERVICE_ROLE_KEY` / `CASH_DEV_USER_ID`，因此尚未执行 V3 → Cash dev 真实 pending request E2E。
+- `v3-dev` 当前 `auth.users = 0`，尚未创建专用 Cash dev Auth 用户或 seed 测试账户。
+- 尚未在 V3 dev 部署环境配置 `CASH_INTEGRATION_MODE=supabase`、`CASH_DEV_SUPABASE_URL` / `CASH_DEV_SERVICE_ROLE_KEY` / `CASH_DEV_USER_ID`，因此尚未执行 V3 → Cash dev 真实 pending request E2E。
 - Cash dev 前端尚未将 callback URL 切到 V3 `/api/cash/callbacks/request-result`，也尚未验证 approve/reject 后 V3 状态回写。
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
-- staging / prod Cash 凭据、callback URL、CORS 来源和运营告警尚未配置。
+- `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
 
 ## V2 → V3 Prod 数据迁移状态
 

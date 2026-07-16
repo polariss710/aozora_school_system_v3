@@ -170,9 +170,10 @@ v3 不以免费额度为核心约束。
 - 数据库技术采用标准 PostgreSQL。
 - v3 初期数据库平台暂定 Supabase paid project。
 - 当前 Supabase organization 可从 Free 升级到 Pro。
-- 开发阶段新增一个独立 `v3 dev` Supabase project。
-- 等进入测试 / 上线准备阶段后，再创建 `v3 staging` 和 `v3 prod`。
-- 现有 Cash project 与 School v1/v2 project 不在 v2 稳定运营期强行合并。
+- V3 每个环境只使用一个 Supabase project：`v3-dev`、未来的 `v3-staging`、未来的 `v3-prod` 分别共置 School 与对应环境 Cash。
+- 2026-07-17 已在 `v3-dev` 安装仅含 `home_*` 的 Cash dev 结构；不复制 Cash production 数据，不包含同一旧 project 内的 `shop_*` 对象。
+- 现有 Cash production project 与 School v1/v2 project 在正式切换前保持不变；峰值为 5 个 project，而不是为每个 Cash 环境另建 project。
+- Cash 旧模块保留受控 RPC 是明确的兼容边界；School V3 新业务仍由 NestJS domain service 负责，不新增 School 业务 RPC。
 - v3 不继续使用 Supabase RPC 承担复杂业务逻辑。
 - v3 的业务权威层是后端 domain service；数据库负责结构、约束、索引、事务一致性和必要防线。
 
@@ -513,7 +514,7 @@ P0 金额与业务结果权威层规则：
 
 - 各 domain service 的接口和协作关系。
 - 最终 UI 组件库。
-- School / Cash 是否继续分库或合并到同一 project 的不同 schema。
+- staging / prod 共置 project 内 Cash ledger 的迁移、对账、密钥轮换和单点切换执行方案。
 - 权限模型。
 - 审计日志模型。
 - 备份和恢复策略。

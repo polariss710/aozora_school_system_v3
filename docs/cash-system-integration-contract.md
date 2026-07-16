@@ -16,9 +16,11 @@ School 与 Cash 必须同环境配对：
 
 | School runtime | Cash target |
 | --- | --- |
-| `dev` | Cash dev 或明确的 mock |
-| `staging` | Cash staging |
-| `prod` | Cash prod |
+| `dev` | 同一 `v3-dev` project 的 Cash dev，或明确的 mock |
+| `staging` | 同一 `v3-staging` project 的 Cash staging |
+| `prod` | 同一 `v3-prod` project 的 Cash prod |
+
+“同一 project”只改变部署拓扑，不改变调用合同。School API 仍通过 Cash gateway 访问 `home_*` 边界，School 业务表不得直接组合写入 Cash ledger。现行 Cash production project 在 V3 正式切换前保持不变。
 
 V3 使用 `SCHOOL_RUNTIME_ENV=dev|staging|prod` 选择配置，并只读取对应的显式环境变量：
 
@@ -111,7 +113,7 @@ School pending income / expense
 
 ### 后续阶段
 
-- 在 Cash dev 配置 V3 callback URL 并执行跨系统 approve/reject E2E。
+- 为 `v3-dev` 创建专用 Cash Auth 用户和测试账户，配置 V3 callback URL，并执行跨系统 approve/reject E2E。
 - 补充 Cash 端 pending cancel / withdraw 合同后，再开放 V3 已提交请求撤回。
 - 将 Cash 聚合确认结果逐条回写 School canonical records。
-- staging / prod 建立独立凭据、回调 URL、审计告警和运营重试流程。
+- `v3-staging` / `v3-prod` 建立各自凭据、回调 URL、审计告警和运营重试流程，并另行执行 Cash ledger 迁移与对账。
