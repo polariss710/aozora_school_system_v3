@@ -108,6 +108,8 @@ School pending income / expense
 
 - 远程创建超时时无法确定 Cash 是否已落库，V3 必须进入 `needs_manual_review`，保存尝试次数、时间和脱敏错误。
 - 人工重试复用原幂等键；Cash 已有相同请求时返回原 request ID。
+- Cash 已 approve / reject、但 School 回写失败或结果不确定时，Cash 前端允许仅重放 callback。该操作不得再次执行 Cash approve / reject RPC，也不得新增、删除或修改 Cash transaction；V3 依靠相同 Cash request ID 和已验证结果返回幂等成功。
+- Cash 前端 callback 等待必须有超时边界，并在超时或非 2xx 响应时保留可重试入口和明确错误信息。
 - Cash 已 pending 时，School 不允许本地撤回；在 Cash 增加正式 cancel 合同前，避免造成两端状态分裂。
 - `confirm` / `reject` 手动 dev API 只用于 mock 模式；`supabase` 模式只接受经验证的 Cash callback。
 - Cash 交易或 School 回写不做跨数据库伪事务回滚。任一端已成功的资金事实必须保留，另一端失败通过幂等重试和审计修复。
