@@ -385,7 +385,7 @@ export class CashService {
         local.externalCashRequestId === external.id &&
         sameTransaction
       ) {
-        return { cashRequest: local, action, idempotent: true };
+        return { ok: true, cashRequest: local, action, idempotent: true };
       }
       throw new ConflictException("Cash callback conflicts with the stored result.");
     }
@@ -476,7 +476,7 @@ export class CashService {
       return { cashRequest, incomeRecord, expenseRecord };
     });
 
-    return { ...result, action, idempotent: false };
+    return { ok: true, ...result, action, idempotent: false };
   }
 
   private async submitCreatedRequest<

@@ -128,7 +128,7 @@ describe("CashService external callback", () => {
       "cash-user-token",
     );
 
-    expect(result.idempotent).toBe(false);
+    expect(result).toMatchObject({ ok: true, idempotent: false });
     expect(tx.cashRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -178,7 +178,7 @@ describe("CashService external callback", () => {
       "cash-user-token",
     );
 
-    expect(result.idempotent).toBe(true);
+    expect(result).toMatchObject({ ok: true, idempotent: true });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
