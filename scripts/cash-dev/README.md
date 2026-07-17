@@ -11,6 +11,8 @@ Extraction provenance (read-only):
 - Source inventory: 7 tables, 42 functions, 7 policies
 - V3 dev extension: 1 sync table, 2 functions, 1 policy, and 2 guard
   triggers for immutable School FX handoff
+- Teacher wage aggregate extension: 2 batch tables, 3 functions, 2 policies,
+  and 2 transaction guard triggers
 - `schema.sql` SHA-256: `de0550fb73598bd5af28b83145b5212ac7b8c1b6f92780520a5b9954af3baeee`
 
 ## Safety boundary
@@ -33,6 +35,7 @@ psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/target-prefligh
 psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/bootstrap.sql
 psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/verify.sql
 psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/verify-fx-school-sync.sql
+psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/verify-teacher-wage-batches.sql
 ```
 
 After creating a dedicated Cash dev user through Supabase Auth, seed accounts:
@@ -61,6 +64,13 @@ After at least one real dev FX handoff exists, run
 `verify-synced-fx-guard.sql`. It attempts no-op updates and deletes against both
 sides of the latest synced pair inside a rolled-back transaction and succeeds
 only when all four mutations are rejected by the database guard.
+
+After at least one real School-synced teacher wage aggregate batch exists, run
+`verify-teacher-wage-batch-e2e.sql`. It verifies the Cash batch header, item
+totals, approved requests, unique aggregate transaction, School batch callback
+result, idempotent retries, conflicting marker rejection, and transaction
+update/delete guards. The complete verification runs inside a rolled-back
+transaction.
 
 The isolated Cash dev frontend is deployed from the Cash repository branch
 `codex/cash-dev-environment` at `https://aozora-cash-v3-dev.onrender.com`. Its
