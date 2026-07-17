@@ -174,6 +174,7 @@ v3 不以免费额度为核心约束。
 - 2026-07-17 已在 `v3-dev` 安装仅含 `home_*` 的 Cash dev 结构；不复制 Cash production 数据，不包含同一旧 project 内的 `shop_*` 对象。
 - 现有 Cash production project 与 School v1/v2 project 在正式切换前保持不变；峰值为 5 个 project，而不是为每个 Cash 环境另建 project。
 - Cash 旧模块保留受控 RPC 是明确的兼容边界；School V3 新业务仍由 NestJS domain service 负责，不新增 School 业务 RPC。
+- Cash CNY→JPY 汇兑一旦成功回写 School 法人账户，Cash 必须保存唯一同步标记并在数据库层锁定成对 FX 流水；普通编辑、删除或以新身份重建历史链均禁止，只允许基于原幂等身份补偿重试。
 - v3 不继续使用 Supabase RPC 承担复杂业务逻辑。
 - v3 的业务权威层是后端 domain service；数据库负责结构、约束、索引、事务一致性和必要防线。
 

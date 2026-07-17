@@ -35,5 +35,6 @@ $$;
 
 \ir schema.sql
 \ir hardening.sql
+\ir fx-school-sync.sql
 
 commit;

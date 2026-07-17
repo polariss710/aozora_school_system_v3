@@ -10,7 +10,7 @@
 - School ↔ Cash 第一阶段服务端适配层已实装：环境隔离配置、Cash 可用账户只读、canonical income / expense pending request、approve/reject callback 验证、幂等 ID、失败复核和重试审计已进入 V3 API。
 - V3 dev schema migration `20260716090000_add_cash_system_integration` 已执行成功。当前未配置真实 Cash dev 凭据时默认使用 dev-only mock；不将 mock 请求视为已完成外部 Cash 联动。
 - V3 环境拓扑已确定为每个环境共置 School + Cash：当前 `v3-dev`，未来 `v3-staging`、`v3-prod`，峰值 Supabase project 数为 5，不另建三套 Cash project。
-- 2026-07-17 已只向 `v3-dev` 安装 Cash dev 结构：7 张 `home_*` 表、42 个函数、7 个 RLS policy；没有复制生产数据、`shop_*` 对象或生产 ACL，现行 School / Cash production project 均未修改。
+- 2026-07-17 已只向 `v3-dev` 安装 Cash dev 基础结构；2026-07-18 增量加入 FX School 同步锁。当前合计 8 张 `home_*` 表、44 个函数、8 个 RLS policy，并在 CNY / JPY 流水表安装 2 个同步后不可变 trigger；没有复制生产数据、`shop_*` 对象或生产 ACL，现行 School / Cash production project 均未修改。
 - staging / prod 数据库和正式迁移程序尚未建立或执行。
 
 ## School ↔ Cash 联动状态
@@ -32,11 +32,13 @@
 - Cash dev 前端已增加已处理 School 请求的“重新回写 School”恢复操作（Cash commit `ad5bfb2`）及 60 秒 callback 超时保护（Cash commit `71bfe37`，版本 `20260717-cash-dev-v3-3`）。该操作只重放 callback，不执行 Cash approve / reject RPC；JPY 1234 approved 和 JPY 2345 rejected 均已人工重复回写并收到 V3 幂等成功，未改变 Cash 流水结果。
 - 2026-07-18 用户已完成上述恢复操作人工验收：approved / rejected 均可重复回写，无未知错误；JPY 1234 保持唯一 Cash 流水，JPY 2345 保持无流水；School 状态与两端记录数量均正确。School → Cash 请求及结果恢复链路第一阶段验收完成。
 - Cash → School 第二阶段已开始第一批后端实装：新增 Cash 登录 token 保护的 CNY→JPY FX 入站 options / callback，School 服务端使用 service role 重新读取并校验双向关联的 Cash `fx_out` / `fx_in` 交易对，不信任浏览器金额、日期、币种或 JPY transaction ID；只允许选择同一 CNY Cash 账户的已确认 School 收入，且所选收入 CNY 合计必须与购汇 CNY 金额完全一致。重复相同 payload 返回幂等成功，冲突 payload 拒绝覆盖。
+- `v3-dev` 已安装 `home_school_fx_syncs`、authenticated 同步标记 RPC 和 CNY / JPY 双侧不可变 trigger；同步标记保存 School event 与 account transaction 身份，已同步 FX pair 不能普通编辑或删除。Cash dev 分支 commit `d0f337a` 已实现“回写 School 法人账户”对话框、候选读取、精确金额选择、失败重试与同步后只读显示，静态版本为 `20260718-cash-dev-v3-4`。
+- 2026-07-18 Cash → School FX 真实 dev E2E 已通过：测试链 `DEV-SCHOOL-FX-20260718` 由 CNY 88.00 `fx_out` / JPY 1,800 `fx_in` 生成 School JPY 法人账户入站事件与唯一账户流水；关联收入推进到 `account_transaction_created`，Cash 页面显示“已回写 School · 只读”。数据库复核确认 Cash / School 双侧身份一致；同 payload 标记重试幂等、冲突身份被拒绝，CNY / JPY 两侧 update / delete 共四种操作均被 trigger 拦截并在测试事务中回滚。
 
 ### 尚未完成
 
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
-- Cash FX 入站前端尚未开放；开放前必须先在 Cash 侧保存 School 同步标记，并锁定已同步 FX 交易对的普通编辑 / 删除。当前阶段不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等。
+- Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging / prod 复制前还需分别执行环境级迁移与 E2E。
 - `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
 
 ## V2 → V3 Prod 数据迁移状态

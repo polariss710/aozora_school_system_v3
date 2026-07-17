@@ -9,6 +9,8 @@ Extraction provenance (read-only):
 - Cash repository commit observed: `b0f6065`
 - Extracted: `2026-07-17`
 - Source inventory: 7 tables, 42 functions, 7 policies
+- V3 dev extension: 1 sync table, 2 functions, 1 policy, and 2 guard
+  triggers for immutable School FX handoff
 - `schema.sql` SHA-256: `de0550fb73598bd5af28b83145b5212ac7b8c1b6f92780520a5b9954af3baeee`
 
 ## Safety boundary
@@ -30,6 +32,7 @@ Run against the V3 dev database only:
 psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/target-preflight.sql
 psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/bootstrap.sql
 psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/verify.sql
+psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 -f scripts/cash-dev/verify-fx-school-sync.sql
 ```
 
 After creating a dedicated Cash dev user through Supabase Auth, seed accounts:
@@ -47,6 +50,17 @@ psql "$SCHOOL_DEV_DB_URL" -v ON_ERROR_STOP=1 \
 data exists. `verify-seed.sql` checks the dedicated Auth user and four
 deterministic dev accounts. Transaction/request counts are intentionally not
 treated as structural invariants after real integration testing begins.
+
+`bootstrap.sql` also installs `fx-school-sync.sql`. The extension stores one
+School sync marker per CNY / JPY FX pair, exposes only the authenticated marker
+RPC, and rejects ordinary update or delete operations against either side of a
+synced pair. Apply `fx-school-sync.sql` directly when upgrading an existing Cash
+dev schema that was bootstrapped before this extension existed.
+
+After at least one real dev FX handoff exists, run
+`verify-synced-fx-guard.sql`. It attempts no-op updates and deletes against both
+sides of the latest synced pair inside a rolled-back transaction and succeeds
+only when all four mutations are rejected by the database guard.
 
 The isolated Cash dev frontend is deployed from the Cash repository branch
 `codex/cash-dev-environment` at `https://aozora-cash-v3-dev.onrender.com`. Its

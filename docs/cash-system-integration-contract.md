@@ -152,8 +152,14 @@ Cash user、`fx_out` / `fx_in` 类型、CNY / JPY 币种、双向 transaction ID
 
 同一 CNY FX transaction ID 是入站幂等身份。重复相同 payload 返回幂等
 成功；法人账户、金额、日期、关联收入或 FX pair 不同必须拒绝冲突，不能
-覆盖旧事实。Cash 前端开放该动作前，Cash 侧还必须保存 School 同步标记并
-阻止已同步 FX pair 的普通编辑 / 删除；该生命周期保护不与本批接口混为已完成。
+覆盖旧事实。Cash 在 School 成功入站后通过
+`home_mark_cny_to_jpy_fx_school_synced` 保存 School event / account transaction
+身份；`home_school_fx_syncs` 对 CNY / JPY FX transaction 分别唯一，数据库
+trigger 阻止已同步 FX pair 的普通更新和删除。若 School 已成功而 Cash 标记
+暂时失败，前端必须保留同一 payload 的重试入口，不得重建 School 流水。
+
+Cash 前端仅对未同步的 CNY `fx_out` 显示“回写 School”。同步后显示只读状态，
+不再提供普通编辑 / 删除。该 UI 约束只是辅助保护，数据库 trigger 才是最终防线。
 
 ## 7. 当前与未来阶段
 
