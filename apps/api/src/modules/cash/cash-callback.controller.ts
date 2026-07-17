@@ -12,6 +12,7 @@ import { CashService } from "./cash.service";
 import {
   CashFxInboundCallbackBody,
   CashFxInboundOptionsQuery,
+  CashRequestBatchResultCallbackBody,
   CashRequestResultCallbackBody,
 } from "./cash.types";
 
@@ -30,6 +31,17 @@ export class CashCallbackController {
     }
 
     return this.cashService.applyExternalRequestResult(body, token);
+  }
+
+  @Post("request-batch-result")
+  applyRequestBatchResult(
+    @Body() body: CashRequestBatchResultCallbackBody,
+    @Headers("authorization") authorization?: string,
+  ) {
+    return this.cashService.applyExternalTeacherWageBatchResult(
+      body,
+      this.requireBearerToken(authorization),
+    );
   }
 
   @Get("fx-inbound/options")

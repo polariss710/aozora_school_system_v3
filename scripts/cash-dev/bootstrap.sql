@@ -36,5 +36,6 @@ $$;
 \ir schema.sql
 \ir hardening.sql
 \ir fx-school-sync.sql
+\ir teacher-wage-batches.sql
 
 commit;

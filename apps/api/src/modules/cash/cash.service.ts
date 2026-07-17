@@ -31,6 +31,7 @@ import {
 import {
   CashFxInboundCallbackBody,
   CashFxInboundOptionsQuery,
+  CashRequestBatchResultCallbackBody,
   CashRequestResultCallbackBody,
   ConfirmCashRequestBody,
   ListCashRequestsQuery,
@@ -93,6 +94,10 @@ const cashRequestSelect = {
   expenseRecord: {
     select: {
       id: true,
+      sourceType: true,
+      sourceId: true,
+      teacherId: true,
+      businessEntityId: true,
       title: true,
       recordStatus: true,
       cashStatus: true,
@@ -101,6 +106,8 @@ const cashRequestSelect = {
       originalAmountCny: true,
       yearMonth: true,
       memo: true,
+      teacher: { select: { id: true, name: true } },
+      businessEntity: { select: { id: true, code: true, name: true } },
     },
   },
 } satisfies Prisma.CashRequestSelect;
@@ -481,6 +488,204 @@ export class CashService {
     });
 
     return { ok: true, ...result, action, idempotent: false };
+  }
+
+  async applyExternalTeacherWageBatchResult(
+    body: CashRequestBatchResultCallbackBody,
+    accessToken: string,
+  ) {
+    this.assertExternalCashCallbackEnabled();
+    await this.verifyExternalCashAccessToken(accessToken);
+    const cashBatchId = this.normalizeRequiredUuid(
+      body.cash_batch_id,
+      "cash_batch_id",
+    );
+    const external = await this.cashGateway.getTeacherWageBatch(cashBatchId);
+    const externalRequestIds = external.items.map((item) => item.requestId);
+    if (new Set(externalRequestIds).size !== externalRequestIds.length) {
+      throw new ConflictException("Cash batch contains duplicate request IDs.");
+    }
+
+    const localRequests = await this.prisma.cashRequest.findMany({
+      where: { externalCashRequestId: { in: externalRequestIds } },
+      select: cashRequestSelect,
+    });
+    if (localRequests.length !== external.items.length) {
+      throw new NotFoundException("Every Cash batch item must map to one V3 request.");
+    }
+    const localByExternalId = new Map(
+      localRequests.map((request) => [request.externalCashRequestId, request]),
+    );
+
+    let localTotal = 0;
+    for (const item of external.items) {
+      const local = localByExternalId.get(item.requestId);
+      if (!local || !local.expenseRecordId || !local.expenseRecord) {
+        throw new ConflictException("Cash batch item does not reference a V3 expense.");
+      }
+      const amount = external.currency === CurrencyCode.JPY
+        ? local.requestedAmountJpy
+        : local.requestedAmountCny?.toNumber();
+      const normalizedAmount = this.moneyService.confirmAmount({
+        amount: amount ?? 0,
+        currency: external.currency,
+      });
+      const normalizedItemAmount = this.moneyService.confirmAmount({
+        amount: item.amount,
+        currency: external.currency,
+      });
+      const transactedAt = local.cashTransactedAt?.toISOString().slice(0, 10);
+      if (
+        local.direction !== CashRequestDirection.expense ||
+        local.requestedCurrency !== external.currency ||
+        normalizedAmount !== normalizedItemAmount ||
+        local.cashAccountId !== external.accountId ||
+        transactedAt !== external.transactedAt ||
+        local.expenseRecordId !== item.externalReferenceId ||
+        local.expenseRecord.sourceType !== "teacher_wage_snapshot" ||
+        local.expenseRecord.teacherId !== external.teacherId ||
+        local.expenseRecord.yearMonth !== external.yearMonth
+      ) {
+        throw new ConflictException(
+          "Cash teacher wage batch item does not match the V3 request snapshot.",
+        );
+      }
+      localTotal += normalizedAmount;
+    }
+    const normalizedLocalTotal = this.moneyService.confirmAmount({
+      amount: localTotal,
+      currency: external.currency,
+    });
+    const normalizedExternalTotal = this.moneyService.confirmAmount({
+      amount: external.totalAmount,
+      currency: external.currency,
+    });
+    if (normalizedLocalTotal !== normalizedExternalTotal) {
+      throw new ConflictException("Cash batch total does not match V3 request items.");
+    }
+
+    const existing = await this.prisma.cashPaymentBatch.findUnique({
+      where: { externalCashBatchId: external.id },
+      include: { items: { orderBy: { itemOrder: "asc" } } },
+    });
+    if (existing) {
+      const existingItems = existing.items.map((item) => [
+        item.externalCashRequestId,
+        item.expenseRecordId,
+        item.amountJpy ?? item.amountCny?.toNumber(),
+      ]);
+      const expectedItems = external.items.map((item) => [
+        item.requestId,
+        item.externalReferenceId,
+        item.amount,
+      ]);
+      if (
+        existing.externalCashTransactionId === external.createdTransactionId &&
+        existing.cashAccountId === external.accountId &&
+        existing.currency === external.currency &&
+        existing.cashTransactedAt.toISOString().slice(0, 10) === external.transactedAt &&
+        JSON.stringify(existingItems) === JSON.stringify(expectedItems)
+      ) {
+        return { ok: true, batch: existing, idempotent: true };
+      }
+      throw new ConflictException("Cash batch callback conflicts with stored mapping.");
+    }
+
+    if (localRequests.some((request) => (
+      request.status !== CashRequestStatus.cash_requested &&
+      request.status !== CashRequestStatus.needs_manual_review
+    ))) {
+      throw new ConflictException("One or more V3 requests no longer allow batch callback.");
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const batch = await tx.cashPaymentBatch.create({
+        data: {
+          externalCashBatchId: external.id,
+          externalCashTransactionId: external.createdTransactionId,
+          batchType: external.batchType,
+          currency: external.currency,
+          totalAmountJpy: external.currency === CurrencyCode.JPY
+            ? normalizedExternalTotal
+            : null,
+          totalAmountCny: external.currency === CurrencyCode.CNY
+            ? new Prisma.Decimal(normalizedExternalTotal)
+            : null,
+          cashAccountId: external.accountId,
+          cashTransactedAt: new Date(`${external.transactedAt}T00:00:00.000Z`),
+          teacherId: external.teacherId,
+          teacherNameSnapshot: external.teacherName,
+          yearMonth: external.yearMonth,
+          status: "cash_confirmed",
+          approvedAt: new Date(external.approvedAt),
+          items: {
+            create: external.items.map((item) => {
+              const local = localByExternalId.get(item.requestId)!;
+              return {
+                cashRequestId: local.id,
+                expenseRecordId: local.expenseRecordId!,
+                externalCashRequestId: item.requestId,
+                amountJpy: external.currency === CurrencyCode.JPY
+                  ? item.amount
+                  : null,
+                amountCny: external.currency === CurrencyCode.CNY
+                  ? new Prisma.Decimal(item.amount)
+                  : null,
+                itemOrder: item.itemOrder,
+              };
+            }),
+          },
+        },
+        include: { items: { orderBy: { itemOrder: "asc" } } },
+      });
+
+      for (const item of external.items) {
+        const local = localByExternalId.get(item.requestId)!;
+        const cashRequest = await tx.cashRequest.update({
+          where: { id: local.id },
+          data: {
+            status: CashRequestStatus.cash_confirmed,
+            externalCashEventId: external.id,
+            externalCashTransactionId: external.createdTransactionId,
+            cashConfirmedAt: new Date(external.approvedAt),
+            rejectionReason: null,
+            lastSyncError: null,
+          },
+          select: cashRequestSelect,
+        });
+        const expenseRecord = await tx.expenseRecord.update({
+          where: { id: local.expenseRecordId! },
+          data: {
+            recordStatus: ExpenseRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.cash_confirmed,
+          },
+          select: expenseRecordSelect,
+        });
+
+        await this.auditService.recordEvent(
+          {
+            actorUserId: null,
+            action: "cash_request.external_batch_confirm",
+            targetType: "cash_request",
+            targetId: local.id,
+            riskLevel: AuditRiskLevel.critical,
+            beforeSnapshot: local,
+            afterSnapshot: { cashRequest, expenseRecord, batchId: batch.id },
+            metadata: {
+              callbackSource: "cash_system",
+              externalCashBatchId: external.id,
+              externalCashRequestId: item.requestId,
+              externalCashTransactionId: external.createdTransactionId,
+            },
+          },
+          tx,
+        );
+      }
+
+      return batch;
+    });
+
+    return { ok: true, batch: result, idempotent: false };
   }
 
   async getExternalFxInboundOptions(
@@ -936,6 +1141,7 @@ export class CashService {
   }
 
   private buildExternalPayload(before: CashRequestSnapshot, amount: number) {
+    const teacherWageExpense = before.expenseRecord?.sourceType === "teacher_wage_snapshot";
     return {
       schema_version: 1,
       school_system: "aozora_school_v3",
@@ -967,6 +1173,12 @@ export class CashService {
       exchange_rate_source: before.exchangeRateSource,
       conversion_method: before.conversionMethod,
       note: before.incomeRecord?.memo ?? before.expenseRecord?.memo ?? null,
+      expense_category: teacherWageExpense ? "teacher_wage" : null,
+      teacher_id: before.expenseRecord?.teacherId ?? null,
+      teacher_name: before.expenseRecord?.teacher?.name ?? null,
+      business_entity_id: before.expenseRecord?.businessEntityId ?? null,
+      business_entity_code: before.expenseRecord?.businessEntity?.code ?? null,
+      business_entity_name: before.expenseRecord?.businessEntity?.name ?? null,
     };
   }
 

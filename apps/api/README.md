@@ -203,9 +203,18 @@ GET /api/cash-inbound/events
 GET /api/cash-inbound/events/:id
 POST /api/cash-inbound/events
 POST /api/cash-inbound/events/:id/reject
+POST /api/cash/callbacks/request-result
+POST /api/cash/callbacks/request-batch-result
 GET /api/cash/callbacks/fx-inbound/options?cash_cny_transaction_id=<uuid>
 POST /api/cash/callbacks/fx-inbound
 ```
+
+`POST /cash/callbacks/request-batch-result` accepts only a Cash bearer token
+and a Cash teacher-wage batch UUID. The API re-reads the Cash batch, its item
+mapping, and the single aggregate transaction with the server-side credential;
+it then atomically confirms every mapped canonical School expense. Browser
+amounts, request items, transaction IDs, teacher IDs, and business months are
+never accepted as authority.
 
 The two `/cash/callbacks/fx-inbound` endpoints require the signed-in Cash
 user bearer token. The API re-reads the linked `home_cny_transactions.fx_out`

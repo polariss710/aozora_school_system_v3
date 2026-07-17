@@ -1,20 +1,20 @@
 \set ON_ERROR_STOP on
 \pset pager off
 
-select count(*) = 8 as has_expected_table_count
+select count(*) = 10 as has_expected_table_count
 from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public'
   and c.relkind in ('r', 'p')
   and c.relname like 'home\_%' escape '\';
 
-select count(*) = 44 as has_expected_function_count
+select count(*) = 47 as has_expected_function_count
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname like 'home\_%' escape '\';
 
-select count(*) = 8 as has_expected_policy_count
+select count(*) = 10 as has_expected_policy_count
 from pg_policies
 where schemaname = 'public'
   and tablename like 'home\_%' escape '\';

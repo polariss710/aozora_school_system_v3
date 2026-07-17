@@ -65,6 +65,31 @@ export type CashCnyToJpyFx = {
   note: string;
 };
 
+export type CashTeacherWageBatchItem = {
+  id: string;
+  requestId: string;
+  externalReferenceId: string;
+  amount: number;
+  itemOrder: number;
+};
+
+export type CashTeacherWageBatch = {
+  id: string;
+  userId: string;
+  batchType: "teacher_wage_payment";
+  currency: CashCurrency;
+  accountId: string;
+  transactedAt: string;
+  totalAmount: number;
+  status: "approved";
+  createdTransactionId: string;
+  teacherId: string;
+  teacherName: string;
+  yearMonth: string;
+  approvedAt: string;
+  items: CashTeacherWageBatchItem[];
+};
+
 export interface CashGateway {
   readonly mode: CashIntegrationMode;
   listEligibleAccounts(): Promise<CashEligibleAccount[]>;
@@ -74,6 +99,7 @@ export interface CashGateway {
   verifyCallbackAccessToken(token: string): Promise<{ userId: string }>;
   getExternalRequest(id: string): Promise<CashExternalRequest>;
   getCnyToJpyFx(cnyTransactionId: string): Promise<CashCnyToJpyFx>;
+  getTeacherWageBatch(batchId: string): Promise<CashTeacherWageBatch>;
 }
 
 type SupabaseCashGatewayConfig = {
@@ -145,6 +171,47 @@ type CashJpyTransactionRow = {
   linked_cny_transaction_id: string | null;
 };
 
+type CashTeacherWageBatchRow = {
+  id: string;
+  user_id: string;
+  batch_type: string;
+  currency: string;
+  account_id: string;
+  transacted_at: string;
+  total_amount: number | string;
+  status: string;
+  created_transaction_id: string;
+  teacher_id: string;
+  teacher_name: string;
+  year_month: string;
+  approved_at: string;
+};
+
+type CashTeacherWageBatchItemRow = {
+  id: string;
+  batch_id: string;
+  request_id: string;
+  external_reference_id: string;
+  amount: number | string;
+  item_order: number;
+};
+
+type CashAggregateTransactionRow = {
+  id: string;
+  user_id: string;
+  transaction_type: string;
+  account_id: string;
+  currency: string;
+  transacted_at: string;
+  amount: number | string;
+  external_source: string | null;
+  external_source_id: string | null;
+  external_event_type: string | null;
+  external_reference_type: string | null;
+  external_reference_id: string | null;
+  created_by_external: boolean;
+};
+
 export class CashGatewayRequestError extends Error {
   constructor(
     message: string,
@@ -191,6 +258,10 @@ class MockCashGateway implements CashGateway {
   async getCnyToJpyFx(_cnyTransactionId: string): Promise<CashCnyToJpyFx> {
     throw new ServiceUnavailableException("Cash callback is disabled in mock mode.");
   }
+
+  async getTeacherWageBatch(_batchId: string): Promise<CashTeacherWageBatch> {
+    throw new ServiceUnavailableException("Cash callback is disabled in mock mode.");
+  }
 }
 
 class DisabledCashGateway implements CashGateway {
@@ -215,6 +286,10 @@ class DisabledCashGateway implements CashGateway {
   }
 
   async getCnyToJpyFx(_cnyTransactionId: string): Promise<CashCnyToJpyFx> {
+    throw new ServiceUnavailableException("Cash integration is disabled.");
+  }
+
+  async getTeacherWageBatch(_batchId: string): Promise<CashTeacherWageBatch> {
     throw new ServiceUnavailableException("Cash integration is disabled.");
   }
 }
@@ -442,6 +517,134 @@ export class SupabaseCashGateway implements CashGateway {
       jpyAmount,
       description: cny.description,
       note: cny.note,
+    };
+  }
+
+  async getTeacherWageBatch(batchId: string): Promise<CashTeacherWageBatch> {
+    const batchQuery = new URLSearchParams({
+      select: [
+        "id",
+        "user_id",
+        "batch_type",
+        "currency",
+        "account_id",
+        "transacted_at",
+        "total_amount",
+        "status",
+        "created_transaction_id",
+        "teacher_id",
+        "teacher_name",
+        "year_month",
+        "approved_at",
+      ].join(","),
+      id: `eq.${batchId}`,
+      user_id: `eq.${this.config.userId}`,
+      limit: "1",
+    });
+    const batchRows = await this.request<CashTeacherWageBatchRow[]>(
+      `/rest/v1/home_external_transaction_batches?${batchQuery.toString()}`,
+    );
+    const batch = batchRows[0];
+    if (!batch) {
+      throw new CashGatewayRequestError("Cash teacher wage batch was not found.", false);
+    }
+    if (
+      batch.batch_type !== "teacher_wage_payment" ||
+      batch.status !== "approved" ||
+      !batch.created_transaction_id
+    ) {
+      throw new CashGatewayRequestError("Cash teacher wage batch is not approved.", false);
+    }
+
+    const itemQuery = new URLSearchParams({
+      select: "id,batch_id,request_id,external_reference_id,amount,item_order",
+      batch_id: `eq.${batch.id}`,
+      order: "item_order.asc",
+    });
+    const itemRows = await this.request<CashTeacherWageBatchItemRow[]>(
+      `/rest/v1/home_external_transaction_batch_items?${itemQuery.toString()}`,
+    );
+    if (itemRows.length < 2) {
+      throw new CashGatewayRequestError("Cash teacher wage batch has too few items.", false);
+    }
+
+    const transactionTable = batch.currency === "JPY"
+      ? "home_jpy_transactions"
+      : batch.currency === "CNY"
+        ? "home_cny_transactions"
+        : null;
+    if (!transactionTable) {
+      throw new CashGatewayRequestError("Cash teacher wage batch currency is invalid.", false);
+    }
+    const transactionQuery = new URLSearchParams({
+      select: [
+        "id",
+        "user_id",
+        "transaction_type",
+        "account_id",
+        "currency",
+        "transacted_at",
+        "amount",
+        "external_source",
+        "external_source_id",
+        "external_event_type",
+        "external_reference_type",
+        "external_reference_id",
+        "created_by_external",
+      ].join(","),
+      id: `eq.${batch.created_transaction_id}`,
+      user_id: `eq.${this.config.userId}`,
+      limit: "1",
+    });
+    const transactionRows = await this.request<CashAggregateTransactionRow[]>(
+      `/rest/v1/${transactionTable}?${transactionQuery.toString()}`,
+    );
+    const transaction = transactionRows[0];
+    const totalAmount = Number(batch.total_amount);
+    if (
+      !transaction ||
+      transaction.transaction_type !== "expense" ||
+      transaction.account_id !== batch.account_id ||
+      transaction.currency !== batch.currency ||
+      transaction.transacted_at !== batch.transacted_at ||
+      Number(transaction.amount) !== totalAmount ||
+      transaction.external_source !== "aozora_school" ||
+      transaction.external_source_id !== batch.id ||
+      transaction.external_event_type !== "teacher_wage_batch_paid" ||
+      transaction.external_reference_type !== "school_expense_batches" ||
+      transaction.external_reference_id !== batch.id ||
+      transaction.created_by_external !== true
+    ) {
+      throw new CashGatewayRequestError("Cash teacher wage batch transaction is inconsistent.", false);
+    }
+
+    const items = itemRows.map((item) => ({
+      id: item.id,
+      requestId: item.request_id,
+      externalReferenceId: item.external_reference_id,
+      amount: Number(item.amount),
+      itemOrder: item.item_order,
+    }));
+    const itemTotal = items.reduce((sum, item) => sum + item.amount, 0);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0 || itemTotal !== totalAmount) {
+      throw new CashGatewayRequestError("Cash teacher wage batch total is inconsistent.", false);
+    }
+
+    return {
+      id: batch.id,
+      userId: batch.user_id,
+      batchType: "teacher_wage_payment",
+      currency: this.requireCurrency(batch.currency),
+      accountId: batch.account_id,
+      transactedAt: batch.transacted_at,
+      totalAmount,
+      status: "approved",
+      createdTransactionId: batch.created_transaction_id,
+      teacherId: batch.teacher_id,
+      teacherName: batch.teacher_name,
+      yearMonth: batch.year_month,
+      approvedAt: batch.approved_at,
+      items,
     };
   }
 

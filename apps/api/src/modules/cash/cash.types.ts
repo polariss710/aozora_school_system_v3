@@ -40,6 +40,10 @@ export type CashRequestResultCallbackBody = {
   action?: unknown;
 };
 
+export type CashRequestBatchResultCallbackBody = {
+  cash_batch_id?: unknown;
+};
+
 export type CashFxInboundOptionsQuery = {
   cash_cny_transaction_id?: unknown;
 };

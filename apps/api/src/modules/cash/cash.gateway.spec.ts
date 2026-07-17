@@ -166,4 +166,71 @@ describe("SupabaseCashGateway", () => {
       note: "School 学费归集",
     });
   });
+
+  it("reads and verifies one aggregate teacher wage transaction and its request items", async () => {
+    const batchId = "10101010-1010-4010-8010-101010101010";
+    const transactionId = "20202020-2020-4020-8020-202020202020";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: batchId,
+        user_id: "11111111-1111-4111-8111-111111111111",
+        batch_type: "teacher_wage_payment",
+        currency: "JPY",
+        account_id: "22222222-2222-4222-8222-222222222222",
+        transacted_at: "2026-07-18",
+        total_amount: "7000.00",
+        status: "approved",
+        created_transaction_id: transactionId,
+        teacher_id: "30303030-3030-4030-8030-303030303030",
+        teacher_name: "测试老师",
+        year_month: "2026-07",
+        approved_at: "2026-07-18T03:00:00.000Z",
+      }]), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        {
+          id: "40404040-4040-4040-8040-404040404040",
+          batch_id: batchId,
+          request_id: "50505050-5050-4050-8050-505050505050",
+          external_reference_id: "60606060-6060-4060-8060-606060606060",
+          amount: "3000.00",
+          item_order: 1,
+        },
+        {
+          id: "70707070-7070-4070-8070-707070707070",
+          batch_id: batchId,
+          request_id: "80808080-8080-4080-8080-808080808080",
+          external_reference_id: "90909090-9090-4090-8090-909090909090",
+          amount: "4000.00",
+          item_order: 2,
+        },
+      ]), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: transactionId,
+        user_id: "11111111-1111-4111-8111-111111111111",
+        transaction_type: "expense",
+        account_id: "22222222-2222-4222-8222-222222222222",
+        currency: "JPY",
+        transacted_at: "2026-07-18",
+        amount: "7000.00",
+        external_source: "aozora_school",
+        external_source_id: batchId,
+        external_event_type: "teacher_wage_batch_paid",
+        external_reference_type: "school_expense_batches",
+        external_reference_id: batchId,
+        created_by_external: true,
+      }]), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(buildGateway().getTeacherWageBatch(batchId)).resolves.toMatchObject({
+      id: batchId,
+      totalAmount: 7000,
+      createdTransactionId: transactionId,
+      teacherName: "测试老师",
+      yearMonth: "2026-07",
+      items: [
+        { amount: 3000, itemOrder: 1 },
+        { amount: 4000, itemOrder: 2 },
+      ],
+    });
+  });
 });

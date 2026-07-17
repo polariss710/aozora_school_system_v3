@@ -771,12 +771,13 @@ model ExpenseRecord {
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  teacher             Teacher?             @relation(fields: [teacherId], references: [id], onDelete: Restrict)
-  businessEntity      BusinessEntity?      @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
-  wageSnapshot        TeacherWageSnapshot? @relation("TeacherWageExpense")
-  cashRequests        CashRequest[]
-  accountTransactions AccountTransaction[]
-  reimbursementRecord ReimbursementRecord?
+  teacher               Teacher?               @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  businessEntity        BusinessEntity?        @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  wageSnapshot          TeacherWageSnapshot?   @relation("TeacherWageExpense")
+  cashRequests          CashRequest[]
+  accountTransactions   AccountTransaction[]
+  reimbursementRecord   ReimbursementRecord?
+  cashPaymentBatchItems CashPaymentBatchItem[]
 
   @@index([sourceType, sourceId])
   @@index([teacherId, yearMonth])
@@ -820,8 +821,9 @@ model CashRequest {
   createdAt                 DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  incomeRecord  IncomeRecord?  @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
-  expenseRecord ExpenseRecord? @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+  incomeRecord         IncomeRecord?         @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+  expenseRecord        ExpenseRecord?        @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+  cashPaymentBatchItem CashPaymentBatchItem?
 
   @@index([direction])
   @@index([sourceType, sourceId])
@@ -830,6 +832,51 @@ model CashRequest {
   @@index([status])
   @@index([cashAccountId])
   @@map("cash_requests")
+}
+
+model CashPaymentBatch {
+  id                        String       @id @default(uuid()) @db.Uuid
+  externalCashBatchId       String       @unique @map("external_cash_batch_id") @db.Uuid
+  externalCashTransactionId String       @unique @map("external_cash_transaction_id") @db.Uuid
+  batchType                 String       @map("batch_type")
+  currency                  CurrencyCode
+  totalAmountJpy            Int?         @map("total_amount_jpy")
+  totalAmountCny            Decimal?     @map("total_amount_cny") @db.Decimal(12, 2)
+  cashAccountId             String       @map("cash_account_id") @db.Uuid
+  cashTransactedAt          DateTime     @map("cash_transacted_at") @db.Date
+  teacherId                 String?      @map("teacher_id") @db.Uuid
+  teacherNameSnapshot       String       @map("teacher_name_snapshot")
+  yearMonth                 String       @map("year_month") @db.VarChar(7)
+  status                    String       @default("cash_confirmed")
+  approvedAt                DateTime     @map("approved_at") @db.Timestamptz(6)
+  createdAt                 DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  items CashPaymentBatchItem[]
+
+  @@index([teacherId, yearMonth])
+  @@index([status])
+  @@map("cash_payment_batches")
+}
+
+model CashPaymentBatchItem {
+  id                    String   @id @default(uuid()) @db.Uuid
+  batchId               String   @map("batch_id") @db.Uuid
+  cashRequestId         String   @unique @map("cash_request_id") @db.Uuid
+  expenseRecordId       String   @unique @map("expense_record_id") @db.Uuid
+  externalCashRequestId String   @unique @map("external_cash_request_id") @db.Uuid
+  amountJpy             Int?     @map("amount_jpy")
+  amountCny             Decimal? @map("amount_cny") @db.Decimal(12, 2)
+  itemOrder             Int      @map("item_order")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  batch         CashPaymentBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  cashRequest   CashRequest      @relation(fields: [cashRequestId], references: [id], onDelete: Restrict)
+  expenseRecord ExpenseRecord    @relation(fields: [expenseRecordId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, itemOrder])
+  @@index([batchId])
+  @@map("cash_payment_batch_items")
 }
 
 model ExternalWorkplace {
