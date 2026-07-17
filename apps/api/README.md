@@ -203,7 +203,17 @@ GET /api/cash-inbound/events
 GET /api/cash-inbound/events/:id
 POST /api/cash-inbound/events
 POST /api/cash-inbound/events/:id/reject
+GET /api/cash/callbacks/fx-inbound/options?cash_cny_transaction_id=<uuid>
+POST /api/cash/callbacks/fx-inbound
 ```
+
+The two `/cash/callbacks/fx-inbound` endpoints require the signed-in Cash
+user bearer token. The API re-reads the linked `home_cny_transactions.fx_out`
+and `home_jpy_transactions.fx_in` pair with the server-side Cash credential;
+browser-supplied dates, currencies, amounts, account IDs, or JPY transaction
+IDs are not accepted as authority. The selected School CNY-confirmed incomes
+must belong to the same Cash source account and exactly total the CNY FX
+amount. Partial allocation is intentionally not supported in this phase.
 
 Subject endpoints:
 

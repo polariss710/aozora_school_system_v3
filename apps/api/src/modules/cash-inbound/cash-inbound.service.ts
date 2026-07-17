@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -121,7 +122,7 @@ export class CashInboundService {
     return { event };
   }
 
-  async createEvent(body: CreateCashInboundEventBody, actorUserId: string) {
+  async createEvent(body: CreateCashInboundEventBody, actorUserId: string | null) {
     const input = await this.normalizeCreateInput(body);
 
     const existing = await this.prisma.cashInboundEvent.findUnique({
@@ -130,6 +131,7 @@ export class CashInboundService {
     });
 
     if (existing) {
+      this.assertExistingEventMatchesInput(existing, input);
       return { event: existing, idempotent: true };
     }
 
@@ -412,6 +414,42 @@ export class CashInboundService {
     }
 
     return "Cash入站 法人账户入金";
+  }
+
+  private assertExistingEventMatchesInput(
+    existing: Prisma.CashInboundEventGetPayload<{ select: typeof cashInboundEventSelect }>,
+    input: NormalizedCashInboundEventInput,
+  ) {
+    const sameLinkedIncomeRecords =
+      [...existing.linkedIncomeRecordIds].sort().join(",") ===
+      [...input.linkedIncomeRecordIds].sort().join(",");
+    const same =
+      existing.eventType === input.eventType &&
+      existing.corporateAccountId === input.corporateAccountId &&
+      existing.eventDate.toISOString().slice(0, 10) ===
+        input.eventDate.toISOString().slice(0, 10) &&
+      existing.sourceCurrency === input.sourceCurrency &&
+      existing.sourceAmountJpy === input.sourceAmountJpy &&
+      this.decimalNumber(existing.sourceAmountCny) === input.sourceAmountCny &&
+      existing.targetCurrency === input.targetCurrency &&
+      existing.targetAmountJpy === input.targetAmountJpy &&
+      this.decimalNumber(existing.targetAmountCny) === input.targetAmountCny &&
+      this.decimalNumber(existing.exchangeRate) === input.exchangeRate &&
+      existing.feeCurrency === input.feeCurrency &&
+      existing.feeAmountJpy === input.feeAmountJpy &&
+      this.decimalNumber(existing.feeAmountCny) === input.feeAmountCny &&
+      existing.memo === input.memo &&
+      sameLinkedIncomeRecords;
+
+    if (!same) {
+      throw new ConflictException(
+        "Cash inbound event conflicts with the stored event payload.",
+      );
+    }
+  }
+
+  private decimalNumber(value: Prisma.Decimal | null) {
+    return value === null ? null : Number(value);
   }
 
   private async normalizeCreateInput(

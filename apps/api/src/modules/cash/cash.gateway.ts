@@ -52,6 +52,19 @@ export type CashExternalRequest = {
   createdTransactionId: string | null;
 };
 
+export type CashCnyToJpyFx = {
+  cnyTransactionId: string;
+  jpyTransactionId: string;
+  userId: string;
+  cnyAccountId: string;
+  jpyAccountId: string;
+  transactedAt: string;
+  cnyAmount: number;
+  jpyAmount: number;
+  description: string;
+  note: string;
+};
+
 export interface CashGateway {
   readonly mode: CashIntegrationMode;
   listEligibleAccounts(): Promise<CashEligibleAccount[]>;
@@ -60,6 +73,7 @@ export interface CashGateway {
   ): Promise<CreateCashPendingRequestResult>;
   verifyCallbackAccessToken(token: string): Promise<{ userId: string }>;
   getExternalRequest(id: string): Promise<CashExternalRequest>;
+  getCnyToJpyFx(cnyTransactionId: string): Promise<CashCnyToJpyFx>;
 }
 
 type SupabaseCashGatewayConfig = {
@@ -105,6 +119,32 @@ type CashRequestRow = {
   created_transaction_id: string | null;
 };
 
+type CashCnyTransactionRow = {
+  id: string;
+  user_id: string;
+  transaction_type: string;
+  account_id: string;
+  currency: string;
+  transacted_at: string;
+  amount: number | string;
+  description: string;
+  note: string;
+  linked_jpy_transaction_id: string | null;
+};
+
+type CashJpyTransactionRow = {
+  id: string;
+  user_id: string;
+  transaction_type: string;
+  account_id: string;
+  currency: string;
+  transacted_at: string;
+  amount: number | string;
+  description: string;
+  note: string;
+  linked_cny_transaction_id: string | null;
+};
+
 export class CashGatewayRequestError extends Error {
   constructor(
     message: string,
@@ -147,6 +187,10 @@ class MockCashGateway implements CashGateway {
   async getExternalRequest(_id: string): Promise<CashExternalRequest> {
     throw new ServiceUnavailableException("Cash callback is disabled in mock mode.");
   }
+
+  async getCnyToJpyFx(_cnyTransactionId: string): Promise<CashCnyToJpyFx> {
+    throw new ServiceUnavailableException("Cash callback is disabled in mock mode.");
+  }
 }
 
 class DisabledCashGateway implements CashGateway {
@@ -167,6 +211,10 @@ class DisabledCashGateway implements CashGateway {
   }
 
   async getExternalRequest(_id: string): Promise<CashExternalRequest> {
+    throw new ServiceUnavailableException("Cash integration is disabled.");
+  }
+
+  async getCnyToJpyFx(_cnyTransactionId: string): Promise<CashCnyToJpyFx> {
     throw new ServiceUnavailableException("Cash integration is disabled.");
   }
 }
@@ -312,6 +360,88 @@ export class SupabaseCashGateway implements CashGateway {
       rejectedAt: row.rejected_at,
       rejectedReason: row.rejected_reason,
       createdTransactionId: row.created_transaction_id,
+    };
+  }
+
+  async getCnyToJpyFx(cnyTransactionId: string): Promise<CashCnyToJpyFx> {
+    const cnyQuery = new URLSearchParams({
+      select: [
+        "id",
+        "user_id",
+        "transaction_type",
+        "account_id",
+        "currency",
+        "transacted_at",
+        "amount",
+        "description",
+        "note",
+        "linked_jpy_transaction_id",
+      ].join(","),
+      id: `eq.${cnyTransactionId}`,
+      user_id: `eq.${this.config.userId}`,
+      transaction_type: "eq.fx_out",
+      limit: "1",
+    });
+    const cnyRows = await this.request<CashCnyTransactionRow[]>(
+      `/rest/v1/home_cny_transactions?${cnyQuery.toString()}`,
+    );
+    const cny = cnyRows[0];
+    if (!cny?.linked_jpy_transaction_id) {
+      throw new CashGatewayRequestError("Cash CNY to JPY FX transaction was not found.", false);
+    }
+
+    const jpyQuery = new URLSearchParams({
+      select: [
+        "id",
+        "user_id",
+        "transaction_type",
+        "account_id",
+        "currency",
+        "transacted_at",
+        "amount",
+        "description",
+        "note",
+        "linked_cny_transaction_id",
+      ].join(","),
+      id: `eq.${cny.linked_jpy_transaction_id}`,
+      user_id: `eq.${this.config.userId}`,
+      transaction_type: "eq.fx_in",
+      limit: "1",
+    });
+    const jpyRows = await this.request<CashJpyTransactionRow[]>(
+      `/rest/v1/home_jpy_transactions?${jpyQuery.toString()}`,
+    );
+    const jpy = jpyRows[0];
+    if (!jpy || jpy.linked_cny_transaction_id !== cny.id) {
+      throw new CashGatewayRequestError("Cash FX transaction pair is incomplete.", false);
+    }
+    if (
+      cny.user_id !== this.config.userId ||
+      jpy.user_id !== this.config.userId ||
+      cny.currency !== "CNY" ||
+      jpy.currency !== "JPY" ||
+      cny.transacted_at !== jpy.transacted_at
+    ) {
+      throw new CashGatewayRequestError("Cash FX transaction pair is inconsistent.", false);
+    }
+
+    const cnyAmount = Number(cny.amount);
+    const jpyAmount = Number(jpy.amount);
+    if (!Number.isFinite(cnyAmount) || cnyAmount <= 0 || !Number.isFinite(jpyAmount) || jpyAmount <= 0) {
+      throw new CashGatewayRequestError("Cash FX transaction amount is invalid.", false);
+    }
+
+    return {
+      cnyTransactionId: cny.id,
+      jpyTransactionId: jpy.id,
+      userId: cny.user_id,
+      cnyAccountId: cny.account_id,
+      jpyAccountId: jpy.account_id,
+      transactedAt: cny.transacted_at,
+      cnyAmount,
+      jpyAmount,
+      description: cny.description,
+      note: cny.note,
     };
   }
 

@@ -17,6 +17,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
+import { CashInboundService } from "../cash-inbound/cash-inbound.service";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import { RoundingMode } from "../money/money.types";
@@ -28,6 +29,8 @@ import {
   CashGatewayRequestError,
 } from "./cash.gateway";
 import {
+  CashFxInboundCallbackBody,
+  CashFxInboundOptionsQuery,
   CashRequestResultCallbackBody,
   ConfirmCashRequestBody,
   ListCashRequestsQuery,
@@ -150,6 +153,7 @@ export class CashService {
     @Inject(MoneyService) private readonly moneyService: MoneyService,
     @Inject(AuditService) private readonly auditService: AuditService,
     @Inject(CASH_GATEWAY) private readonly cashGateway: CashGateway,
+    @Inject(CashInboundService) private readonly cashInboundService: CashInboundService,
   ) {}
 
   async listEligibleAccounts() {
@@ -477,6 +481,199 @@ export class CashService {
     });
 
     return { ok: true, ...result, action, idempotent: false };
+  }
+
+  async getExternalFxInboundOptions(
+    query: CashFxInboundOptionsQuery,
+    accessToken: string,
+  ) {
+    this.assertExternalCashCallbackEnabled();
+    await this.verifyExternalCashAccessToken(accessToken);
+    const cnyTransactionId = this.normalizeRequiredUuid(
+      query.cash_cny_transaction_id,
+      "cash_cny_transaction_id",
+    );
+    const fx = await this.cashGateway.getCnyToJpyFx(cnyTransactionId);
+
+    const [corporateAccounts, candidateRequests, existingEvent] = await Promise.all([
+      this.prisma.account.findMany({
+        where: {
+          type: "corporate",
+          currency: CurrencyCode.JPY,
+          status: "active",
+        },
+        orderBy: [{ code: "asc" }],
+        select: { id: true, code: true, name: true, currency: true },
+      }),
+      this.prisma.cashRequest.findMany({
+        where: {
+          direction: CashRequestDirection.income,
+          status: CashRequestStatus.cash_confirmed,
+          requestedCurrency: CurrencyCode.CNY,
+          cashAccountId: fx.cnyAccountId,
+          externalCashTransactionId: { not: null },
+          incomeRecord: {
+            recordStatus: IncomeRecordStatus.cash_confirmed,
+            cashStatus: CashRequestStatus.cash_confirmed,
+          },
+        },
+        orderBy: [{ cashConfirmedAt: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          incomeRecordId: true,
+          requestedAmountCny: true,
+          externalCashTransactionId: true,
+          cashConfirmedAt: true,
+          incomeRecord: {
+            select: {
+              id: true,
+              title: true,
+              yearMonth: true,
+              student: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.cashInboundEvent.findUnique({
+        where: { externalCashEventId: fx.cnyTransactionId },
+        select: {
+          id: true,
+          corporateAccountId: true,
+          linkedIncomeRecordIds: true,
+          status: true,
+          accountTransactionId: true,
+        },
+      }),
+    ]);
+
+    return {
+      ok: true,
+      fx,
+      corporateAccounts,
+      existingEvent,
+      incomeCandidates: candidateRequests.map((request) => ({
+        cashRequestId: request.id,
+        incomeRecordId: request.incomeRecordId,
+        title: request.incomeRecord?.title ?? "",
+        yearMonth: request.incomeRecord?.yearMonth ?? null,
+        student: request.incomeRecord?.student ?? null,
+        amountCny: request.requestedAmountCny?.toNumber() ?? null,
+        externalCashTransactionId: request.externalCashTransactionId,
+        cashConfirmedAt: request.cashConfirmedAt,
+      })),
+    };
+  }
+
+  async applyExternalFxInbound(
+    body: CashFxInboundCallbackBody,
+    accessToken: string,
+  ) {
+    this.assertExternalCashCallbackEnabled();
+    await this.verifyExternalCashAccessToken(accessToken);
+    const cnyTransactionId = this.normalizeRequiredUuid(
+      body.cash_cny_transaction_id,
+      "cash_cny_transaction_id",
+    );
+    const corporateAccountId = this.normalizeRequiredUuid(
+      body.corporate_account_id,
+      "corporate_account_id",
+    );
+    const linkedIncomeRecordIds = this.normalizeRequiredUuidArray(
+      body.linked_income_record_ids,
+      "linked_income_record_ids",
+    );
+    const fx = await this.cashGateway.getCnyToJpyFx(cnyTransactionId);
+
+    const linkedRequests = await this.prisma.cashRequest.findMany({
+      where: {
+        direction: CashRequestDirection.income,
+        status: CashRequestStatus.cash_confirmed,
+        requestedCurrency: CurrencyCode.CNY,
+        cashAccountId: fx.cnyAccountId,
+        externalCashTransactionId: { not: null },
+        incomeRecordId: { in: linkedIncomeRecordIds },
+        incomeRecord: {
+          recordStatus: IncomeRecordStatus.cash_confirmed,
+          cashStatus: {
+            in: [
+              CashRequestStatus.cash_confirmed,
+              CashRequestStatus.account_transaction_created,
+            ],
+          },
+        },
+      },
+      orderBy: [{ cashConfirmedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        incomeRecordId: true,
+        requestedAmountCny: true,
+        externalCashTransactionId: true,
+      },
+    });
+    const requestByIncome = new Map<string, (typeof linkedRequests)[number]>();
+    for (const request of linkedRequests) {
+      if (request.incomeRecordId && !requestByIncome.has(request.incomeRecordId)) {
+        requestByIncome.set(request.incomeRecordId, request);
+      }
+    }
+    if (requestByIncome.size !== linkedIncomeRecordIds.length) {
+      throw new BadRequestException(
+        "Every linked income must have one confirmed CNY Cash transaction in the FX source account.",
+      );
+    }
+
+    const linkedAmountCny = this.moneyService.confirmAmount({
+      amount: [...requestByIncome.values()].reduce(
+        (sum, request) => sum + (request.requestedAmountCny?.toNumber() ?? 0),
+        0,
+      ),
+      currency: CurrencyCode.CNY,
+    });
+    const fxAmountCny = this.moneyService.confirmAmount({
+      amount: fx.cnyAmount,
+      currency: CurrencyCode.CNY,
+    });
+    if (linkedAmountCny !== fxAmountCny) {
+      throw new BadRequestException(
+        "Linked confirmed income total must exactly match the Cash FX CNY amount.",
+      );
+    }
+
+    const result = await this.cashInboundService.createEvent(
+      {
+        externalCashEventId: fx.cnyTransactionId,
+        eventType: "cash_cny_to_jpy_fx",
+        corporateAccountId,
+        eventDate: fx.transactedAt,
+        sourceCurrency: CurrencyCode.CNY,
+        sourceAmountCny: fxAmountCny,
+        targetCurrency: CurrencyCode.JPY,
+        targetAmountJpy: fx.jpyAmount,
+        exchangeRate: Number((fxAmountCny / fx.jpyAmount).toFixed(8)),
+        linkedIncomeRecordIds,
+        memo: [
+          `Cash FX ${fx.cnyTransactionId} -> ${fx.jpyTransactionId}`,
+          fx.description,
+          fx.note,
+        ].filter(Boolean).join(" / "),
+      },
+      null,
+    );
+
+    return { ok: true, ...result, fx };
+  }
+
+  private assertExternalCashCallbackEnabled() {
+    if (this.cashGateway.mode !== "supabase") {
+      throw new ServiceUnavailableException("Cash callback is not enabled.");
+    }
+  }
+
+  private async verifyExternalCashAccessToken(accessToken: string) {
+    try {
+      await this.cashGateway.verifyCallbackAccessToken(accessToken);
+    } catch {
+      throw new UnauthorizedException("Cash callback authentication failed.");
+    }
   }
 
   private async submitCreatedRequest<
@@ -1307,6 +1504,15 @@ export class CashService {
       throw new BadRequestException(`${fieldName} must be a UUID.`);
     }
     return normalized;
+  }
+
+  private normalizeRequiredUuidArray(value: unknown, fieldName: string) {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new BadRequestException(`${fieldName} must be a non-empty UUID array.`);
+    }
+    return [...new Set(
+      value.map((item) => this.normalizeRequiredUuid(item, fieldName)),
+    )];
   }
 
   private isUuid(value: string) {

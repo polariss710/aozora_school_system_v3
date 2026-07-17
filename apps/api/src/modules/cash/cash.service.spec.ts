@@ -3,9 +3,11 @@ import {
   CashRequestStatus,
   CurrencyCode,
   IncomeRecordStatus,
+  Prisma,
 } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { AuditService } from "../audit/audit.service";
+import { CashInboundService } from "../cash-inbound/cash-inbound.service";
 import { PrismaService } from "../database/prisma.service";
 import { MoneyService } from "../money/money.service";
 import { CashGateway } from "./cash.gateway";
@@ -110,6 +112,7 @@ describe("CashService external callback", () => {
         userId: externalApproved.userId,
       }),
       getExternalRequest: vi.fn().mockResolvedValue(externalApproved),
+      getCnyToJpyFx: vi.fn(),
       listEligibleAccounts: vi.fn(),
       createPendingRequest: vi.fn(),
     } satisfies CashGateway;
@@ -118,6 +121,7 @@ describe("CashService external callback", () => {
       new MoneyService(),
       new AuditService(prisma as unknown as PrismaService),
       gateway,
+      { createEvent: vi.fn() } as unknown as CashInboundService,
     );
 
     const result = await service.applyExternalRequestResult(
@@ -163,6 +167,7 @@ describe("CashService external callback", () => {
         userId: externalApproved.userId,
       }),
       getExternalRequest: vi.fn().mockResolvedValue(externalApproved),
+      getCnyToJpyFx: vi.fn(),
       listEligibleAccounts: vi.fn(),
       createPendingRequest: vi.fn(),
     } satisfies CashGateway;
@@ -171,6 +176,7 @@ describe("CashService external callback", () => {
       new MoneyService(),
       { recordEvent: vi.fn() } as unknown as AuditService,
       gateway,
+      { createEvent: vi.fn() } as unknown as CashInboundService,
     );
 
     const result = await service.applyExternalRequestResult(
@@ -180,5 +186,124 @@ describe("CashService external callback", () => {
 
     expect(result).toMatchObject({ ok: true, idempotent: true });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("creates a verified School inbound event from an exact CNY to JPY FX allocation", async () => {
+    const fx = {
+      cnyTransactionId: "77777777-7777-4777-8777-777777777777",
+      jpyTransactionId: "88888888-8888-4888-8888-888888888888",
+      userId: "11111111-1111-4111-8111-111111111111",
+      cnyAccountId: "22222222-2222-4222-8222-222222222222",
+      jpyAccountId: "99999999-9999-4999-8999-999999999999",
+      transactedAt: "2026-07-18",
+      cnyAmount: 500,
+      jpyAmount: 10000,
+      description: "人民币购汇转日元",
+      note: "School 学费归集",
+    };
+    const prisma = {
+      cashRequest: {
+        findMany: vi.fn().mockResolvedValue([{
+          incomeRecordId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          requestedAmountCny: new Prisma.Decimal(500),
+          externalCashTransactionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        }]),
+      },
+    };
+    const gateway = {
+      mode: "supabase",
+      verifyCallbackAccessToken: vi.fn().mockResolvedValue({ userId: fx.userId }),
+      getCnyToJpyFx: vi.fn().mockResolvedValue(fx),
+      getExternalRequest: vi.fn(),
+      listEligibleAccounts: vi.fn(),
+      createPendingRequest: vi.fn(),
+    } satisfies CashGateway;
+    const cashInboundService = {
+      createEvent: vi.fn().mockResolvedValue({
+        event: { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" },
+        idempotent: false,
+      }),
+    };
+    const service = new CashService(
+      prisma as unknown as PrismaService,
+      new MoneyService(),
+      { recordEvent: vi.fn() } as unknown as AuditService,
+      gateway,
+      cashInboundService as unknown as CashInboundService,
+    );
+
+    const result = await service.applyExternalFxInbound(
+      {
+        cash_cny_transaction_id: fx.cnyTransactionId,
+        corporate_account_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        linked_income_record_ids: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+      },
+      "cash-user-token",
+    );
+
+    expect(result).toMatchObject({ ok: true, idempotent: false });
+    expect(cashInboundService.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalCashEventId: fx.cnyTransactionId,
+        eventType: "cash_cny_to_jpy_fx",
+        corporateAccountId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        sourceAmountCny: 500,
+        targetAmountJpy: 10000,
+        linkedIncomeRecordIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+      }),
+      null,
+    );
+  });
+
+  it("rejects an FX inbound allocation when confirmed income does not exactly total the CNY FX amount", async () => {
+    const fx = {
+      cnyTransactionId: "77777777-7777-4777-8777-777777777777",
+      jpyTransactionId: "88888888-8888-4888-8888-888888888888",
+      userId: "11111111-1111-4111-8111-111111111111",
+      cnyAccountId: "22222222-2222-4222-8222-222222222222",
+      jpyAccountId: "99999999-9999-4999-8999-999999999999",
+      transactedAt: "2026-07-18",
+      cnyAmount: 500,
+      jpyAmount: 10000,
+      description: "人民币购汇转日元",
+      note: "",
+    };
+    const prisma = {
+      cashRequest: {
+        findMany: vi.fn().mockResolvedValue([{
+          incomeRecordId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          requestedAmountCny: new Prisma.Decimal(499),
+          externalCashTransactionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        }]),
+      },
+    };
+    const gateway = {
+      mode: "supabase",
+      verifyCallbackAccessToken: vi.fn().mockResolvedValue({ userId: fx.userId }),
+      getCnyToJpyFx: vi.fn().mockResolvedValue(fx),
+      getExternalRequest: vi.fn(),
+      listEligibleAccounts: vi.fn(),
+      createPendingRequest: vi.fn(),
+    } satisfies CashGateway;
+    const cashInboundService = { createEvent: vi.fn() };
+    const service = new CashService(
+      prisma as unknown as PrismaService,
+      new MoneyService(),
+      { recordEvent: vi.fn() } as unknown as AuditService,
+      gateway,
+      cashInboundService as unknown as CashInboundService,
+    );
+
+    await expect(service.applyExternalFxInbound(
+      {
+        cash_cny_transaction_id: fx.cnyTransactionId,
+        corporate_account_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        linked_income_record_ids: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+      },
+      "cash-user-token",
+    )).rejects.toThrow(
+      "Linked confirmed income total must exactly match the Cash FX CNY amount.",
+    );
+    expect(cashInboundService.createEvent).not.toHaveBeenCalled();
   });
 });

@@ -118,4 +118,52 @@ describe("SupabaseCashGateway", () => {
       message: "Cash request failed before a verified response was received.",
     });
   });
+
+  it("reads and verifies a linked CNY to JPY FX transaction pair", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{
+          id: "77777777-7777-4777-8777-777777777777",
+          user_id: "11111111-1111-4111-8111-111111111111",
+          transaction_type: "fx_out",
+          account_id: "22222222-2222-4222-8222-222222222222",
+          currency: "CNY",
+          transacted_at: "2026-07-18",
+          amount: "500.00",
+          description: "人民币购汇转日元",
+          note: "School 学费归集",
+          linked_jpy_transaction_id: "88888888-8888-4888-8888-888888888888",
+        }]), { status: 200, headers: { "content-type": "application/json" } }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{
+          id: "88888888-8888-4888-8888-888888888888",
+          user_id: "11111111-1111-4111-8111-111111111111",
+          transaction_type: "fx_in",
+          account_id: "99999999-9999-4999-8999-999999999999",
+          currency: "JPY",
+          transacted_at: "2026-07-18",
+          amount: "10000.00",
+          description: "人民币购汇转日元",
+          note: "School 学费归集",
+          linked_cny_transaction_id: "77777777-7777-4777-8777-777777777777",
+        }]), { status: 200, headers: { "content-type": "application/json" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      buildGateway().getCnyToJpyFx("77777777-7777-4777-8777-777777777777"),
+    ).resolves.toEqual({
+      cnyTransactionId: "77777777-7777-4777-8777-777777777777",
+      jpyTransactionId: "88888888-8888-4888-8888-888888888888",
+      userId: "11111111-1111-4111-8111-111111111111",
+      cnyAccountId: "22222222-2222-4222-8222-222222222222",
+      jpyAccountId: "99999999-9999-4999-8999-999999999999",
+      transactedAt: "2026-07-18",
+      cnyAmount: 500,
+      jpyAmount: 10000,
+      description: "人民币购汇转日元",
+      note: "School 学费归集",
+    });
+  });
 });

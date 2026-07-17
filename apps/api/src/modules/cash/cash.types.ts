@@ -39,3 +39,13 @@ export type CashRequestResultCallbackBody = {
   cash_request_id?: unknown;
   action?: unknown;
 };
+
+export type CashFxInboundOptionsQuery = {
+  cash_cny_transaction_id?: unknown;
+};
+
+export type CashFxInboundCallbackBody = {
+  cash_cny_transaction_id?: unknown;
+  corporate_account_id?: unknown;
+  linked_income_record_ids?: unknown;
+};

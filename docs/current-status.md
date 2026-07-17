@@ -1,6 +1,6 @@
 # Aozora School System V3 当前状态
 
-更新日期：2026-07-17
+更新日期：2026-07-18
 
 ## 当前开发状态
 
@@ -30,10 +30,13 @@
 - 独立 Cash dev 静态站点 `https://aozora-cash-v3-dev.onrender.com` 已创建，来源为 Cash 仓库隔离分支 `codex/cash-dev-environment`（commit `5d2e3ed`），指向 `v3-dev` Supabase 和 V3 `/api/cash/callbacks/request-result`；现有 Cash production 前端和本地未提交修改均未改动。
 - Cash dev 前端人工 approve / reject 已完成：JPY 1234 收入在 Cash 生成流水并回写 School `cash_confirmed`，JPY 2345 支出在 Cash 拒绝且回写 School `cash_rejected`。人工测试同时发现成功回调缺少 `ok: true` 会被 Cash 前端误报为未知错误，现已补齐明确成功标记和回归测试。
 - Cash dev 前端已增加已处理 School 请求的“重新回写 School”恢复操作（Cash commit `ad5bfb2`）及 60 秒 callback 超时保护（Cash commit `71bfe37`，版本 `20260717-cash-dev-v3-3`）。该操作只重放 callback，不执行 Cash approve / reject RPC；JPY 1234 approved 和 JPY 2345 rejected 均已人工重复回写并收到 V3 幂等成功，未改变 Cash 流水结果。
+- 2026-07-18 用户已完成上述恢复操作人工验收：approved / rejected 均可重复回写，无未知错误；JPY 1234 保持唯一 Cash 流水，JPY 2345 保持无流水；School 状态与两端记录数量均正确。School → Cash 请求及结果恢复链路第一阶段验收完成。
+- Cash → School 第二阶段已开始第一批后端实装：新增 Cash 登录 token 保护的 CNY→JPY FX 入站 options / callback，School 服务端使用 service role 重新读取并校验双向关联的 Cash `fx_out` / `fx_in` 交易对，不信任浏览器金额、日期、币种或 JPY transaction ID；只允许选择同一 CNY Cash 账户的已确认 School 收入，且所选收入 CNY 合计必须与购汇 CNY 金额完全一致。重复相同 payload 返回幂等成功，冲突 payload 拒绝覆盖。
 
 ### 尚未完成
 
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
+- Cash FX 入站前端尚未开放；开放前必须先在 Cash 侧保存 School 同步标记，并锁定已同步 FX 交易对的普通编辑 / 删除。当前阶段不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等。
 - `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
 
 ## V2 → V3 Prod 数据迁移状态

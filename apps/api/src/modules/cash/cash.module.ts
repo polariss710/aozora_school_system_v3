@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module";
 import { AuthModule } from "../auth/auth.module";
+import { CashInboundModule } from "../cash-inbound/cash-inbound.module";
 import { MoneyModule } from "../money/money.module";
 import { CashCallbackController } from "./cash-callback.controller";
 import { CashController } from "./cash.controller";
@@ -8,7 +9,7 @@ import { CASH_GATEWAY, createCashGatewayFromEnv } from "./cash.gateway";
 import { CashService } from "./cash.service";
 
 @Module({
-  imports: [AuthModule, AuditModule, MoneyModule],
+  imports: [AuthModule, AuditModule, CashInboundModule, MoneyModule],
   controllers: [CashController, CashCallbackController],
   providers: [
     {

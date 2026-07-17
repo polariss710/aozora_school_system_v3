@@ -114,6 +114,47 @@ School pending income / expense
 - `confirm` / `reject` 手动 dev API 只用于 mock 模式；`supabase` 模式只接受经验证的 Cash callback。
 - Cash 交易或 School 回写不做跨数据库伪事务回滚。任一端已成功的资金事实必须保留，另一端失败通过幂等重试和审计修复。
 
+### 6.1 CNY 购汇后的 School 法人账户入站
+
+Cash 的 CNY→JPY 购汇由一条 `home_cny_transactions.fx_out` 与一条双向
+关联的 `home_jpy_transactions.fx_in` 组成。Cash 前端向 School 申请入站前，
+先使用 Cash 登录 token 读取候选：
+
+```text
+GET /api/cash/callbacks/fx-inbound/options
+  ?cash_cny_transaction_id=<Cash CNY fx_out transaction UUID>
+Authorization: Bearer <Cash signed-in user access token>
+```
+
+正式回写：
+
+```text
+POST /api/cash/callbacks/fx-inbound
+Authorization: Bearer <Cash signed-in user access token>
+Content-Type: application/json
+
+{
+  "cash_cny_transaction_id": "<Cash CNY fx_out transaction UUID>",
+  "corporate_account_id": "<School active JPY corporate account UUID>",
+  "linked_income_record_ids": ["<School income UUID>"]
+}
+```
+
+School 服务端必须使用 Cash service role 重新读取两条 FX 交易并校验同一
+Cash user、`fx_out` / `fx_in` 类型、CNY / JPY 币种、双向 transaction ID、
+交易日期和正金额。浏览器不提交也不能决定 FX 金额、JPY transaction ID
+或交易日期。
+
+本阶段只支持完整分配：所选 School income 必须已经通过同一 CNY Cash
+账户确认，且 `requested_amount_cny` 合计必须与 CNY `fx_out.amount` 完全
+一致；不支持部分购汇或一条收入分批归集。成功后 School 原子生成一条法人
+账户入金流水，并把关联 income 推进到 `account_transaction_created`。
+
+同一 CNY FX transaction ID 是入站幂等身份。重复相同 payload 返回幂等
+成功；法人账户、金额、日期、关联收入或 FX pair 不同必须拒绝冲突，不能
+覆盖旧事实。Cash 前端开放该动作前，Cash 侧还必须保存 School 同步标记并
+阻止已同步 FX pair 的普通编辑 / 删除；该生命周期保护不与本批接口混为已完成。
+
 ## 7. 当前与未来阶段
 
 ### 本轮第一阶段
