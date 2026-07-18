@@ -29,6 +29,12 @@ select has_function_privilege(
   'EXECUTE'
 ) as authenticated_can_mark_teacher_wage_batch_synced;
 
+select has_function_privilege(
+  'authenticated',
+  'public.home_reject_teacher_wage_request_group(uuid[],text)',
+  'EXECUTE'
+) as authenticated_can_reject_teacher_wage_group;
+
 select not has_table_privilege(
   'authenticated',
   'public.home_external_transaction_batches',
@@ -46,3 +52,9 @@ select not has_function_privilege(
   'public.home_approve_teacher_wage_request_batch(uuid[])',
   'EXECUTE'
 ) as anon_cannot_approve_teacher_wage_batch;
+
+select not has_function_privilege(
+  'anon',
+  'public.home_reject_teacher_wage_request_group(uuid[],text)',
+  'EXECUTE'
+) as anon_cannot_reject_teacher_wage_group;

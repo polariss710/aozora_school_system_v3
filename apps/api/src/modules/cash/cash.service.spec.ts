@@ -83,6 +83,53 @@ const externalApproved = {
 };
 
 describe("CashService external callback", () => {
+  it("lists School payment batches with their request and expense audit mappings", async () => {
+    const paymentBatch = {
+      id: "12121212-1212-4212-8212-121212121212",
+      teacherNameSnapshot: "审计测试老师",
+      yearMonth: "2026-08",
+      items: [
+        {
+          itemOrder: 1,
+          cashRequest: { id: "13131313-1313-4313-8313-131313131313" },
+          expenseRecord: { id: "14141414-1414-4414-8414-141414141414" },
+        },
+      ],
+    };
+    const prisma = {
+      cashPaymentBatch: {
+        findMany: vi.fn().mockResolvedValue([paymentBatch]),
+        count: vi.fn().mockResolvedValue(1),
+      },
+    };
+    const gateway = {
+      mode: "supabase",
+      verifyCallbackAccessToken: vi.fn(),
+      getTeacherWageBatch: vi.fn(),
+      getExternalRequest: vi.fn(),
+      getCnyToJpyFx: vi.fn(),
+      listEligibleAccounts: vi.fn(),
+      createPendingRequest: vi.fn(),
+    } satisfies CashGateway;
+    const service = new CashService(
+      prisma as unknown as PrismaService,
+      new MoneyService(),
+      new AuditService(prisma as unknown as PrismaService),
+      gateway,
+      { createEvent: vi.fn() } as unknown as CashInboundService,
+    );
+
+    const result = await service.listCashPaymentBatches();
+
+    expect(result).toEqual({ items: [paymentBatch], total: 1, limit: 100 });
+    expect(prisma.cashPaymentBatch.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 100,
+        include: expect.objectContaining({ items: expect.any(Object) }),
+      }),
+    );
+  });
+
   it("writes a verified approved Cash transaction back to the canonical income", async () => {
     const updatedRequest = {
       ...localRequest,

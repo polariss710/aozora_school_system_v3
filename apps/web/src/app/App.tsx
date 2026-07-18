@@ -66,6 +66,7 @@ import {
   listCashInboundEvents,
   listCashEligibleAccounts,
   listCashRequests,
+  listCashPaymentBatches,
   listExpenseRecords,
   listExternalWorkLessons,
   listExternalWorkSettlements,
@@ -125,6 +126,7 @@ import type {
   CashInboundEventRecord,
   CashEligibleAccountRecord,
   CashRequestRecord,
+  CashPaymentBatchRecord,
   CreateReimbursementInput,
   CreatePlannedLessonInput,
   ExpenseRecord,
@@ -223,6 +225,7 @@ interface DataRow {
       | "income"
       | "expense"
       | "cashRequest"
+      | "cashPaymentBatch"
       | "cashInbound"
       | "reimbursement"
       | "tuitionBill"
@@ -5999,9 +6002,11 @@ function buildCashRequestsPage(basePage: PageConfig, cashRequestApi: FinanceList
     return basePage;
   }
 
-  const requestedCount = cashRequestApi.rows.filter((row) => row.status === "Cash 待确认").length;
-  const confirmedCount = cashRequestApi.rows.filter((row) => row.status === "Cash 已确认").length;
-  const blockedCount = cashRequestApi.rows.filter((row) =>
+  const requestRows = cashRequestApi.rows.filter((row) => row.apiRef?.resource === "cashRequest");
+  const batchCount = cashRequestApi.rows.filter((row) => row.apiRef?.resource === "cashPaymentBatch").length;
+  const requestedCount = requestRows.filter((row) => row.status === "Cash 待确认").length;
+  const confirmedCount = requestRows.filter((row) => row.status === "Cash 已确认").length;
+  const blockedCount = requestRows.filter((row) =>
     ["Cash 已拒绝", "需要复核", "Cash 已撤回"].includes(row.status),
   ).length;
 
@@ -6012,7 +6017,7 @@ function buildCashRequestsPage(basePage: PageConfig, cashRequestApi: FinanceList
     batchAction: undefined,
     selectable: false,
     metrics: [
-      { label: "Cash 请求", value: `${cashRequestApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: Send },
+      { label: "Cash 请求", value: `${cashRequestApi.total} 条`, sub: `另有 ${batchCount} 个聚合批次`, tone: "sky", icon: Send },
       { label: "待确认", value: `${requestedCount} 条`, sub: "已提交 Cash", tone: "amber", icon: Clock },
       { label: "已确认", value: `${confirmedCount} 条`, sub: "等待后续入账链路", tone: "emerald", icon: CheckCircle2 },
       { label: "需处理", value: `${blockedCount} 条`, sub: "拒绝 / 撤回 / 复核", tone: "rose", icon: ShieldCheck },
@@ -6185,6 +6190,68 @@ function mapCashRequestToRow(record: CashRequestRecord): DataRow {
           { label: "externalCashTransactionId", value: record.externalCashTransactionId ?? "-" },
           { label: "同步尝试", value: `${record.syncAttemptCount} 次` },
           { label: "最近同步错误", value: record.lastSyncError ?? "-" },
+        ],
+      },
+    ],
+  };
+}
+
+function mapCashPaymentBatchToRow(record: CashPaymentBatchRecord): DataRow {
+  const totalAmount = formatApiCurrencyAmount(
+    record.currency,
+    record.totalAmountJpy,
+    record.totalAmountCny,
+  );
+  const itemLines = record.items.map((item) => ({
+    label: `${item.itemOrder}. ${item.expenseRecord.businessEntity?.name ?? "未设置业务归属"}`,
+    value: `${item.expenseRecord.title} / ${formatApiCurrencyAmount(record.currency, item.amountJpy, item.amountCny)}`,
+  }));
+
+  return {
+    id: `cash-payment-batch-${record.id}`,
+    title: `${record.yearMonth} ${record.teacherNameSnapshot} 工资聚合付款`,
+    subtitle: `Cash 聚合批次 / ${record.items.length} 条 School 支出`,
+    status: "聚合已确认",
+    tone: "emerald",
+    apiRef: { resource: "cashPaymentBatch", id: record.id },
+    readOnlyActions: true,
+    cells: {
+      direction: "支出",
+      source: `${record.teacherNameSnapshot} / ${record.yearMonth}`,
+      requestedAmount: totalAmount,
+      cashAccount: record.cashAccountId,
+      createdAt: formatApiDate(record.approvedAt),
+    },
+    detail: [
+      {
+        title: "聚合付款",
+        lines: [
+          { label: "老师", value: record.teacherNameSnapshot },
+          { label: "业务月份", value: record.yearMonth },
+          { label: "合计金额", value: totalAmount },
+          { label: "明细数量", value: `${record.items.length} 条` },
+          { label: "Cash 账户 ID", value: record.cashAccountId },
+          { label: "付款日期", value: formatApiDate(record.cashTransactedAt) },
+          { label: "确认时间", value: formatApiDate(record.approvedAt) },
+          { label: "状态", value: "Cash 已确认 · 只读" },
+        ],
+      },
+      {
+        title: "批次明细",
+        lines: itemLines,
+      },
+      {
+        title: "API 追踪",
+        lines: [
+          { label: "School 批次 ID", value: record.id },
+          { label: "Cash 批次 ID", value: record.externalCashBatchId },
+          { label: "Cash transaction ID", value: record.externalCashTransactionId },
+          { label: "老师 ID", value: record.teacherId ?? "-" },
+          ...record.items.flatMap((item) => [
+            { label: `明细 ${item.itemOrder} / School request`, value: item.cashRequestId },
+            { label: `明细 ${item.itemOrder} / Cash request`, value: item.externalCashRequestId },
+            { label: `明细 ${item.itemOrder} / School expense`, value: item.expenseRecordId },
+          ]),
         ],
       },
     ],
@@ -9995,11 +10062,12 @@ export default function App() {
       listIncomeRecords(authSession.accessToken),
       listExpenseRecords(authSession.accessToken),
       listCashRequests(authSession.accessToken),
+      listCashPaymentBatches(authSession.accessToken),
       listCashInboundEvents(authSession.accessToken),
       listAccountTransactions(authSession.accessToken),
       listReimbursements(authSession.accessToken),
     ])
-      .then(([incomeRecords, expenseRecords, cashRequests, cashInboundEvents, accountTransactions, reimbursements]) => {
+      .then(([incomeRecords, expenseRecords, cashRequests, cashPaymentBatches, cashInboundEvents, accountTransactions, reimbursements]) => {
         if (!isMounted) {
           return;
         }
@@ -10017,7 +10085,10 @@ export default function App() {
           },
           cashRequests: {
             status: "ready",
-            rows: cashRequests.items.map(mapCashRequestToRow),
+            rows: [
+              ...cashPaymentBatches.items.map(mapCashPaymentBatchToRow),
+              ...cashRequests.items.map(mapCashRequestToRow),
+            ],
             total: cashRequests.total,
           },
           cashInbound: {

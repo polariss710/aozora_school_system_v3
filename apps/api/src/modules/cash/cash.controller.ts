@@ -40,6 +40,12 @@ export class CashController {
     return this.cashService.listEligibleAccounts();
   }
 
+  @Get("payment-batches")
+  @RequirePermissions("cash_requests.manage")
+  listCashPaymentBatches() {
+    return this.cashService.listCashPaymentBatches();
+  }
+
   @Get("requests/:id")
   @RequirePermissions("cash_requests.manage")
   getCashRequest(@Param("id") id: string) {

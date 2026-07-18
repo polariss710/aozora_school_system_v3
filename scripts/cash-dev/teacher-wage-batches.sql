@@ -371,6 +371,127 @@ exception
 end;
 $$;
 
+create or replace function public.home_reject_teacher_wage_request_group(
+  p_request_ids uuid[],
+  p_reason text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_request_ids uuid[];
+  v_request_count integer;
+  v_matching_count integer;
+  v_distinct_group_count integer;
+  v_reason text := coalesce(nullif(btrim(p_reason), ''), '老师工资分组拒绝');
+begin
+  if v_user_id is null then
+    return jsonb_build_object('ok', false, 'message', 'Cash 登录用户不存在。');
+  end if;
+
+  select array_agg(id order by id)
+  into v_request_ids
+  from (select distinct unnest(p_request_ids) as id) ids;
+  v_request_count := coalesce(array_length(v_request_ids, 1), 0);
+  if v_request_count < 2 then
+    return jsonb_build_object('ok', false, 'message', '老师工资分组拒绝至少需要两条请求。');
+  end if;
+
+  perform 1
+  from public.home_external_transaction_requests r
+  where r.id = any(v_request_ids)
+  order by r.id
+  for update;
+
+  select
+    count(*),
+    count(distinct (
+      currency,
+      account_id,
+      transacted_at,
+      payload_snapshot ->> 'teacher_id',
+      payload_snapshot ->> 'year_month'
+    ))
+  into v_matching_count, v_distinct_group_count
+  from public.home_external_transaction_requests
+  where id = any(v_request_ids)
+    and user_id = v_user_id
+    and status = 'rejected'
+    and rejected_reason = v_reason
+    and created_transaction_id is null
+    and external_source = 'aozora_school'
+    and external_reference_type = 'school_expense_records'
+    and request_type = 'expense_paid'
+    and transaction_type = 'expense'
+    and payload_snapshot ->> 'expense_category' = 'teacher_wage';
+
+  if v_matching_count = v_request_count and v_distinct_group_count = 1 then
+    return jsonb_build_object(
+      'ok', true,
+      'idempotent', true,
+      'rejected_count', v_request_count,
+      'request_ids', to_jsonb(v_request_ids),
+      'message', '老师工资分组请求已存在相同拒绝结果。'
+    );
+  end if;
+
+  select
+    count(*),
+    count(distinct (
+      currency,
+      account_id,
+      transacted_at,
+      payload_snapshot ->> 'teacher_id',
+      payload_snapshot ->> 'year_month'
+    ))
+  into v_matching_count, v_distinct_group_count
+  from public.home_external_transaction_requests
+  where id = any(v_request_ids)
+    and user_id = v_user_id
+    and status = 'pending'
+    and external_source = 'aozora_school'
+    and external_reference_type = 'school_expense_records'
+    and request_type = 'expense_paid'
+    and transaction_type = 'expense'
+    and payload_snapshot ->> 'expense_category' = 'teacher_wage'
+    and payload_snapshot ->> 'teacher_id' ~ '^[0-9a-fA-F-]{36}$'
+    and payload_snapshot ->> 'year_month' ~ '^[0-9]{4}-(0[1-9]|1[0-2])$';
+
+  if v_matching_count <> v_request_count then
+    return jsonb_build_object(
+      'ok', false,
+      'message', '请求组包含非待确认或非老师工资项目，未执行任何拒绝。'
+    );
+  end if;
+  if v_distinct_group_count <> 1 then
+    return jsonb_build_object(
+      'ok', false,
+      'message', '老师、月份、币种、账户或付款日期不一致，未执行任何拒绝。'
+    );
+  end if;
+
+  update public.home_external_transaction_requests
+  set
+    status = 'rejected',
+    approved_at = null,
+    rejected_at = now(),
+    rejected_reason = v_reason,
+    created_transaction_id = null,
+    updated_at = now()
+  where id = any(v_request_ids);
+
+  return jsonb_build_object(
+    'ok', true,
+    'idempotent', false,
+    'rejected_count', v_request_count,
+    'request_ids', to_jsonb(v_request_ids),
+    'message', '老师工资分组请求已原子拒绝，未生成 Cash 流水。'
+  );
+end;
+$$;
+
 create or replace function public.home_guard_teacher_wage_batch_transaction_mutation()
 returns trigger
 language plpgsql
@@ -417,6 +538,10 @@ grant execute on function public.home_approve_teacher_wage_request_batch(uuid[])
 revoke all on function public.home_mark_teacher_wage_batch_school_synced(uuid, uuid)
   from public, anon;
 grant execute on function public.home_mark_teacher_wage_batch_school_synced(uuid, uuid)
+  to authenticated, service_role;
+revoke all on function public.home_reject_teacher_wage_request_group(uuid[], text)
+  from public, anon;
+grant execute on function public.home_reject_teacher_wage_request_group(uuid[], text)
   to authenticated, service_role;
 revoke all on function public.home_guard_teacher_wage_batch_transaction_mutation()
   from public, anon, authenticated;

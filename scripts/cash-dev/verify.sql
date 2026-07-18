@@ -8,7 +8,7 @@ where n.nspname = 'public'
   and c.relkind in ('r', 'p')
   and c.relname like 'home\_%' escape '\';
 
-select count(*) = 47 as has_expected_function_count
+select count(*) = 48 as has_expected_function_count
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'

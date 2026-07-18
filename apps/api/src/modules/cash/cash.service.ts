@@ -185,6 +185,45 @@ export class CashService {
     return { items, total, limit };
   }
 
+  async listCashPaymentBatches() {
+    const [items, total] = await Promise.all([
+      this.prisma.cashPaymentBatch.findMany({
+        orderBy: [{ approvedAt: "desc" }],
+        take: 100,
+        include: {
+          items: {
+            orderBy: { itemOrder: "asc" },
+            include: {
+              cashRequest: {
+                select: {
+                  id: true,
+                  status: true,
+                  externalCashRequestId: true,
+                  externalCashTransactionId: true,
+                  cashConfirmedAt: true,
+                  syncAttemptCount: true,
+                  lastSyncError: true,
+                },
+              },
+              expenseRecord: {
+                select: {
+                  id: true,
+                  title: true,
+                  businessEntity: {
+                    select: { id: true, code: true, name: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.cashPaymentBatch.count(),
+    ]);
+
+    return { items, total, limit: 100 };
+  }
+
   async getCashRequest(id: string) {
     const cashRequest = await this.findCashRequest(id);
 

@@ -304,6 +304,50 @@ export interface CashRequestRecord {
   } | null;
 }
 
+export interface CashPaymentBatchRecord {
+  id: string;
+  externalCashBatchId: string;
+  externalCashTransactionId: string;
+  batchType: string;
+  currency: "JPY" | "CNY";
+  totalAmountJpy: ApiAmountValue;
+  totalAmountCny: ApiAmountValue;
+  cashAccountId: string;
+  cashTransactedAt: string;
+  teacherId: string | null;
+  teacherNameSnapshot: string;
+  yearMonth: string;
+  status: string;
+  approvedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  items: Array<{
+    id: string;
+    batchId: string;
+    cashRequestId: string;
+    expenseRecordId: string;
+    externalCashRequestId: string;
+    amountJpy: ApiAmountValue;
+    amountCny: ApiAmountValue;
+    itemOrder: number;
+    createdAt: string;
+    cashRequest: {
+      id: string;
+      status: string;
+      externalCashRequestId: string | null;
+      externalCashTransactionId: string | null;
+      cashConfirmedAt: string | null;
+      syncAttemptCount: number;
+      lastSyncError: string | null;
+    };
+    expenseRecord: {
+      id: string;
+      title: string;
+      businessEntity: RelatedBusinessEntityRecord | null;
+    };
+  }>;
+}
+
 export interface CashInboundEventRecord {
   id: string;
   externalCashEventId: string;
@@ -1549,6 +1593,12 @@ export function submitExpenseCashRequest(accessToken: string, expenseRecordId: s
 
 export function listCashRequests(accessToken: string) {
   return requestJson<ListResponse<CashRequestRecord>>("/cash/requests?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listCashPaymentBatches(accessToken: string) {
+  return requestJson<ListResponse<CashPaymentBatchRecord>>("/cash/payment-batches", {
     headers: authorizedHeaders(accessToken),
   });
 }
