@@ -97,6 +97,7 @@
 - 第二轮 JPY canonical income approve 与 expense reject 已通过：approved 只生成 1 条 Cash transaction 并回写 School confirmed，rejected 生成 0 条 transaction 并回写 School rejected。
 - approved / rejected callback 重放均幂等；相反 action 冲突均被拒绝；两端事件、引用、金额、账户和 transaction 身份对账一致。
 - 第二轮最终事实为 UI 验收而保留，不计入第一轮清理残留；对应身份记录在 `docs/staging-build-log.md`。
+- Cash staging `4b9dba7` 已在 Render 手动部署并显示 `Live`；线上环境标识与静态资源版本复核为 `家庭账本 STAGING / V3 验收环境 / 20260718-cash-staging-v3-2`。
 
 以上只是第一轮基础与跨系统提交验收，不替代下列完整矩阵。
 

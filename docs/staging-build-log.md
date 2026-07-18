@@ -116,7 +116,7 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 
 - 页面真实登录和 pending 列表读取通过，但发现 staging 分支仍显示 `家庭账本 DEV / V3 开发环境`。
 - Cash staging 分支 commit `4b9dba7` 已改为 `家庭账本 STAGING / V3 验收环境`，版本升为 `20260718-cash-staging-v3-2`；没有修改 Cash production `main` 工作树。
-- Render Cash staging 静态站关闭或未触发 Auto-Deploy；commit 已推送，仍需在 Render Dashboard 对该 staging 静态站执行一次 `Deploy latest commit` 后完成页面复核。
+- Render Cash staging 静态站未自动触发部署；已于 2026-07-18 手动执行 `Deploy latest commit`，`4b9dba7` 显示为 `Live`。线上 HTML 复核通过：标题为 `家庭账本 STAGING`、环境为 `V3 验收环境`、静态资源版本为 `20260718-cash-staging-v3-2`。
 
 ## 已知限制与不进入项
 
