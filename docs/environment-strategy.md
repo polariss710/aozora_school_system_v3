@@ -200,4 +200,4 @@ v3 的核心原则是：
 
 不能再让 prod 同时承担生产、测试、开发三种职责。
 
-未来 `v3-staging` 的创建顺序、环境变量、schema 安装、E2E 矩阵、对账和回滚标准，统一按 `docs/staging-readiness-checklist.md` 执行。该清单当前仅完成设计，staging project 尚未创建。
+`v3-staging` 已于 2026-07-18 创建并进入合成 E2E 阶段；其环境变量、schema 安装、E2E 矩阵、对账和回滚标准统一按 `docs/staging-readiness-checklist.md` 执行。完成标准通过前不得创建或写入 `v3-prod`。

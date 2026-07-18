@@ -5,10 +5,10 @@
 ## 1. 当前结论
 
 - `v3-staging` 基础设施已于 2026-07-18 创建：独立 Tokyo Supabase project、School API、School 静态站和 Cash 静态站均已上线。
-- schema、权限、staging Auth / seed、部署健康与 CORS 边界已通过；完整合成业务 E2E 矩阵和对账报告尚未执行，因此本文第 10 节完成标准仍未通过。
+- schema、权限、staging Auth / seed、部署健康与 CORS 边界已通过。2026-07-18 已完成第一轮 School API、School → Cash pending、Cash 工资聚合 / 原子拒绝 / FX guard 合成验收和清理；完整课程、结算、工资生成、Cash approve / callback 与 FX 入站矩阵仍未执行，因此本文第 10 节完成标准仍未通过。
 - 不得把 dev key、dev Auth user、dev 测试数据或 dev callback 身份复制到 staging。
 - `v3-staging` 继续采用同环境共置 School + Cash 的一个 Supabase project；School 业务权威仍在 NestJS domain service，Cash 仍通过 `home_*`、RLS 和受控 RPC 边界运行。
-- 只有 dev 主链路、异常恢复和迁移脚本均有可重复验收证据后，才开始创建 staging。
+- staging 创建前的 dev 主链路、异常恢复和迁移脚本冻结证据已记录；后续候选变化仍必须重新冻结和重跑本清单。
 
 ## 2. 创建前冻结点
 
@@ -85,6 +85,18 @@
 
 ## 7. 必过 E2E 矩阵
 
+### 2026-07-18 第一轮执行结果
+
+- School API 登录与权限读取通过；学生、老师新增 / 修改 / 归档 / 恢复通过，重复学生编码被拒绝。
+- 手动收入、手动支出完成新增 / 读取 / 作废，重复作废被拒绝；手工账户流水完成新增 / 反转，重复反转被拒绝。相关目标共生成 14 条审计事件。
+- School → Cash staging 真实 Supabase 模式通过：JPY 2,200 收入和 JPY 1,100 支出各生成一条 Cash pending request；两端事件 ID、业务引用、币种、金额和账户逐项一致。
+- 同一 School 记录重复提交、School 侧直接撤回和直接确认真实 Cash 请求均被拒绝。
+- Cash staging 回滚事务通过老师工资聚合成功 / 幂等 / 冲突身份 / transaction guard、工资整组原子拒绝成功 / 幂等 / 不匹配零写入、FX 同步成功 / 幂等 / 冲突身份 / 双侧 guard。
+- 本轮 `STAGING-E2E-*` School / Cash 合成记录已按完整引用链清理，残留行数为 0；临时 School 管理员测试密码已恢复。
+- 可重复脚本位于 `scripts/staging/` 与 `scripts/cash-staging/`。
+
+以上只是第一轮基础与跨系统提交验收，不替代下列完整矩阵。
+
 ### School 主链路
 
 - 预定课时 → 实际课时 → 学生月度结算；
@@ -136,3 +148,5 @@
 - 形成 prod 运行手册、切换窗口、冻结规则、回滚触发条件和负责人清单。
 
 完成标准通过前，不创建或写入 `v3-prod`。
+
+截至 2026-07-18，第一轮合成 smoke 与回滚型 Cash 验收已通过，但课程 / 月结 / 学费收据 / 工资生成 / 私塾打工、真实 Cash approve / reject callback、callback 恢复和完整对账报告仍待执行；本节仍为未通过。

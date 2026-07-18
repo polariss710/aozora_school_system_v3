@@ -60,13 +60,46 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 不复制 School 或 Cash production schema dump、ACL、Auth user 或业务数据。
 - 不创建或写入 `v3-prod`。
 
+## 2026-07-18 第一轮合成 E2E
+
+### Cash 数据库回滚验收
+
+- `scripts/cash-staging/verify-teacher-wage-batch.sql`：聚合成功、相同身份幂等、冲突 School batch 身份拒绝、聚合流水 update / delete guard 通过。
+- `scripts/cash-staging/verify-teacher-wage-group-rejection.sql`：整组拒绝成功、相同理由幂等、分组不匹配全部零写入通过。
+- `scripts/cash-staging/verify-fx-guard.sql`：FX 同步标记成功、相同身份幂等、冲突身份拒绝、CNY / JPY 双侧 update / delete guard 通过。
+- 三组脚本均在事务中回滚；复核 request、batch、JPY、CNY 和 FX sync 残留均为 0。
+
+### School API smoke
+
+- staging 管理员登录与 `/auth/me` 通过，权限集可读。
+- 学生、老师新增 / 修改 / 归档 / 恢复通过；重复学生编码返回冲突。
+- 手动收入和手动支出新增 / 读取 / 作废通过；重复作废被拒绝。
+- 手工账户入金新增 / 反转通过；重复反转被拒绝。
+- 数据库复核最终状态为 student / teacher `active`、income / expense `voided`、account transaction `reversed`，相关目标共 14 条审计事件。
+
+### School → Cash staging
+
+- integration mode：`supabase`。
+- 合成收入 JPY 2,200：School request `e4a4cb93-8496-4752-9b96-72d476c555ff`，Cash request `476a33a3-446c-4424-b43a-39054b72f921`。
+- 合成支出 JPY 1,100：School request `42162605-a794-4202-bcfc-6eb9cbf3b285`，Cash request `6d9aeca6-8dd0-48ff-8ab5-ec724d26edb4`。
+- 两端 request 均为 School `cash_requested` / Cash `pending`；事件 ID、业务引用、币种、金额和账户全部一致。
+- 同一 School 记录重复提交、School 侧直接撤回、School 侧直接确认均被 API 拒绝，外部 Cash 结果所有权边界有效。
+
+### 清理与回归
+
+- 本轮所有 `STAGING-E2E-*` School、Cash、账户流水和相关审计记录已按引用链删除；后置盘点残留为 0。
+- 临时 School staging 管理员密码 hash 已恢复为验收前值；临时密码未写入仓库或文档。
+- `scripts/staging/cleanup-e2e.sql` 已在零残留状态再次执行，返回 `residual_rows = 0`。
+- 本轮 staging 验收脚本校验和记录在 `docs/staging-e2e-20260718.sha256`。
+- API tests：10 files / 45 tests passed；API build 和 Web build 通过，Web 仅保留已知大 chunk warning。
+
 ## 已知限制与不进入项
 
 - Cash pending request 没有 cancel 合同；真实外部请求不支持撤回。
 - FX 入站不支持部分购汇分摊，只支持 CNY 精确合计匹配。
 - 生产数据 mapping、迁移程序、Cash ledger 迁移和 prod 切换不进入本轮空 staging 建设。
 - 运营告警、prod 切换窗口、负责人清单在 staging E2E 完成后形成。
-- 当前完成的是 staging 基础设施、schema、权限、seed、部署和健康检查；完整合成业务 E2E 矩阵及对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
+- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查和第一轮基础 / pending / 回滚型合成 E2E；完整课程、结算、工资生成、真实 Cash approve / callback / 恢复与 FX 入站矩阵及完整对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
 
 ## 环境防串线
 
