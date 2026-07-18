@@ -1,4 +1,7 @@
-const defaultApiBaseUrl = "https://aozora-school-system-v3-api-dev.onrender.com/api";
+// Fail closed to the current origin when a deployment forgets VITE_API_BASE_URL.
+// Environment-specific builds must opt in to their own API URL instead of
+// silently falling back to the dev service.
+const defaultApiBaseUrl = "/api";
 
 export type ApiHealthStatus = "checking" | "online" | "offline";
 export type ApiDatabaseStatus = "checking" | "online" | "offline" | "unknown";
