@@ -94,6 +94,9 @@
 - Cash staging 回滚事务通过老师工资聚合成功 / 幂等 / 冲突身份 / transaction guard、工资整组原子拒绝成功 / 幂等 / 不匹配零写入、FX 同步成功 / 幂等 / 冲突身份 / 双侧 guard。
 - 本轮 `STAGING-E2E-*` School / Cash 合成记录已按完整引用链清理，残留行数为 0；临时 School 管理员测试密码已恢复。
 - 可重复脚本位于 `scripts/staging/` 与 `scripts/cash-staging/`。
+- 第二轮 JPY canonical income approve 与 expense reject 已通过：approved 只生成 1 条 Cash transaction 并回写 School confirmed，rejected 生成 0 条 transaction 并回写 School rejected。
+- approved / rejected callback 重放均幂等；相反 action 冲突均被拒绝；两端事件、引用、金额、账户和 transaction 身份对账一致。
+- 第二轮最终事实为 UI 验收而保留，不计入第一轮清理残留；对应身份记录在 `docs/staging-build-log.md`。
 
 以上只是第一轮基础与跨系统提交验收，不替代下列完整矩阵。
 
@@ -149,4 +152,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-18，第一轮合成 smoke 与回滚型 Cash 验收已通过，但课程 / 月结 / 学费收据 / 工资生成 / 私塾打工、真实 Cash approve / reject callback、callback 恢复和完整对账报告仍待执行；本节仍为未通过。
+截至 2026-07-18，基础 smoke、Cash 回滚型验收和 JPY canonical approve / reject / callback / 幂等恢复已通过，但课程 / 月结 / 学费收据 / 工资生成 / 私塾打工、CNY canonical approve、老师工资真实聚合 callback、FX 入站和完整对账报告仍待执行；本节仍为未通过。

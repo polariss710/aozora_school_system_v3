@@ -45,7 +45,7 @@
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging 已安装环境级结构并通过回滚型 guard 验收，真实 FX 入站 E2E 仍待执行，prod 尚未开始。
 - 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 已安装对应结构并通过聚合 / 原子拒绝回滚矩阵，真实 Cash UI / callback E2E 仍待执行，prod 尚未开始。
-- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。2026-07-18 第一轮合成验收已通过 School API 主链路、School → Cash JPY income / expense pending、重复提交与 School 侧越权操作拒绝，以及 Cash 工资聚合、原子整组拒绝和 FX guard 回滚矩阵；两端逐字段对账一致，合成记录清理后残留为 0。完整课程 / 结算 / 收据 / 工资生成、真实 Cash approve / reject callback、失败恢复和运营告警仍未完成。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
+- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。第一轮合成验收已通过 School API 主链路、School → Cash pending、重复提交与 School 侧越权操作拒绝，以及 Cash 工资聚合、原子整组拒绝和 FX guard 回滚矩阵；第一轮记录清理后残留为 0。第二轮已通过 JPY income approve / expense reject、School callback、相同 callback 幂等重放、相反 action 冲突拒绝和逐字段对账：approved 只有 1 条 Cash transaction，rejected 为 0 条。完整课程 / 结算 / 收据 / 工资生成、CNY canonical、老师工资真实聚合 callback、FX 入站和运营告警仍未完成。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
 
 ## V2 → V3 Prod 数据迁移状态
 
@@ -76,4 +76,4 @@
 - `docs/staging-readiness-checklist.md` 已确定 staging 的冻结点、schema 安装顺序、Render 配置、数据范围、E2E 矩阵、对账、失败恢复和完成标准。
 - `aozora-school-v3-staging` 已在 Tokyo 创建；School 19 个 migrations 和 Cash 10 表 / 48 函数 / 10 policies / 4 guards 已安装并验证，4 个合成 Cash 账户已 seed，未导入 production 数据。
 - School staging API、School staging 静态站与 Cash staging 静态站均已 live；API 和数据库 health 为 ok，CORS 只允许两个 staging 前端，School bundle 不再包含 dev 回退 URL。
-- 第一轮 API / pending / Cash 回滚型合成 E2E、跨系统请求身份、逐字段对账和清理证据已记录于 `docs/staging-build-log.md`；剩余完整矩阵、approve / callback 恢复与全量对账通过前 staging 不算完成，也不得进入 `v3-prod` 建设。
+- 第一轮 API / pending / Cash 回滚型 E2E 与第二轮 JPY approve / reject / callback / 幂等恢复证据已记录于 `docs/staging-build-log.md`；剩余完整矩阵与全量对账通过前 staging 不算完成，也不得进入 `v3-prod` 建设。
