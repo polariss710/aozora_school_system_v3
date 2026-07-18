@@ -4,8 +4,9 @@
 
 ## 1. 当前结论
 
-- 本文是未来 `v3-staging` 的执行清单，不代表 staging 已创建。
-- 当前只存在 `v3-dev`；本阶段不得把 dev key、dev Auth user、dev 测试数据或 dev callback 身份复制到 staging。
+- `v3-staging` 基础设施已于 2026-07-18 创建：独立 Tokyo Supabase project、School API、School 静态站和 Cash 静态站均已上线。
+- schema、权限、staging Auth / seed、部署健康与 CORS 边界已通过；完整合成业务 E2E 矩阵和对账报告尚未执行，因此本文第 10 节完成标准仍未通过。
+- 不得把 dev key、dev Auth user、dev 测试数据或 dev callback 身份复制到 staging。
 - `v3-staging` 继续采用同环境共置 School + Cash 的一个 Supabase project；School 业务权威仍在 NestJS domain service，Cash 仍通过 `home_*`、RLS 和受控 RPC 边界运行。
 - 只有 dev 主链路、异常恢复和迁移脚本均有可重复验收证据后，才开始创建 staging。
 
@@ -113,6 +114,7 @@
 - 重放 callback、页面刷新和服务重启不得新增 transaction 或 batch。
 - `anon` 不能调用写 RPC；authenticated 不能直接写 batch / sync marker 表；School 浏览器拿不到 service role。
 - staging 前端不能访问 dev/prod project，dev/prod 前端也不能访问 staging project。
+- prod 前必须为 Supabase pooler 配置受信 CA / `verify-full`；staging 当前连接级 `sslmode=no-verify` 不得原样提升到 prod。
 
 ## 9. 失败与回滚
 

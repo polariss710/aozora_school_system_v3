@@ -11,7 +11,7 @@
 - V3 dev schema migration `20260716090000_add_cash_system_integration` 已执行成功。当前未配置真实 Cash dev 凭据时默认使用 dev-only mock；不将 mock 请求视为已完成外部 Cash 联动。
 - V3 环境拓扑已确定为每个环境共置 School + Cash：当前 `v3-dev`，未来 `v3-staging`、`v3-prod`，峰值 Supabase project 数为 5，不另建三套 Cash project。
 - 2026-07-17 已只向 `v3-dev` 安装 Cash dev 基础结构；2026-07-18 增量加入 FX School 同步锁、老师工资聚合付款和工资整组原子拒绝。当前合计 10 张 `home_*` 表、48 个函数、10 个 RLS policy，并在 CNY / JPY 流水表安装 FX、工资聚合两组同步后不可变 trigger；没有复制生产数据、`shop_*` 对象或生产 ACL，现行 School / Cash production project 均未修改。
-- staging / prod 数据库和正式迁移程序尚未建立或执行。
+- `v3-staging` Tokyo Supabase project 已建立并完成空库 schema 安装、staging 专用 Auth / seed、权限负向检查和三项 Render 部署；未导入生产数据。`v3-prod` 和正式生产数据迁移程序仍未建立或执行。
 
 ## School ↔ Cash 联动状态
 
@@ -45,7 +45,7 @@
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging / prod 复制前还需分别执行环境级迁移与 E2E。
 - 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收。staging / prod 仍需分别应用 School migration、Cash 增量 SQL、环境凭据与真实 E2E。
-- `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
+- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置；完整合成业务 E2E、对账、失败恢复演练和运营告警尚未完成。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
 
 ## V2 → V3 Prod 数据迁移状态
 
@@ -73,5 +73,7 @@
 
 ## Staging 准备状态
 
-- `docs/staging-readiness-checklist.md` 已确定 future staging 的冻结点、project 创建、schema 安装顺序、Render 配置、数据范围、E2E 矩阵、对账、失败恢复和完成标准。
-- 当前没有创建 `v3-staging`，没有生成 staging 凭据，也没有向 staging / prod 执行 SQL、RPC、数据复制或部署。
+- `docs/staging-readiness-checklist.md` 已确定 staging 的冻结点、schema 安装顺序、Render 配置、数据范围、E2E 矩阵、对账、失败恢复和完成标准。
+- `aozora-school-v3-staging` 已在 Tokyo 创建；School 19 个 migrations 和 Cash 10 表 / 48 函数 / 10 policies / 4 guards 已安装并验证，4 个合成 Cash 账户已 seed，未导入 production 数据。
+- School staging API、School staging 静态站与 Cash staging 静态站均已 live；API 和数据库 health 为 ok，CORS 只允许两个 staging 前端，School bundle 不再包含 dev 回退 URL。
+- 完整合成业务 E2E 矩阵、跨系统批次身份、对账报告和清理 / reset 证据尚未完成；在这些项目通过前 staging 不算完成，也不得进入 `v3-prod` 建设。
