@@ -204,6 +204,13 @@ batch ID 与同步时间后，该聚合 transaction 不允许普通 update / del
 Cash 已付款而 School 回写暂时失败，Cash 前端只允许重放同一 batch callback，
 不得再次 approve 或生成第二条流水。
 
+整组拒绝使用同一分组条件，但必须与聚合付款分开：Cash 在一个数据库事务内
+锁定全部请求，确认均为 pending canonical teacher wage 后才把全部请求改为
+rejected；任一请求状态、老师、月份、币种、账户或付款日期不匹配时整组零写入。
+整组拒绝不创建 batch transaction，也不创建任何 Cash 流水。Cash 拒绝成功后
+逐条调用既有单笔 rejected callback 回写 School；部分 callback 失败不回滚 Cash
+拒绝事实，失败项通过原 Cash request ID 重放 callback。
+
 ## 7. 当前与未来阶段
 
 ### 本轮第一阶段

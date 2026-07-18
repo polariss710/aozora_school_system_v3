@@ -11,7 +11,7 @@ Extraction provenance (read-only):
 - Source inventory: 7 tables, 42 functions, 7 policies
 - V3 dev extension: 1 sync table, 2 functions, 1 policy, and 2 guard
   triggers for immutable School FX handoff
-- Teacher wage aggregate extension: 2 batch tables, 3 functions, 2 policies,
+- Teacher wage aggregate extension: 2 batch tables, 4 functions, 2 policies,
   and 2 transaction guard triggers
 - `schema.sql` SHA-256: `de0550fb73598bd5af28b83145b5212ac7b8c1b6f92780520a5b9954af3baeee`
 
@@ -71,6 +71,11 @@ totals, approved requests, unique aggregate transaction, School batch callback
 result, idempotent retries, conflicting marker rejection, and transaction
 update/delete guards. The complete verification runs inside a rolled-back
 transaction.
+
+`verify-teacher-wage-group-rejection.sql` creates isolated request fixtures only
+inside a rolled-back transaction. It verifies atomic group rejection, exact
+retry idempotency, no Cash transaction identity, and zero writes when payment
+dates differ.
 
 The isolated Cash dev frontend is deployed from the Cash repository branch
 `codex/cash-dev-environment` at `https://aozora-cash-v3-dev.onrender.com`. Its

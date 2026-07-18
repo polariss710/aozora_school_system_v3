@@ -199,3 +199,5 @@ v3 的核心原则是：
 - 开发环境允许破坏和重置。
 
 不能再让 prod 同时承担生产、测试、开发三种职责。
+
+未来 `v3-staging` 的创建顺序、环境变量、schema 安装、E2E 矩阵、对账和回滚标准，统一按 `docs/staging-readiness-checklist.md` 执行。该清单当前仅完成设计，staging project 尚未创建。
