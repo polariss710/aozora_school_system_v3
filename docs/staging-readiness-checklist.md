@@ -98,6 +98,9 @@
 - approved / rejected callback 重放均幂等；相反 action 冲突均被拒绝；两端事件、引用、金额、账户和 transaction 身份对账一致。
 - 第二轮最终事实为 UI 验收而保留，不计入第一轮清理残留；对应身份记录在 `docs/staging-build-log.md`。
 - Cash staging `4b9dba7` 已在 Render 手动部署并显示 `Live`；线上环境标识与静态资源版本复核为 `家庭账本 STAGING / V3 验收环境 / 20260718-cash-staging-v3-2`。
+- 用户已人工确认 Cash staging UI 中 JPY 2,200 approved 与 JPY 1,100 rejected 两条事实；验收后以全身份匹配事务清理并完成全局 `STAGING-E2E-*` 零残留盘点。
+- 第三轮 School 核心链路通过：JPY 6,000 预定课时→1.5 小时实际课时→学生月结锁定；锁定后新增同月课时被拒绝。老师工资按 JPY 2,000 / 小时计算 base JPY 3,000，调整后 JPY 3,600，lock / adjustment confirm / revoke 与来源课时 mutation guard 均通过。
+- 第三轮一次性 staging 管理员与 `STAGING-E2E-CORE-*` 引用链已清理，独立后置盘点全部为 0。
 
 以上只是第一轮基础与跨系统提交验收，不替代下列完整矩阵。
 
@@ -153,4 +156,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-18，基础 smoke、Cash 回滚型验收和 JPY canonical approve / reject / callback / 幂等恢复已通过，但课程 / 月结 / 学费收据 / 工资生成 / 私塾打工、CNY canonical approve、老师工资真实聚合 callback、FX 入站和完整对账报告仍待执行；本节仍为未通过。
+截至 2026-07-18，基础 smoke、Cash 回滚型验收、JPY canonical approve / reject / callback / 幂等恢复以及课程→实际课时→学生月结→老师工资 snapshot 核心链路已通过，但学费账单 / 收据、工资 expense→Cash 真实聚合 callback、私塾打工、CNY canonical approve、FX 入站和完整对账报告仍待执行；本节仍为未通过。

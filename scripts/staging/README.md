@@ -19,6 +19,14 @@ The script covers authentication, student and teacher lifecycle, duplicate
 code rejection, manual income / expense void guards, and manual account
 transaction reversal guards.
 
+`school-core-smoke.mjs` covers the School core chain with synthetic 2099 data:
+planned lesson, actual lesson, student settlement lock, post-lock lesson guard,
+teacher wage preview / lock / adjustment / confirmation / revoke, and the
+actual-lesson guard while the wage snapshot is locked. Run it with the same
+three environment variables. `cleanup-school-core-e2e.sql` only removes these
+facts after the settlement and wage snapshot are revoked and no income or
+expense was generated.
+
 ## School to Cash smoke
 
 Use the same three environment variables with:
@@ -43,6 +51,12 @@ Run `verify-callback-e2e.sql` after the callback smoke to reconcile both sides,
 the unique approved Cash transaction, and one result audit event per request.
 Approved / rejected evidence is intentionally retained for UI acceptance and
 is not eligible for `cleanup-e2e.sql`.
+
+After the 2026-07-18 UI acceptance, the retained callback facts are eligible
+for the evidence-specific `cleanup-finalized-callback-e2e.sql`. That script
+requires every accepted School / Cash ID, final status, amount, and generated
+transaction ID to match before it deletes anything; a mismatch rolls back the
+whole transaction.
 
 ## Inventory and cleanup
 

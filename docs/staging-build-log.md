@@ -111,6 +111,9 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 事件 ID、业务引用、金额和账户两端逐项一致；每条 School request 只有 1 条最终结果审计事件。
 - 为自动验收临时轮换的 Cash staging 用户密码已恢复为原 encrypted password；School staging 管理员密码也已恢复。
 - 本轮 approved / rejected 事实按验收证据保留，不进入只允许 pending 的 `cleanup-e2e.sql`。
+- 用户已在 Cash staging “收支确认”页面人工确认 JPY 2,200 approved 与 JPY 1,100 rejected 两条事实可见。
+- UI 验收完成后执行 `scripts/staging/cleanup-finalized-callback-e2e.sql`。脚本先核对 marker、两端 ID、状态、金额和唯一 transaction ID，首轮因文本 / UUID 类型比较不匹配而整体回滚；修正后事务成功并返回 `residual_rows = 0`。
+- 后置全局盘点确认 students、teachers、income_records、expense_records、account_transactions 与 Cash external requests 中 `STAGING-E2E-*` 记录均为 0。
 
 ### Cash staging 页面标识
 
@@ -118,13 +121,24 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - Cash staging 分支 commit `4b9dba7` 已改为 `家庭账本 STAGING / V3 验收环境`，版本升为 `20260718-cash-staging-v3-2`；没有修改 Cash production `main` 工作树。
 - Render Cash staging 静态站未自动触发部署；已于 2026-07-18 手动执行 `Deploy latest commit`，`4b9dba7` 显示为 `Live`。线上 HTML 复核通过：标题为 `家庭账本 STAGING`、环境为 `V3 验收环境`、静态资源版本为 `20260718-cash-staging-v3-2`。
 
+## 2026-07-18 第三轮 School 核心主链路 E2E
+
+- 脚本：`scripts/staging/school-core-smoke.mjs`；清理：`scripts/staging/cleanup-school-core-e2e.sql`。
+- 合成标记：`STAGING-E2E-CORE-1784383653905`；使用 2099-02 合成数据，不含 production 数据。
+- JPY 6,000 预定课时成功生成 1 条 1.5 小时实际课时；学生月结 preview 与 lock 均通过，锁定后同月新增课时被拒绝。
+- JPY 2,000 / 小时工资规则计算出 base JPY 3,000；工资 preview、lock、交通费 500、教室费 200、手工调整 -100、总额 JPY 3,600、adjustment confirm 与 revoke 均通过。
+- 工资 snapshot 锁定期间修改来源实际课时被拒绝。
+- 一次性 staging 管理员只在进程内使用随机密码；前两次建号因数据库无 ID / 时间戳默认值而在单事务内完整回滚，第三次成功运行后该用户及角色已删除。
+- 清理事务确认 settlement 与 wage snapshot 已 revoked 且未生成 income / expense 后删除引用链；独立后置盘点确认临时管理员及全部 `STAGING-E2E-CORE-*` 表均为 0。
+- 更新后的验收脚本校验和全部通过；API 10 files / 45 tests、API build 与 Web build 通过，Web 仅保留已知大 chunk warning。
+
 ## 已知限制与不进入项
 
 - Cash pending request 没有 cancel 合同；真实外部请求不支持撤回。
 - FX 入站不支持部分购汇分摊，只支持 CNY 精确合计匹配。
 - 生产数据 mapping、迁移程序、Cash ledger 迁移和 prod 切换不进入本轮空 staging 建设。
 - 运营告警、prod 切换窗口、负责人清单在 staging E2E 完成后形成。
-- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、第一轮基础 / pending / 回滚型 E2E，以及第二轮 JPY income approve / expense reject / callback / 重放 / 冲突拒绝与对账。完整课程、结算、工资生成、CNY canonical approve、老师工资真实聚合 callback、FX 入站和完整对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
+- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、第一轮基础 / pending / 回滚型 E2E、第二轮 JPY income approve / expense reject / callback / 重放 / 冲突拒绝与对账，以及第三轮课程 / 学生月结 / 老师工资 snapshot 核心链路。学费账单 / 收据、工资 expense→Cash 真实聚合 callback、CNY canonical approve、FX 入站、私塾打工和完整对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
 
 ## 环境防串线
 
