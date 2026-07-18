@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { config as loadEnv } from "dotenv";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
+import { validateRuntimeEnvironment } from "./runtime-environment";
 
 loadEnv();
 
@@ -17,6 +18,9 @@ function parseCorsOrigins(value: string | undefined) {
 }
 
 async function bootstrap() {
+  const runtimeEnvironment = validateRuntimeEnvironment(process.env);
+  console.info(`[startup] School runtime environment: ${runtimeEnvironment}`);
+
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix("api");
 
