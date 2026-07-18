@@ -38,13 +38,13 @@
 - 2026-07-18 真实 dev E2E 已通过：`勤务表跨业务测试老师 / 2026-11` 的个人名义 JPY 24,600 与青空进学塾 JPY 34,500 合计为 JPY 59,100；Cash 批次 `42a92327-23b1-42a0-b892-f1a0480872c3` 只生成 transaction `8e219366-db11-4afc-a150-8e6df7d93ae7` 一条，School 批次 `65be52d5-c7f6-4318-be73-a757c4cb9ae0` 含两条明细并将两笔支出均回写为 `cash_confirmed`。Cash 页面显示“School已同步 · 只读”；重复聚合 approve、重复同步标记均幂等，冲突同步身份被拒绝，聚合流水 update / delete guard 通过回滚事务验证。
 - 工资分组条件已与数据库合同统一为老师、业务月、币种、Cash 账户和付款日期全部一致；单条请求不再显示聚合操作。`home_reject_teacher_wage_request_group` 在 Cash 数据库内锁定并原子拒绝整组请求，任何项目不匹配时全部零写入，且不生成 Cash transaction；Cash 成功后逐条回写 School，失败项保留原 rejected 身份并进入现有“重新回写 School”恢复入口。回滚验收已覆盖整组成功、相同理由幂等重试和不同付款日期零写入。
 - 2026-07-18 Cash dev v3-6 真实整组拒绝 E2E 已通过：`勤务表跨业务测试老师 / 2026-12` 的个人名义 JPY 12,300 与青空进学塾 JPY 18,700 合计 JPY 31,000，在 Cash 页面一次操作后两条请求于同一时刻变为 `rejected`，拒绝理由均为 `E2E atomic group rejection`，并逐条回写 School 为 `cash_rejected`。两条 Cash `created_transaction_id` 与 School `external_cash_transaction_id` 均为空，关联 JPY / CNY Cash 流水数均为 0；随后单条“重新回写 School”返回相同结果幂等成功。
-- School 新增只读 `/api/cash/payment-batches` 审计接口，Cash 请求页面把聚合批次与普通请求一并展示，可查看 School/Cash batch、transaction、逐条 request / expense、业务归属、金额和同步错误。API 路由已在 dev 部署并返回鉴权保护，前端构建通过；School 浏览器登录会话恢复后仍需补做人工页面验收。
+- School 新增只读 `/api/cash/payment-batches` 审计接口，Cash 请求页面把聚合批次与普通请求一并展示，可查看 School/Cash batch、transaction、逐条 request / expense、业务归属、金额和同步错误。API 路由已在 dev 部署并返回鉴权保护，前端构建通过；2026-07-18 用户已人工确认聚合付款记录、批次身份、合计、transaction、同步状态和明细展示均无问题。
 
 ### 尚未完成
 
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging / prod 复制前还需分别执行环境级迁移与 E2E。
-- 老师工资聚合付款与整组拒绝已完成 dev 代码、数据库和 Cash dev v3-6 浏览器验收；School 聚合审计页面仍待登录会话恢复后做人工验收。staging / prod 仍需分别应用 School migration、Cash 增量 SQL、环境凭据与真实 E2E。
+- 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收。staging / prod 仍需分别应用 School migration、Cash 增量 SQL、环境凭据与真实 E2E。
 - `v3-staging` / `v3-prod` 尚未创建；Cash ledger 迁移、凭据、callback URL、CORS 来源和运营告警尚未配置。
 
 ## V2 → V3 Prod 数据迁移状态
