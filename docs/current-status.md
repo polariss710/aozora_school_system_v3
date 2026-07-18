@@ -1,6 +1,6 @@
 # Aozora School System V3 当前状态
 
-更新日期：2026-07-18
+更新日期：2026-07-19
 
 ## 当前开发状态
 
@@ -44,8 +44,8 @@
 
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging 已安装环境级结构并通过回滚型 guard 验收，真实 FX 入站 E2E 仍待执行，prod 尚未开始。
-- 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 已安装对应结构并通过聚合 / 原子拒绝回滚矩阵，真实 Cash UI / callback E2E 仍待执行，prod 尚未开始。
-- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。第一轮合成验收已通过 School API 主链路、School → Cash pending、重复提交与 School 侧越权操作拒绝，以及 Cash 工资聚合、原子整组拒绝和 FX guard 回滚矩阵；第一轮记录清理后残留为 0。第二轮已通过 JPY income approve / expense reject、School callback、相同 callback 幂等重放、相反 action 冲突拒绝和逐字段对账：approved 只有 1 条 Cash transaction，rejected 为 0 条。完整课程 / 结算 / 收据 / 工资生成、CNY canonical、老师工资真实聚合 callback、FX 入站和运营告警仍未完成。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
+- 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 真实聚合 approve / callback / replay / School sync 已通过自动验收，保留批次正等待 Cash staging UI 人工确认，prod 尚未开始。
+- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback 和老师工资真实聚合 callback 已通过；已清理轮次均为零残留，工资聚合证据暂留待 UI 确认。私塾打工、FX 入站、运营告警和完整对账报告仍未完成。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
 
 ## V2 → V3 Prod 数据迁移状态
 
@@ -81,3 +81,4 @@
 - 第三轮 School 核心链路已通过：预定课时生成实际课时、学生月结锁定、锁定后新增课时拒绝、老师工资预览 / 锁定 / 手工调整 / 确认 / 撤销，以及工资锁定后的实际课时修改拒绝。一次性 staging 管理员与 `STAGING-E2E-CORE-*` 数据均已清理为 0。
 - 第四轮学费账单 / 收据已通过：preview fingerprint 冲突保护、账单生成与 unchanged replay、收入生成、JPY 6,000 Cash approve/callback、callback replay、live receipt 与 immutable issued receipt 均通过；随后清理为 0。
 - 第五轮 CNY canonical approve 已通过：CNY 123.45 收入与 CNY 67.89 支出均完成 Cash approve、School callback 和 replay 幂等，两个 School 记录均为 cash_confirmed；随后清理为 0。
+- 第六轮老师工资真实聚合已通过自动验收：同一老师 / 2099-05 / 同一 JPY 账户和付款日期的两条工资支出 JPY 2,100 与 JPY 1,800，经 Cash 正式聚合 RPC 只生成一条 JPY 3,900 流水；Cash approve replay、School batch callback replay、School sync marker replay 均幂等，冲突 School batch 身份被拒绝，两条 School 支出均为 `cash_confirmed`。保留 Cash batch `c9312d4f-4712-46b0-a08b-5081f3def62c`、transaction `4d7e6083-2c28-43ce-8a03-01314d3ba4a9` 和 School batch `6e55688a-1d74-44f6-ab9a-18fab19f4ea4`，等待 Cash staging UI 人工确认后再执行精确清理。

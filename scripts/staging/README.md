@@ -37,6 +37,13 @@ are not required to carry the School marker.
 external Cash approval, School callback, and replay; use
 `cleanup-cny-callback-e2e.sql` after the run.
 
+`wage-batch-callback-smoke.mjs` covers two pre-seeded 2099 teacher wage
+expenses through the real Cash aggregate approval RPC, approval replay,
+School batch callback / replay, and Cash School-sync marker / replay. It
+expects exactly two expense IDs in `STAGING_WAGE_EXPENSE_IDS`. Run
+`verify-wage-batch-e2e.sql` afterward; the verified evidence is intentionally
+retained for UI acceptance and must not be removed by generic cleanup.
+
 ## School to Cash smoke
 
 Use the same three environment variables with:

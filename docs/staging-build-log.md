@@ -1,6 +1,6 @@
 # V3 staging 建设记录
 
-更新日期：2026-07-18
+更新日期：2026-07-19
 
 ## 当前阶段
 
@@ -138,7 +138,7 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - FX 入站不支持部分购汇分摊，只支持 CNY 精确合计匹配。
 - 生产数据 mapping、迁移程序、Cash ledger 迁移和 prod 切换不进入本轮空 staging 建设。
 - 运营告警、prod 切换窗口、负责人清单在 staging E2E 完成后形成。
-- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、第一轮基础 / pending / 回滚型 E2E、第二轮 JPY income approve / expense reject / callback / 重放 / 冲突拒绝与对账、第三轮课程 / 学生月结 / 老师工资 snapshot 核心链路、第四轮学费账单 / 收据链路和第五轮 CNY canonical approve。工资 expense→Cash 真实聚合 callback、FX 入站、私塾打工和完整对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
+- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、基础 / pending / 回滚型 E2E、JPY / CNY canonical callback、课程 / 学生月结 / 老师工资 snapshot、学费账单 / 收据和老师工资真实聚合 callback。工资聚合 UI 人工确认、FX 入站、私塾打工和完整对账报告尚未完成，因此 staging 尚未达到第 10 节完成标准。
 
 ## 2026-07-19 第四轮学费账单与收据 E2E
 
@@ -153,6 +153,17 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - CNY 123.45 收入与 CNY 67.89 支出各生成一条 external Cash request；两笔均 approve 成功并生成唯一 CNY transaction。
 - 两笔 School callback 首次回写成功；相同 callback 重放均幂等，收入与支出最终均为 `cash_confirmed`。
 - Cash 密码恢复、一次性 School 管理员删除和 CNY 合成记录清理均已完成，清理返回 `residual_rows = 0`。
+
+## 2026-07-19 第六轮老师工资真实聚合 callback E2E
+
+- 脚本：`scripts/staging/wage-batch-callback-smoke.mjs`；独立对账：`scripts/staging/verify-wage-batch-e2e.sql`。
+- 合成标记：`STAGING-E2E-WAGE-BATCH-1784390004`；只在 staging 预置同一老师 / 2099-05 的两条 canonical 工资 snapshot 与支出，业务归属分别为 Staging 工资业务 A / B，金额为 JPY 2,100 / 1,800。没有读取或导入 production 数据。
+- 两条支出经正式 School API 提交到同一 Cash JPY 账户、同一付款日；Cash 正式 `home_approve_teacher_wage_request_batch` 聚合 approve 只生成一条 JPY 3,900 transaction。
+- 聚合 approve 重放返回既有 batch / transaction；School `/api/cash/callbacks/request-batch-result` 首次创建一个 payment batch 与两条 item，重放幂等；Cash School-sync marker 首次写入、相同身份重放幂等，冲突 School batch 身份被拒绝。
+- 两条 School cash request 与 expense 均为 `cash_confirmed`；独立 SQL 对账确认 Cash header / items / requests / transaction、School batch / items / expenses 和两条 critical audit 全部一致，并在回滚事务内确认聚合 Cash transaction mutation guard 生效。
+- 保留身份：Cash batch `c9312d4f-4712-46b0-a08b-5081f3def62c`；Cash transaction `4d7e6083-2c28-43ce-8a03-01314d3ba4a9`；School batch `6e55688a-1d74-44f6-ab9a-18fab19f4ea4`；Cash requests `9680bd4c-ef9a-4347-aab5-416b39d9719e` / `c7ea787c-18e7-4433-b25d-a93694f9243c`。
+- 临时 School 管理员已删除（后置盘点 0），Cash staging 密码已恢复原 encrypted password。业务证据为 Cash staging UI 人工验收而保留，确认前不清理。
+- 后置回归：API 10 files / 45 tests、API build 与 Web build 均通过；Web 仅保留已知的大 chunk warning。
 
 ## 环境防串线
 
