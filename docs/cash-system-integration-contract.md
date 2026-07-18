@@ -211,6 +211,18 @@ rejected；任一请求状态、老师、月份、币种、账户或付款日期
 逐条调用既有单笔 rejected callback 回写 School；部分 callback 失败不回滚 Cash
 拒绝事实，失败项通过原 Cash request ID 重放 callback。
 
+School 为已同步的聚合付款提供登录鉴权保护的只读审计接口：
+
+```text
+GET /api/cash/payment-batches
+Authorization: Bearer <School signed-in user access token>
+```
+
+该接口只组合读取 School batch / item、对应 Cash batch / request / transaction
+以及逐条 expense 和业务归属 snapshot，不创建、确认、拒绝或重放任何 Cash 请求。
+聚合拒绝因为不生成付款批次，仍以两端 canonical request / expense 的 rejected
+状态、相同拒绝理由和零 Cash transaction 作为审计依据。
+
 ## 7. 当前与未来阶段
 
 ### 本轮第一阶段
