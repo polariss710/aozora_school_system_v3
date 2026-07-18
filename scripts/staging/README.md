@@ -27,6 +27,16 @@ three environment variables. `cleanup-school-core-e2e.sql` only removes these
 facts after the settlement and wage snapshot are revoked and no income or
 expense was generated.
 
+`tuition-receipt-smoke.mjs` covers tuition preview fingerprint protection,
+bill generation / replay, income generation, Cash approval and callback, and
+live / issued receipt immutability. Its cleanup follows the School income →
+Cash request → external Cash request chain because Cash external request notes
+are not required to carry the School marker.
+
+`cny-callback-smoke.mjs` covers one CNY income and one CNY expense through
+external Cash approval, School callback, and replay; use
+`cleanup-cny-callback-e2e.sql` after the run.
+
 ## School to Cash smoke
 
 Use the same three environment variables with:

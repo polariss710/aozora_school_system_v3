@@ -79,3 +79,5 @@
 - 第一轮 API / pending / Cash 回滚型 E2E 与第二轮 JPY approve / reject / callback / 幂等恢复证据已记录于 `docs/staging-build-log.md`；剩余完整矩阵与全量对账通过前 staging 不算完成，也不得进入 `v3-prod` 建设。
 - 第二轮 JPY 2,200 approved 与 JPY 1,100 rejected 已完成人工 Cash staging UI 验收；随后使用全身份匹配的事务脚本清理，School / Cash / 唯一 Cash transaction / 相关审计均已删除，全部 `STAGING-E2E-*` 盘点为 0。
 - 第三轮 School 核心链路已通过：预定课时生成实际课时、学生月结锁定、锁定后新增课时拒绝、老师工资预览 / 锁定 / 手工调整 / 确认 / 撤销，以及工资锁定后的实际课时修改拒绝。一次性 staging 管理员与 `STAGING-E2E-CORE-*` 数据均已清理为 0。
+- 第四轮学费账单 / 收据已通过：preview fingerprint 冲突保护、账单生成与 unchanged replay、收入生成、JPY 6,000 Cash approve/callback、callback replay、live receipt 与 immutable issued receipt 均通过；随后清理为 0。
+- 第五轮 CNY canonical approve 已通过：CNY 123.45 收入与 CNY 67.89 支出均完成 Cash approve、School callback 和 replay 幂等，两个 School 记录均为 cash_confirmed；随后清理为 0。

@@ -138,7 +138,21 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - FX 入站不支持部分购汇分摊，只支持 CNY 精确合计匹配。
 - 生产数据 mapping、迁移程序、Cash ledger 迁移和 prod 切换不进入本轮空 staging 建设。
 - 运营告警、prod 切换窗口、负责人清单在 staging E2E 完成后形成。
-- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、第一轮基础 / pending / 回滚型 E2E、第二轮 JPY income approve / expense reject / callback / 重放 / 冲突拒绝与对账，以及第三轮课程 / 学生月结 / 老师工资 snapshot 核心链路。学费账单 / 收据、工资 expense→Cash 真实聚合 callback、CNY canonical approve、FX 入站、私塾打工和完整对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
+- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、第一轮基础 / pending / 回滚型 E2E、第二轮 JPY income approve / expense reject / callback / 重放 / 冲突拒绝与对账、第三轮课程 / 学生月结 / 老师工资 snapshot 核心链路、第四轮学费账单 / 收据链路和第五轮 CNY canonical approve。工资 expense→Cash 真实聚合 callback、FX 入站、私塾打工和完整对账报告尚未执行，因此 staging 尚未达到第 10 节完成标准。
+
+## 2026-07-19 第四轮学费账单与收据 E2E
+
+- 脚本：`scripts/staging/tuition-receipt-smoke.mjs`；清理：`scripts/staging/cleanup-tuition-receipt-e2e.sql`。
+- preview fingerprint 冲突被拒绝；JPY 6,000 账单生成成功，重复生成返回 unchanged；收入生成重复调用幂等。
+- Cash approve、School callback、callback replay 均通过；live receipt 读取正确，签发后 receipt snapshot 锁定，重复签发幂等且只有 1 条收据。
+- 首次清理因 Cash external request 的 note 为空而安全回滚；改为沿 School income → cash_request → external request 引用链核对后清理，返回 `residual_rows = 0`。
+
+## 2026-07-19 第五轮 CNY canonical approve E2E
+
+- 脚本：`scripts/staging/cny-callback-smoke.mjs`；清理：`scripts/staging/cleanup-cny-callback-e2e.sql`。
+- CNY 123.45 收入与 CNY 67.89 支出各生成一条 external Cash request；两笔均 approve 成功并生成唯一 CNY transaction。
+- 两笔 School callback 首次回写成功；相同 callback 重放均幂等，收入与支出最终均为 `cash_confirmed`。
+- Cash 密码恢复、一次性 School 管理员删除和 CNY 合成记录清理均已完成，清理返回 `residual_rows = 0`。
 
 ## 环境防串线
 
