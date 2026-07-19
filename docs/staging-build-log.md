@@ -198,6 +198,8 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 新增 `.github/workflows/staging-operational-monitor.yml`，每小时第 17 分钟运行 `scripts/staging/operational-smoke.mjs`，并提供手动运行入口。
 - workflow 使用 Node.js 22、只读仓库权限、8 分钟 job 超时和禁止并发取消；不配置 Supabase、Render 或用户 secrets。
 - GitHub 定时 workflow 只从默认分支执行。当前先提交至 `codex/v3-staging`，进入默认分支前定时任务尚未启用；失败通知取决于 GitHub 账户与仓库通知设置。
+- 用户确认后，`codex/v3-staging` 以 fast-forward 合入默认分支；workflow 手动运行通过。首次 scheduled run 的单个并行请求在 90 秒超时并发出失败邮件，逐项复核五个 staging 地址均为 HTTP 200，同一次 scheduled run 重试后 9 秒通过。
+- 为降低 Render 冷启动误报，探针对网络错误、超时和 HTTP 5xx 加入 10 秒等待后的一次自动重试，并为 API、DB、School、Cash、bundle 与 CORS 请求输出独立目标名称。失败邮件接收已验证，持续告警标记为启用。
 
 ## 环境防串线
 

@@ -45,7 +45,7 @@
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging 真实 CNY→JPY FX 入站、重放、冲突、双侧 guard 和 Cash UI 人工验收已通过，验收事实已精确清理，prod 尚未开始。
 - 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 真实聚合 approve / callback / replay / School sync 和 Cash UI 人工验收已通过，验收事实已精确清理，prod 尚未开始。
-- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路均已通过自动与必要人工验收；所有 `STAGING-E2E-*` 事实已清理为 0，最终 23 项数据库对账与无密钥运营探针通过。每小时 GitHub Actions 探针已配置在 staging 分支，待进入仓库默认分支、验证定时运行与通知设置后才视为完全启用。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
+- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路均已通过自动与必要人工验收；所有 `STAGING-E2E-*` 事实已清理为 0，最终 23 项数据库对账与无密钥运营探针通过。每小时 GitHub Actions 探针已进入默认分支并启用，手动、定时重试和失败邮件接收均已验证。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
 
 ## V2 → V3 Prod 数据迁移状态
 

@@ -5,7 +5,7 @@
 ## 1. 当前结论
 
 - `v3-staging` 基础设施已于 2026-07-18 创建：独立 Tokyo Supabase project、School API、School 静态站和 Cash 静态站均已上线。
-- schema、权限、staging Auth / seed、部署健康、CORS、完整合成业务 E2E、工资 / FX UI、验收事实清理、最终数据库对账与无密钥运营探针已通过。每小时 GitHub Actions 调度已配置在 staging 分支，但进入默认分支、定时运行和通知接收尚待验证；production 数据迁移演练也未完成，因此本文第 10 节完成标准仍未全部通过。
+- schema、权限、staging Auth / seed、部署健康、CORS、完整合成业务 E2E、工资 / FX UI、验收事实清理、最终数据库对账与无密钥运营探针已通过。每小时 GitHub Actions 调度已进入默认分支，手动运行、定时重试和失败邮件接收已验证；production 数据迁移演练仍未完成，因此本文第 10 节完成标准仍未全部通过。
 - 不得把 dev key、dev Auth user、dev 测试数据或 dev callback 身份复制到 staging。
 - `v3-staging` 继续采用同环境共置 School + Cash 的一个 Supabase project；School 业务权威仍在 NestJS domain service，Cash 仍通过 `home_*`、RLS 和受控 RPC 边界运行。
 - staging 创建前的 dev 主链路、异常恢复和迁移脚本冻结证据已记录；后续候选变化仍必须重新冻结和重跑本清单。
@@ -161,4 +161,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、23 项最终数据库对账和无密钥运营探针已通过，报告已形成。每小时 GitHub Actions 调度已写入 staging 分支，但进入默认分支、首次定时运行和通知接收尚待验证。由于用户禁止导入 production 数据，本轮也未执行 production 数据副本迁移演练；因此本节仍未全部通过，且不得进入 `v3-prod` 建设。
+截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、23 项最终数据库对账和无密钥运营探针已通过，报告已形成。每小时 GitHub Actions 调度、手动运行、定时重试和失败邮件接收均已验证。由于用户禁止导入 production 数据，本轮未执行 production 数据副本迁移演练；因此本节仍未全部通过，且不得进入 `v3-prod` 建设。
