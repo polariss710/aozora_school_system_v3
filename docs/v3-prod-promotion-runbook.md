@@ -20,6 +20,10 @@
 6. Cash ledger 迁移有独立程序和对账报告，不由 School migration 顺带生成。
 7. 负责人、切换窗口、冻结时间、告警接收人和回滚决策人明确。
 
+在进入阶段 1 前，还必须以不含业务行、来源身份、凭据或 snapshot 的 manifest
+运行 `scripts/migration/assess-cutover-readiness.mjs` 并取得全绿结果。该门禁
+只核对执行准备度；它不会创建 `v3-prod`、读取 source、冻结写入或授权切换。
+
 ## 角色
 
 | 角色 | 职责 | 当前状态 |
@@ -73,6 +77,10 @@
 - 执行 final delta；再次核对行数、金额、UUID、request / transaction / batch / FX linkage。
 - 运行 API/DB health、登录、核心只读页面和最小非资金 smoke。
 - 业务负责人签署最终数字后，才允许切换 School / Cash 入口。
+
+冻结清单必须明确：冻结的 V2 / Cash 写入范围、开始时间、最大可接受停写分钟、
+最后业务身份、解除冻结条件与回滚决策人。任何字段缺失或门禁非全绿，都只能继续
+维持现行 production 运营，不得以“先切换再补资料”的方式绕过。
 
 ## 阶段 6：单点切换与观察
 
