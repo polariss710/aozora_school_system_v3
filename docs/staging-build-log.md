@@ -320,6 +320,12 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - staging 财务历史记录抽屉新增“查看迁移审计”。历史确认记录继续没有 Cash 提交、作废、报销或账户交易入口；页面弹窗说明只显示审计元数据。
 - `pnpm --dir apps/api build`、45 项 API 测试、`pnpm --dir apps/web build` 及 19 项迁移合同测试均通过。此轮没有数据库 schema 或数据写入，也没有连接或修改 production。
 
+## 2026-07-20 第二十七轮 final delta / freeze Go/No-Go 门禁
+
+- 新增 `assess-cutover-readiness.mjs` 及合成合同测试。它只读取 metadata-only manifest，明确拒绝业务行；不连接 School、Cash、Supabase 或 Render，不能创建 `v3-prod`、冻结 source 或切换入口。
+- 门禁要求 staging 验收、私塾打工与 Cash ledger 演练、普通教学 mapping / snapshot / importer / rehearsal、production 授权和空目标、双人核验角色、有限冻结窗口及两项已知限制接受全部完备。任一缺失均列为 blocker。
+- 当前普通教学无损建模与 production 决策仍未完成，因此此门禁的预期结果为不可进入 production 准备；它把这一状态变成可复核的技术防线，而不是以文档措辞掩盖未决事项。没有 production 连接或写入。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

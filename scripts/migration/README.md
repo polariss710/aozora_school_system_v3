@@ -139,6 +139,24 @@ exporting identifiers or business rows. A passing result permits preparation of
 a restricted source-snapshot contract only; it does not authorize an importer,
 Cash creation, or a production cutover.
 
+## Final delta / freeze cutover gate
+
+`assess-cutover-readiness.mjs` is database-free and accepts only a metadata-only
+JSON manifest. Its closed schema rejects source snapshots, source-record
+identities, rows, credentials, or other production facts. Before any future `v3-prod` preparation it requires
+recorded completion of staging evidence, the independent School / Cash rehearsal,
+ordinary-teaching mapping / snapshot / importer / rehearsal, explicit production
+authorization, an empty-target verification, named dual-review roles, a bounded
+freeze window, and acceptance of the known Cash limitations.
+
+It does not create a project, connect to a database, freeze V2/Cash, or authorize
+a cutover. A failed result is the expected current state while ordinary-teaching
+migration and production decisions are still incomplete.
+
+```sh
+node scripts/migration/assess-cutover-readiness.mjs /controlled/path/cutover-readiness.json
+```
+
 ## Cash ledger plan generator
 
 `plan-cash-ledger-migration.mjs` is also database-free. It accepts the Cash
