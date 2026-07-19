@@ -257,6 +257,15 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 任一已有 source UUID 若只存在部分、或完整行与计划不同即停止；只有全部行逐字段一致时才返回 `already_applied`。没有 delete / truncate / source 连接路径。
 - `node --check`、`pnpm test:migration` 13 项、API build 和 45 项 API 测试均通过。尚未输入 production snapshot、未连接或写入任何 production 数据，staging persistent import 尚未执行。
 
+## 2026-07-19 第十八轮受控 production snapshot 与 staging mapping
+
+- 用户创建了仓库外、权限 `700` 的受控目录；两份 snapshot、三份 mapping 及两份 plan 都以 `600` 保存，均未进入 Git、Render 或前端。Dashboard 不支持 `psql` 的 `\set` 元命令，因此仅在 Dashboard 运行时移除该行；保留的 SQL 仍是 `REPEATABLE READ, READ ONLY` transaction 并 rollback。
+- School V2 snapshot cutoff 为 `2026-07-19T09:18:49.543818+00:00`，SHA-256 为 `de9b5e63d1c50809b50a3a2243fc57f8dabe7a25b8ed85ea7e740fe5a25e9682`；Cash snapshot cutoff 为 `2026-07-19T09:20:17.713179+00:00`，SHA-256 为 `14a3c7ac80ca0fd66150614c571dc9ad1f434ea122ff25c98568567ca001e302`。
+- 本地合同复核：School 3 batch / 572 source lessons / 22 settlement / 20 income / 20 linkage，Cash 7 account / 29 JPY / 58 CNY transaction / 33 request；8 条 synced School linkage 的 Cash transaction ID 全部存在于 Cash snapshot（缺失 0）。
+- staging 原有 0 个 external workplace；两次缺少 `id` / `updated_at` 的 insert 均整体回滚为 0，随后只在 staging 创建 3 个 active `legacy-*` workplace，并生成精确 workplace mapping。Cash source owner 映射至既有 staging Cash seed Auth user；不复制任何 Auth user。
+- School / Cash plan 均在本地生成：School plan hash `5183df5060c669cd39442f553485aec3da0119c1ca9ca79652ce897abe13080c`（557 target lessons、21 settlement、20 income、0 Cash request/transaction）；Cash plan hash `e82e79b46458fda41e0309b295ff9199e20606d66929cdf78d93f0d84a7ca93f`（7 account、87 transaction、33 request、0 Auth user copied）。
+- School CLI 入口补齐可选第三个 Cash linkage mapping 参数；`pnpm test:migration` 13 项通过。生产项目只执行只读 snapshot；staging business facts 尚未导入，下一门槛是受控 staging database URL 以执行已有持久 importer。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

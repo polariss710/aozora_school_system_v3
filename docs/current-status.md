@@ -72,6 +72,7 @@
 - School staging 的持久导入器已完成但未执行：只接受 project ref `bxnxdkbjlxkcqwzzeyds`、显式 `--apply` 与双重 staging 确认，硬拒绝两套现行 production project；检查 21 migration / staging Cash seed / workplace / Cash owner-account 映射，在单 transaction 内写入并对账。相同完整审计计划只返回 `already_applied`，任何部分冲突均停止且不删除目标数据。
 - Cash ledger 的确定性计划器已完成但未执行：只读取受控 JSON snapshot，保留 account / transaction UUID，只将每条 ledger row 的 source `user_id` 显式映射为 staging Auth user，绝不复制 `auth.users`。在接触 target 前校验账户、固定项目、跨账户转账、JPY↔CNY FX 双向关联与 external request 的 transaction 引用闭包。
 - Cash staging 的持久导入器已完成但未执行：复用 School 的 v3-staging-only / 双重确认 / production-ref 拒绝边界，要求所有映射后的 staging Auth user 已存在，逐表字段合同完全一致；JPY/CNY FX 在同一 transaction 内先安全落行、再恢复双向链接并逐行 JSON 对账。完整一致重跑返回 `already_applied`，半批或不一致 UUID 直接拒绝。
+- 2026-07-19 已生成并保存受控 School / Cash production read-only snapshot；两份各自有 cutoff、SHA-256、`600` 文件权限和独立 mapping。8 条 synced School linkage 全部命中 Cash snapshot。School/Cash 计划均通过本地合同校验，staging 仅创建 3 个 `legacy-*` workplace mapping，尚未导入任何生产 business fact；下一门槛是受控 staging database URL 执行持久 importer。
 - 未创建正式迁移批次，未导入任何 production 数据，未创建或写入 `v3-prod`，也未执行 prod 切换。
 
 下一阶段是完成独立 Cash ledger importer 与 staging Cash owner mapping，再用只读连接生成带 cutoff 的 source snapshot，写入独立受控文件后做 School↔Cash ID 对账，并将经过 hash 验证的副本导入 staging。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。

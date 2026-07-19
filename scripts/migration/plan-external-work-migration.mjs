@@ -398,13 +398,14 @@ export function buildExternalWorkMigrationPlan(snapshot, workplaceMapping, optio
 }
 
 async function main() {
-  const [snapshotPath, workplaceMappingPath] = process.argv.slice(2);
-  invariant(snapshotPath && workplaceMappingPath, "usage: node plan-external-work-migration.mjs <snapshot.json> <workplace-map.json>");
-  const [snapshot, workplaceMapping] = await Promise.all([
+  const [snapshotPath, workplaceMappingPath, cashLinkageMappingPath] = process.argv.slice(2);
+  invariant(snapshotPath && workplaceMappingPath, "usage: node plan-external-work-migration.mjs <snapshot.json> <workplace-map.json> [cash-linkage-map.json]");
+  const [snapshot, workplaceMapping, cashLinkageMapping] = await Promise.all([
     readFile(snapshotPath, "utf8").then(JSON.parse),
     readFile(workplaceMappingPath, "utf8").then(JSON.parse),
+    cashLinkageMappingPath ? readFile(cashLinkageMappingPath, "utf8").then(JSON.parse) : Promise.resolve(undefined),
   ]);
-  process.stdout.write(`${JSON.stringify(buildExternalWorkMigrationPlan(snapshot, workplaceMapping), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(buildExternalWorkMigrationPlan(snapshot, workplaceMapping, { cashLinkageMapping }), null, 2)}\n`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
