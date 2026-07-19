@@ -72,6 +72,7 @@ import {
   listExternalWorkSettlements,
   listExternalWorkplaces,
   listIncomeRecords,
+  listMigrationRecordAudits,
   listActualLessons,
   listPlannedLessons,
   listReimbursementCandidateExpenses,
@@ -139,6 +140,7 @@ import type {
   LockStudentSettlementInput,
   ManualExpenseInput,
   ManualIncomeInput,
+  MigrationRecordAuditRecord,
   ReimbursementCandidateExpenseRecord,
   ReimbursementRecord,
   StudentActualLessonRecord,
@@ -246,6 +248,10 @@ interface DataRow {
   teacherRecord?: TeacherRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
+  migrationAuditTarget?: {
+    targetTable: string;
+    targetId: string;
+  };
   financeRecord?: {
     kind: "income" | "expense";
     sourceType: string;
@@ -297,7 +303,8 @@ type DrawerActionKey =
   | "income.receipt"
   | "income.void"
   | "expense.void"
-  | "reimbursement.void";
+  | "reimbursement.void"
+  | "migrationAudit.view";
 
 interface DrawerAction {
   label: string;
@@ -467,6 +474,12 @@ type ReimbursementDialogState = {
   isLoading: boolean;
   candidates: ReimbursementCandidateExpenseRecord[];
   accounts: AccountRecord[];
+};
+type MigrationAuditDialogState = {
+  title: string;
+  isLoading: boolean;
+  records: MigrationRecordAuditRecord[];
+  error?: string;
 };
 type ReimbursementFormInput = CreateReimbursementInput & {
   expenseRecordId: string;
@@ -1258,8 +1271,25 @@ function DrawerActionButton({
 }
 
 function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
+  const migrationAuditActionGroup: DrawerActionGroup[] = row.migrationAuditTarget
+    ? [
+        {
+          title: "历史迁移审计",
+          actions: [
+            {
+              label: "查看迁移审计",
+              icon: ShieldCheck,
+              variant: "secondary",
+              key: "migrationAudit.view",
+              hint: "仅显示迁移批次、校验与时间元数据，不显示来源业务行。",
+            },
+          ],
+        },
+      ]
+    : [];
+
   if (row.readOnlyActions) {
-    return [];
+    return migrationAuditActionGroup;
   }
 
   if (row.apiRef?.resource === "cashRequest") {
@@ -1354,6 +1384,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         title: "财务操作",
         actions,
       },
+      ...migrationAuditActionGroup,
     ];
   }
 
@@ -1614,6 +1645,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ],
       },
+      ...migrationAuditActionGroup,
     ];
   }
 
@@ -1701,6 +1733,72 @@ function DetailDrawer({
           </ActionButton>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function MigrationAuditDialog({
+  state,
+  onClose,
+}: {
+  state: MigrationAuditDialogState;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭迁移审计" />
+      <section className="relative z-10 flex max-h-[88vh] w-[min(680px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">历史迁移审计</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{state.title}</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭">
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+        <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
+          <p className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-800">
+            此处只显示迁移批次、来源类别、校验哈希和迁移时间；不显示来源业务行或原始快照。
+          </p>
+          {state.isLoading && (
+            <div className="flex items-center gap-2 rounded-md border border-border px-3 py-3 text-sm text-muted-foreground">
+              <RefreshCw className="h-4 w-4 animate-spin" /> 正在读取审计元数据…
+            </div>
+          )}
+          {state.error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{state.error}</div>}
+          {!state.isLoading && !state.error && state.records.length === 0 && (
+            <div className="rounded-md border border-border px-3 py-3 text-sm text-muted-foreground">未找到对应的迁移审计记录。</div>
+          )}
+          {!state.isLoading &&
+            state.records.map((record) => {
+              const batch = record.importBatch ?? record.coreTeachingBatch;
+              const disposition =
+                record.disposition === "migrated" ? "已迁移" : record.disposition === "audit_only" ? "仅审计" : "已跳过";
+              const period = batch?.periodStart && batch?.periodEnd ? `${batch.periodStart} ～ ${batch.periodEnd}` : "未记录";
+
+              return (
+                <section key={record.id} className="rounded-lg border border-border bg-white">
+                  <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-2">
+                    <span className="text-xs font-semibold text-foreground">{disposition}</span>
+                    <span className="text-xs text-muted-foreground">{formatApiDateTime(record.migratedAt)}</span>
+                  </div>
+                  <dl className="divide-y divide-border/70 text-sm">
+                    <div className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2.5"><dt className="text-xs text-muted-foreground">来源类别</dt><dd>{record.sourceSystem} / {record.sourceTable}</dd></div>
+                    <div className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2.5"><dt className="text-xs text-muted-foreground">迁移批次</dt><dd>{batch?.sourceKey ?? "未记录"}</dd></div>
+                    <div className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2.5"><dt className="text-xs text-muted-foreground">批次期间</dt><dd>{period}</dd></div>
+                    <div className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2.5"><dt className="text-xs text-muted-foreground">来源行号</dt><dd>{record.sourceRowNumber ?? "未记录"}</dd></div>
+                    <div className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2.5"><dt className="text-xs text-muted-foreground">来源校验</dt><dd className="break-all font-mono text-[11px] text-muted-foreground">{record.sourceSha256 ?? "未记录"}</dd></div>
+                    <div className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2.5"><dt className="text-xs text-muted-foreground">迁移程序版本</dt><dd>{record.migrationProgramVersion ?? "未记录"}</dd></div>
+                  </dl>
+                </section>
+              );
+            })}
+        </div>
+        <footer className="flex justify-end border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>关闭</ActionButton>
+        </footer>
+      </section>
     </div>
   );
 }
@@ -6277,6 +6375,10 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       resource: "income",
       id: record.id,
     },
+    migrationAuditTarget:
+      record.recordStatus === "historical_confirmed"
+        ? { targetTable: "income_records", targetId: record.id }
+        : undefined,
     readOnlyActions: !canVoid && !canSubmitCash && !record.receiptEligible && !record.receiptIssued,
     financeRecord: {
       kind: "income",
@@ -6350,6 +6452,10 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
       resource: "expense",
       id: record.id,
     },
+    migrationAuditTarget:
+      record.recordStatus === "historical_confirmed"
+        ? { targetTable: "expense_records", targetId: record.id }
+        : undefined,
     readOnlyActions: !canVoid && !canSubmitCash,
     financeRecord: {
       kind: "expense",
@@ -9534,6 +9640,7 @@ export default function App() {
   const [reimbursementDialog, setReimbursementDialog] = useState<ReimbursementDialogState | null>(null);
   const [isReimbursementSubmitting, setIsReimbursementSubmitting] = useState(false);
   const [reimbursementMutationError, setReimbursementMutationError] = useState<string | null>(null);
+  const [migrationAuditDialog, setMigrationAuditDialog] = useState<MigrationAuditDialogState | null>(null);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
   const [activeKey, setActiveKey] = useState("dashboard");
@@ -10534,6 +10641,31 @@ export default function App() {
   };
 
   const handleDrawerAction = async (actionKey: DrawerActionKey, row: DataRow) => {
+    if (actionKey === "migrationAudit.view") {
+      if (!authSession || !row.migrationAuditTarget) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择已迁移的历史记录。" });
+        return;
+      }
+
+      setMigrationAuditDialog({ title: row.title, isLoading: true, records: [] });
+      try {
+        const result = await listMigrationRecordAudits(
+          authSession.accessToken,
+          row.migrationAuditTarget.targetTable,
+          row.migrationAuditTarget.targetId,
+        );
+        setMigrationAuditDialog({ title: row.title, isLoading: false, records: result.items });
+      } catch (error) {
+        setMigrationAuditDialog({
+          title: row.title,
+          isLoading: false,
+          records: [],
+          error: formatApiError(error),
+        });
+      }
+      return;
+    }
+
     if (actionKey === "student.edit") {
       setStudentMutationError(null);
       setStudentDialog({ mode: "edit", row });
@@ -11168,6 +11300,7 @@ export default function App() {
     setTuitionReceiptDialog(null);
     setCashRequestDialog(null);
     setReimbursementDialog(null);
+    setMigrationAuditDialog(null);
     setLessonActionSubmittingId(null);
     setLessonActualDialog(null);
     setLessonActualError(null);
@@ -11402,6 +11535,9 @@ export default function App() {
           onClose={() => setReimbursementDialog(null)}
           onSubmit={submitReimbursementForm}
         />
+      )}
+      {migrationAuditDialog && (
+        <MigrationAuditDialog state={migrationAuditDialog} onClose={() => setMigrationAuditDialog(null)} />
       )}
       {lessonActualDialog && (
         <LessonActualFormModal

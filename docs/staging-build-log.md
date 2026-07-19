@@ -313,6 +313,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 因为历史状态不满足既有 pending-only 操作条件，页面保持只读，不提供提交 Cash、作废、报销或创建账户交易的入口。既有初始 staging 演练中的 historical-confirmed 收入将不再被误示为“待提交 Cash”。
 - 全部页面的 API 描述移除硬编码 `dev` 文案，改为当前环境 API；`pnpm --dir apps/web build` 通过。此项仅修改前端与文档，没有连接或变更 production 数据。
 
+## 2026-07-20 第二十六轮历史迁移审计页面
+
+- 新增鉴权且要求 `audit.read` 的只读 `GET /audit/migration-records` 接口，严格按当前目标表和目标记录 ID 返回迁移审计元数据。
+- 返回字段仅含来源系统 / 表、迁移批次、期间、行号、SHA-256、程序版本与迁移时间；Prisma select 明确不包含 `sourceSnapshot`，因此该接口不会向页面返回生产来源业务行。
+- staging 财务历史记录抽屉新增“查看迁移审计”。历史确认记录继续没有 Cash 提交、作废、报销或账户交易入口；页面弹窗说明只显示审计元数据。
+- `pnpm --dir apps/api build`、45 项 API 测试、`pnpm --dir apps/web build` 及 19 项迁移合同测试均通过。此轮没有数据库 schema 或数据写入，也没有连接或修改 production。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

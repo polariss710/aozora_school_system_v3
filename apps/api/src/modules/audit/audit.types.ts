@@ -21,3 +21,8 @@ export type ListAuditEventsQuery = {
   actorUserId?: unknown;
   riskLevel?: unknown;
 };
+
+export type ListMigrationRecordAuditsQuery = {
+  targetTable?: unknown;
+  targetId?: unknown;
+};
