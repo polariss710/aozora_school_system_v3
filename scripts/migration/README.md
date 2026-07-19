@@ -53,6 +53,9 @@ ref, and hard-rejects both current production project refs. For the synthetic
 fixture only, absent mapped workplaces are created inside the rollback-only
 transaction and therefore cannot persist.
 
+With the required environment boundary variables set, run the synthetic
+rollback verifier through `pnpm verify:migration:rollback`.
+
 The v3-dev run has been recorded in `docs/staging-build-log.md`. The same
 transactional verifier still needs a staging credential path; the existing
 staging SQL-only constraint verifier is already recorded separately.
