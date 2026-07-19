@@ -74,6 +74,7 @@
 - Cash staging 的持久导入器复用 School 的 v3-staging-only / 双重确认 / production-ref 拒绝边界，要求所有映射后的 staging Auth user 已存在，逐表字段合同完全一致；JPY/CNY FX 与 fixed-item transaction links 在同一 transaction 内先安全落行、再恢复链接并逐行 JSON 对账。完整一致重跑返回 `already_applied`，半批或不一致 UUID 直接拒绝。
 - 2026-07-19 已生成并保存受控 School / Cash production read-only snapshot；两份各自有 cutoff、SHA-256、`600` 文件权限和独立 mapping。8 条 synced School linkage 全部命中 Cash snapshot。随后只向 `v3-staging` 导入经过 hash 验证的初始演练副本：School 3 batch / 557 target lesson / 21 settlement / 264 detail / 20 income / 20 linkage / 902 audit，Cash 7 account / 87 transaction / 33 request；不复制 Auth user，也不创建新的 School Cash request。
 - 两套 importer 的复跑均返回 `already_applied`。数据库聚合复核确认 8 条 synced linkage 均能在 staging 找到正确的 Cash account owner 与对应 transaction，缺失为 0；production 仅执行只读 snapshot，没有写入、删除或冻结。
+- 已提供 `scripts/migration/verify-staging-snapshot-rehearsal.mjs`，可在 staging 的 read-only transaction 中基于同一受控 snapshot / mapping 重建计划并复核计数、审计、0 School Cash request 与跨系统关联；本次返回 `verified`。
 - 未创建或写入 `v3-prod`，也未执行 prod 切换。当前副本是带 cutoff 的初始演练；由于 production 仍持续写入，正式上线前仍需 final delta / freeze、全范围迁移与切换演练。
 
 下一阶段是把本次初始副本演练扩展为可重复验证报告，并准备普通教学范围的 mapping / final delta / freeze 方案。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
