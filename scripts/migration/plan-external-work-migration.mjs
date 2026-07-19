@@ -87,7 +87,23 @@ function resolveWorkplace(mapping, workplaceName) {
   return target;
 }
 
-function mapLinkage(event, income) {
+function resolveCashLinkageMapping(mapping, event) {
+  if (event.syncStatus !== "synced") return null;
+  invariant(mapping && typeof mapping === "object", "synced linkage requires a Cash linkage mapping");
+  invariant(
+    mapping.contractVersion === "aozora-v3-staging-cash-linkage-map-v1",
+    "Cash linkage mapping contract is invalid",
+  );
+  const targetUserId = mapping.users?.[event.cashUserId];
+  const targetAccount = mapping.accounts?.[event.cashAccountId];
+  assertUuid(targetUserId, `Cash user mapping ${event.cashUserId}`);
+  invariant(targetAccount && typeof targetAccount === "object", `missing Cash account mapping: ${event.cashAccountId}`);
+  assertUuid(targetAccount.id, `Cash account mapping ${event.cashAccountId}.id`);
+  invariant(targetAccount.userId === targetUserId, `Cash account owner mapping mismatch: ${event.cashAccountId}`);
+  return { targetUserId, targetAccountId: targetAccount.id };
+}
+
+function mapLinkage(event, income, cashLinkageMapping) {
   invariant(event.sourceTable === "school_income_records", `unsupported linkage source table: ${event.sourceTable}`);
   invariant(event.sourceId === event.incomeRecordId, `linkage source identity mismatch: ${event.id}`);
   invariant(event.incomeRecordId === income.id, `linkage income mismatch: ${event.id}`);
@@ -116,6 +132,7 @@ function mapLinkage(event, income) {
     invariant(event.cashAccountNameSnapshot, `synced linkage account snapshot is missing: ${event.id}`);
   }
 
+  const mappedCashIdentity = resolveCashLinkageMapping(cashLinkageMapping, event);
   return {
     id: event.id,
     importBatchId: event.importBatchId ?? null,
@@ -125,8 +142,8 @@ function mapLinkage(event, income) {
     sourceEventType: event.sourceEventType,
     legacyBusinessEntityId: event.legacyBusinessEntityId,
     cashAccountMappingId: event.cashAccountMappingId ?? null,
-    cashUserId: event.cashUserId ?? null,
-    cashAccountId: event.cashAccountId ?? null,
+    cashUserId: mappedCashIdentity?.targetUserId ?? null,
+    cashAccountId: mappedCashIdentity?.targetAccountId ?? null,
     cashAccountNameSnapshot: event.cashAccountNameSnapshot ?? null,
     cashAccountTypeSnapshot: event.cashAccountTypeSnapshot ?? null,
     cashTransactionTable: event.cashTransactionTable ?? null,
@@ -322,7 +339,7 @@ export function buildExternalWorkMigrationPlan(snapshot, workplaceMapping, optio
     invariant(settlementById.has(income.sourceId), `income references missing settlement: ${income.id}`);
     const event = linkageByIncome.get(income.id);
     invariant(event, `income has no final linkage event: ${income.id}`);
-    const mappedEvent = mapLinkage(event, income);
+    const mappedEvent = mapLinkage(event, income, options.cashLinkageMapping);
     target.incomes.push({
       id: income.id,
       sourceType: "external_work",

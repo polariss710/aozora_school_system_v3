@@ -66,12 +66,13 @@
 - 已完成 School V2 / Cash production aggregate-only 只读盘点和私塾打工逐字段 mapping；没有执行 production SQL 写入、RPC 或数据复制。
 - V3 已增加历史导入批次、课时来源行、逐记录迁移审计和 legacy income linkage schema；`historical_confirmed` 与正式 Cash 请求分离。
 - 两个 migration 已依次应用到 `v3-dev` 和 `v3-staging`。回滚式合成验收覆盖成功、幂等、缺失目标、缺失来源行和历史确认误带 Cash transaction 等边界，dev / staging 残留均为 0。
-- 数据库无关的私塾打工迁移计划器已完成：固定 `2025-12` 至 `2026-11`、精确 workplace mapping、原 UUID、引用闭包、状态转换、逐行 / snapshot / plan SHA-256 和 0 Cash 写入均有合成测试；尚无持久 target DML apply 能力。
+- 数据库无关的私塾打工迁移计划器已完成：固定 `2025-12` 至 `2026-11`、精确 workplace mapping、原 UUID、引用闭包、状态转换、逐行 / snapshot / plan SHA-256 和 0 Cash 写入均有合成测试；存在 synced Cash linkage 时强制要求 source Cash owner / account → staging identity 的显式映射。
 - 新增 rollback-only target applier：仅接受 `dev` / `staging`、要求 URL 与 project ref 一致，并硬拒绝现行两套 production project。v3-dev 已完成全量合成 plan 的 transaction insert / reconciliation / forced rollback，残留为 0；该工具没有持久 apply 模式。
 - 已按 production 实际字段冻结 School 私塾打工与 Cash ledger 的 source snapshot SQL 合同。二者均为 `REPEATABLE READ + READ ONLY`，返回单一 JSON snapshot 后 rollback；snapshot 只能保存在仓库外的受控加密位置。尚未执行逐行 production 导出或 staging 导入。
+- School staging 的持久导入器已完成但未执行：只接受 project ref `bxnxdkbjlxkcqwzzeyds`、显式 `--apply` 与双重 staging 确认，硬拒绝两套现行 production project；检查 21 migration / staging Cash seed / workplace / Cash owner-account 映射，在单 transaction 内写入并对账。相同完整审计计划只返回 `already_applied`，任何部分冲突均停止且不删除目标数据。
 - 未创建正式迁移批次，未导入任何 production 数据，未创建或写入 `v3-prod`，也未执行 prod 切换。
 
-下一阶段是用只读连接生成带 cutoff 的 source snapshot，写入独立受控文件后做 School↔Cash ID 对账，再将经过 hash 验证的副本导入 staging。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
+下一阶段是完成独立 Cash ledger importer 与 staging Cash owner mapping，再用只读连接生成带 cutoff 的 source snapshot，写入独立受控文件后做 School↔Cash ID 对账，并将经过 hash 验证的副本导入 staging。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
 
 2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，没有写入或导出逐行业务数据。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`。对应历史 batch、record audit、history-only linkage 和历史状态 schema 已在 dev / staging 通过合成验收，尚未导入任何 production 数据。
 

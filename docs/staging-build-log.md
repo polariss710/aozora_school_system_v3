@@ -234,6 +234,14 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 两个 production project 无法共享数据库 transaction，因此 snapshot 分别记录 `capturedAt`。迁移演练以各自 cutoff 为初始事实边界，再用 School legacy linkage 的 Cash transaction UUID 对账；正式切换另执行 final delta / freeze，不把持续写入中的 production 当作永久静态快照。
 - snapshot JSON 仅允许保存在仓库外的受控加密位置，禁止 commit、Render 环境变量、前端 bundle 或日志输出。
 
+## 2026-07-19 第十五轮 School staging 持久导入器
+
+- 新增 `scripts/migration/apply-external-work-plan.mjs`。它只读取仓库外、非 group/world readable 的 snapshot 与 mapping JSON；输出仅含 plan hash、状态和汇总数，不输出 production 行。
+- 该入口只接受 `MIGRATION_TARGET_ENV=staging`、project ref `bxnxdkbjlxkcqwzzeyds`、URL 同 ref、字面 `--apply` 及 `MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging`；当前 School V2 / Cash production ref 被硬拒绝，检查发生于任何数据库连接前。
+- 目标 preflight 要求 21 个 School migration、4 个 `STAGING Cash` seed、精确 active workplace mapping，以及 synced linkage 的 staging Cash owner/account mapping。历史 account-name snapshot 不与当前 account name 比较，避免生产账户后续改名误伤历史事实。
+- 导入按单 transaction 执行并逐表对账，保证 0 个新 Cash request。完整相同 audit plan 重跑返回 `already_applied`；部分 audit、source UUID 或字段冲突立即失败，不删除 staging 或 source 行。
+- 合成合同测试新增 persistent target boundary 与 synced mapping 缺失拒绝；`pnpm test:migration` 为 10 项通过，API build 与 45 项 API 测试均通过。未连接、读取或写入任何 production 数据，持久导入器尚未执行。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

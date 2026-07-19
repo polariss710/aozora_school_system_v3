@@ -60,6 +60,43 @@ The v3-dev run has been recorded in `docs/staging-build-log.md`. The same
 transactional verifier still needs a staging credential path; the existing
 staging SQL-only constraint verifier is already recorded separately.
 
+## Persistent School staging importer
+
+`apply-external-work-plan.mjs` is the only persistent School importer. It is
+deliberately difficult to invoke: it accepts only the explicit v3-staging
+project ref, hard-rejects both current production refs, requires the literal
+`--apply` argument and `MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging`, checks
+the 21-migration / staging-Cash baseline, and performs the entire plan in one
+transaction.
+
+It reads the snapshot and both mapping files only from outside this repository;
+their filesystem mode must exclude group and world access. It prints only the
+plan hash and aggregate counts, never source rows. A retry either verifies the
+complete matching migration audit and returns `already_applied`, or refuses a
+partial/conflicting target. It never deletes target rows.
+
+The Cash linkage map is mandatory if the School snapshot contains a `synced`
+linkage. It maps each source Cash owner and account to its staging identity;
+the importer verifies that the mapped staging account exists and belongs to the
+mapped staging owner. The historical account-name snapshot is intentionally
+not compared to a current account name, because a source account might have
+been renamed after a historical linkage was recorded.
+
+```sh
+MIGRATION_TARGET_ENV=staging \
+MIGRATION_TARGET_PROJECT_REF=bxnxdkbjlxkcqwzzeyds \
+MIGRATION_TARGET_DATABASE_URL='postgresql://…bxnxdkbjlxkcqwzzeyds…' \
+MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging \
+node scripts/migration/apply-external-work-plan.mjs \
+  /controlled/path/school-snapshot.json \
+  /controlled/path/workplace-map.json \
+  /controlled/path/cash-linkage-map.json \
+  --apply
+```
+
+Do not run this until the separate Cash ledger importer has created the mapped
+Cash accounts and the final mapping/reconciliation gates are satisfied.
+
 ## Production source snapshots
 
 `export-v2-external-work-snapshot.sql` and

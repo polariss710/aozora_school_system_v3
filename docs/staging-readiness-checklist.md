@@ -82,6 +82,8 @@
 - 私塾打工按完整 2026 结算年度 `2025-12` 至 `2026-11` 导入，并保留完整审计链。
 - 如使用真实数据副本，必须记录来源快照、脱敏方式、导入批次、行数和哈希。
 - Cash ledger 迁移若进入本轮，必须使用独立 Cash ledger 迁移程序和对账报告；不得由 School 数据迁移顺带生成 Cash 流水。
+- source 只能执行 `REPEATABLE READ, READ ONLY` snapshot；School 与 Cash 各自记录 `capturedAt` cutoff。当天持续写入的数据不属于该次演练副本，绝不在 source 上冻结、清理或双写。
+- School persistent importer 只能写入 `v3-staging`，并要求已存在的 staging workplace 与 Cash owner/account 显式 mapping；任何缺失或冲突必须停止，不能通过清空 production 或临时改写 production 数据解决。
 
 ## 7. 必过 E2E 矩阵
 
@@ -161,4 +163,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、最终数据库对账和无密钥运营探针已通过，报告已形成。School schema 当前为 21 个 migrations；新增历史迁移审计 schema 的回滚式合成验收通过，最终读回为 2 个新增 migration、3 张新表、1 条强化 provenance constraint、0 个 `anon` / `authenticated` grant、0 条合成批次残留。每小时 GitHub Actions 调度、手动运行、定时重试和失败邮件接收均已验证。由于用户禁止导入 production 数据，本轮未执行 production 数据副本迁移演练；因此本节仍未全部通过，且不得进入 `v3-prod` 建设。
+截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、最终数据库对账和无密钥运营探针已通过，报告已形成。School schema 当前为 21 个 migrations；新增历史迁移审计 schema 的回滚式合成验收通过，最终读回为 2 个新增 migration、3 张新表、1 条强化 provenance constraint、0 个 `anon` / `authenticated` grant、0 条合成批次残留。每小时 GitHub Actions 调度、手动运行、定时重试和失败邮件接收均已验证。用户已授权受控 production snapshot 导入 staging，但 Cash ledger importer、mapping、逐行 snapshot 与对账尚未完成；因此本节仍未全部通过，且不得进入 `v3-prod` 建设。

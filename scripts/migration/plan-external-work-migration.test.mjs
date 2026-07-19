@@ -69,12 +69,45 @@ test("preserves synced Cash identity without generating Cash facts", async () =>
   event.paymentExchangeRate = 0.05;
   event.paymentAmount = 250;
 
-  const plan = buildExternalWorkMigrationPlan(snapshot, workplaceMap);
+  const cashLinkageMapping = {
+    contractVersion: "aozora-v3-staging-cash-linkage-map-v1",
+    users: {
+      [event.cashUserId]: "92000000-0000-4000-8000-000000000021",
+    },
+    accounts: {
+      [event.cashAccountId]: {
+        id: "92000000-0000-4000-8000-000000000022",
+        userId: "92000000-0000-4000-8000-000000000021",
+      },
+    },
+  };
+
+  const plan = buildExternalWorkMigrationPlan(snapshot, workplaceMap, { cashLinkageMapping });
   assert.equal(plan.target.incomes[0].recordStatus, "cash_confirmed");
   assert.equal(plan.target.incomes[0].cashStatus, "account_transaction_created");
   assert.equal(plan.target.linkageEvents[0].cashTransactionId, event.cashTransactionId);
+  assert.equal(plan.target.linkageEvents[0].cashUserId, cashLinkageMapping.users[event.cashUserId]);
+  assert.equal(plan.target.linkageEvents[0].cashAccountId, cashLinkageMapping.accounts[event.cashAccountId].id);
   assert.deepEqual(plan.target.cashRequests, []);
   assert.deepEqual(plan.target.cashTransactions, []);
+});
+
+test("rejects a synced linkage without an explicit Cash owner and account mapping", async () => {
+  const snapshot = await loadFixture("external-work-synthetic-snapshot.json");
+  const workplaceMap = await loadFixture("external-work-synthetic-workplace-map.json");
+  const event = snapshot.linkageEvents[0];
+  event.syncStatus = "synced";
+  event.cashUserId = "92000000-0000-4000-8000-000000000011";
+  event.cashAccountId = "92000000-0000-4000-8000-000000000012";
+  event.cashAccountNameSnapshot = "Synthetic CNY Account";
+  event.cashAccountTypeSnapshot = "wallet";
+  event.cashTransactionTable = "home_cny_transactions";
+  event.cashTransactionId = "92000000-0000-4000-8000-000000000013";
+
+  assert.throws(
+    () => buildExternalWorkMigrationPlan(snapshot, workplaceMap),
+    /synced linkage requires a Cash linkage mapping/,
+  );
 });
 
 test("rejects duplicate active actual lessons", async () => {
