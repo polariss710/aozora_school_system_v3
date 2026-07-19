@@ -20,7 +20,7 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 | `school_part_time_work_monthly_settlement_details` | `external_work_settlement_details` | 原 detail UUID 沿用 | 可直接保持 settlement / actual lesson 引用 |
 | `school_income_records` | `income_records` | 原 income UUID 沿用 | `source_snapshot` 与历史确认状态尚无完整承载 |
 | `school_personal_cash_income_linkage_events` | 待新增 history-only linkage 表；必要时另建 V3 `cash_requests` 引用 | 原 event UUID、幂等键和 Cash identity 原样保留 | 不得把 `historical_confirmed` 伪造成 Cash transaction |
-| `school_part_time_work_income_requests` | 只迁移仍被正式链引用的 legacy request audit | 原 request UUID 沿用 | 实际引用数量待只读盘点 |
+| `school_part_time_work_income_requests` | 只迁移仍被正式链引用的 legacy request audit | 原 request UUID 沿用 | 盘点仅 1 条已删除且未提交 Cash 的旧 request；保留 audit，不进入运营请求 |
 | Cash `home_*` ledger | V3 prod `home_*` | 原 account/request/transaction/batch/FX UUID 保留 | 独立 Cash ledger 迁移阶段，不由本文程序写入 |
 
 ## 课时逐字段映射
@@ -45,7 +45,7 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 | `historical_import_batch_id` | 待新增 provenance FK | 原 UUID |
 | `historical_source_row` | 待新增 provenance 字段 | 原正整数 |
 | `lesson_count` / `cumulative_hours` | 历史 source snapshot | 仅为 V2 展示字段，不进入 V3 工资计算，但不得丢失 |
-| `created_at` / `updated_at` / `deleted_at` | 目标时间戳 + 历史 source snapshot | 原时间必须保留；软删除转换待只读盘点后冻结 |
+| `created_at` / `updated_at` / `deleted_at` | 目标时间戳 + 历史 source snapshot | 原时间必须保留；15 条 soft-deleted lesson 全部只进入 migration audit，不进入运营事实 |
 
 ## 结算与明细映射
 
@@ -60,7 +60,7 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 ## Income 与 Cash linkage 映射
 
 - V2 income 的 `id`、`source_type`、`source_id`、币种、金额、日期、状态和 `source_snapshot` 必须保留。
-- `source_type=external_part_time_work` 的 `source_id` 必须解析到同一原 UUID 的 V3 settlement。
+- V2 实际 `source_type=part_time_work` 受控转换为 V3 `source_type=external_work`；`source_id` 必须解析到同一原 UUID 的 V3 settlement。
 - `historical_confirmed` linkage 不存在 Cash transaction：V3 必须保留 history-only event，income 不得创建虚构 `cash_request` 或 `home_*_transaction`。
 - `synced` linkage 必须原样保存 `cash_user_id`、`cash_account_id`、账户 snapshot、transaction table、transaction ID、payment currency / rate / amount、幂等键和确认时间；对应 Cash transaction 只能由独立 Cash ledger 迁移程序导入。
 - pending / rejected / failed / blocked 事件是否进入运营 `cash_requests`，取决于冻结时最终状态和实际引用闭包；不得只按状态批量转换。
@@ -94,13 +94,13 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 
 同一批次重跑必须新增 0 条业务记录、0 条 linkage event、0 条 Cash transaction。
 
-## 执行前必须由只读盘点回答
+## 2026-07-19 production 只读盘点结论
 
-- 迁移年度内 active / soft-deleted planned、actual 各有多少条；是否存在被正式 detail 引用的 soft-deleted lesson。
-- draft / locked / income_request_created settlement 各有多少条，是否存在重复 active workplace-month。
-- settlement、detail、income、linkage 和 legacy request 是否存在孤儿或多重引用。
-- `historical_confirmed`、`synced`、pending/rejected/failed/blocked linkage 的数量和金额。
-- `synced` Cash transaction ID 是否全部非空、唯一，并能在 Cash production 只读盘点中解析。
-- V2 source UUID 与空 V3 prod 目标是否存在任何冲突。
+- 3 个历史 batch，预期 167 条；production 中恰有 167 planned + 167 actual 带历史 batch 身份。
+- active lesson 为 planned 286、actual 271；soft-deleted 为 planned 13、actual 2。2 条已删除 actual 均未被 settlement detail 引用；没有 active actual 依赖 soft-deleted planned，因此 15 条删除事实可只保存在 migration audit。
+- 22 个 settlement：21 个 `income_request_created`、1 个 `locked`；不存在重复 active workplace-month，detail / settlement / actual 引用孤儿均为 0。
+- 20 个 settlement 有 canonical income，总额 JPY 1,897,990；其 V2 source type 全部为 `part_time_work`。另有 JPY 7,800 的 settlement 只有 1 条已删除、未提交 Cash 的 legacy request；迁移为 locked + audit，不生成 income。JPY 137,920 的 locked settlement 保持 locked。
+- 20 条 linkage 中 12 条 `historical_confirmed`（无 Cash transaction），8 条 `synced`（8 个唯一 CNY transaction）。所有 linkage source / idempotency / transaction 必填约束均通过。
+- 8 个 synced transaction 在 Cash production 全部解析，账户、CNY 金额和 income 方向全部一致；总额 CNY 36,276.77，JPY transaction ID 碰撞为 0。5 条带正式 external reference，3 条为旧式既存交易，后者不得补造 external metadata。
 
-这些问题未回答前，不生成正式 migration DML，不导入 staging/prod 数据。
+V3 prod 尚未创建，因此目标 UUID 冲突只能在空 prod preflight 时验证。正式 migration DML 仍需先补齐本文 schema blocker，并使用合成 fixture 做 staging 演练；本次盘点没有导入任何 production 数据。

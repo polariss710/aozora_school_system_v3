@@ -102,7 +102,7 @@ with scoped_settlements as (
   from public.school_part_time_work_monthly_settlements
   where year_month between '2025-12' and '2026-11'
 ), scoped_incomes as (
-  select i.*
+  select i.*, s.id as scoped_settlement_id
   from public.school_income_records i
   join scoped_settlements s on s.income_record_id = i.id
 )
@@ -111,8 +111,8 @@ select 'income_integrity' as check_name, jsonb_build_object(
   'settlements_with_income', (select count(*) from scoped_settlements where income_record_id is not null),
   'resolved_incomes', count(*),
   'source_mismatch', count(*) filter (
-    where source_type is distinct from 'external_part_time_work'
-       or source_id is null
+    where source_type is distinct from 'part_time_work'
+       or source_id is distinct from scoped_settlement_id
   ),
   'amount_total', coalesce(sum(amount), 0)
 ) as result
@@ -182,5 +182,49 @@ select 'legacy_income_requests' as check_name, jsonb_build_object(
 ) as result
 from public.school_part_time_work_income_requests r
 join scoped_settlements s on s.id = r.settlement_id;
+
+select 'deleted_lesson_references' as check_name, jsonb_build_object(
+  'soft_deleted_actual_count', (
+    select count(*)
+    from public.school_part_time_work_lessons
+    where record_kind = 'actual'
+      and deleted_at is not null
+      and year_month between '2025-12' and '2026-11'
+  ),
+  'details_linked_to_soft_deleted_actual', (
+    select count(*)
+    from public.school_part_time_work_monthly_settlement_details d
+    join public.school_part_time_work_lessons l on l.id = d.actual_lesson_id
+    where l.deleted_at is not null
+      and l.year_month between '2025-12' and '2026-11'
+  ),
+  'active_actual_linked_to_soft_deleted_planned', (
+    select count(*)
+    from public.school_part_time_work_lessons a
+    join public.school_part_time_work_lessons p on p.id = a.planned_lesson_id
+    where a.record_kind = 'actual'
+      and a.deleted_at is null
+      and p.deleted_at is not null
+      and a.year_month between '2025-12' and '2026-11'
+  )
+) as result;
+
+with scoped_settlements as (
+  select id
+  from public.school_part_time_work_monthly_settlements
+  where year_month between '2025-12' and '2026-11'
+)
+select 'legacy_request_statuses' as check_name, jsonb_agg(to_jsonb(x) order by status, cash_request_status) as result
+from (
+  select
+    r.status,
+    coalesce(r.cash_request_status, '<null>') as cash_request_status,
+    (r.deleted_at is not null) as is_deleted,
+    count(*) as row_count,
+    coalesce(sum(r.amount_jpy), 0) as amount_jpy
+  from public.school_part_time_work_income_requests r
+  join scoped_settlements s on s.id = r.settlement_id
+  group by r.status, coalesce(r.cash_request_status, '<null>'), (r.deleted_at is not null)
+) x;
 
 rollback;

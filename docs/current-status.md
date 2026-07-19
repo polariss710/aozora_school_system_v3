@@ -71,7 +71,7 @@
 
 下一阶段开始前，需要先完成只读盘点、schema / mapping 设计、Cash 拓扑确认、迁移与回滚程序设计，再进入 staging 演练。
 
-2026-07-19 已完成私塾打工链路的代码级逐表 / 逐字段 mapping 草案，并准备 aggregate-only、transaction read-only 的 V2 inventory SQL；尚未连接或读取 production。mapping 已确认历史 batch、原始 row provenance、history-only Cash linkage 和历史确认状态为 V3 schema blocker，实际 soft-delete、linkage status 与 legacy request 引用数量需在用户明确授权 production 只读盘点后冻结。
+2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，没有写入或导出逐行业务数据。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`；历史 batch、record audit、history-only linkage 和历史状态仍为 V3 schema blocker，尚未导入任何 production 数据。
 
 ## Staging 准备状态
 
