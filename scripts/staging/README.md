@@ -63,6 +63,12 @@ After manual UI review, use the evidence-specific
 reconcile both systems before deleting anything; a mismatch rolls back the
 whole cleanup transaction.
 
+`operational-smoke.mjs` is a credential-free live probe for API / database
+health, both staging frontends, exact CORS origins, and dev/staging bundle
+separation. `verify-final-reconciliation.sql` checks the frozen schema counts,
+staging seed, zero synthetic residuals, cross-system orphans, status mismatches,
+and anonymous Cash privileges.
+
 ## School to Cash smoke
 
 Use the same three environment variables with:

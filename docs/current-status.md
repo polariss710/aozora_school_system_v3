@@ -43,9 +43,9 @@
 ### 尚未完成
 
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
-- Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging 真实 CNY→JPY FX 入站、重放、冲突和双侧 guard 已通过自动验收，保留交易对正等待 Cash staging UI 人工确认，prod 尚未开始。
-- 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 真实聚合 approve / callback / replay / School sync 已通过自动验收，保留批次正等待 Cash staging UI 人工确认，prod 尚未开始。
-- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路已通过；已清理轮次均为零残留，工资聚合与 FX 证据暂留待 UI 确认。运营告警和完整对账报告仍未完成。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
+- Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging 真实 CNY→JPY FX 入站、重放、冲突、双侧 guard 和 Cash UI 人工验收已通过，验收事实已精确清理，prod 尚未开始。
+- 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 真实聚合 approve / callback / replay / School sync 和 Cash UI 人工验收已通过，验收事实已精确清理，prod 尚未开始。
+- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路均已通过自动与必要人工验收；所有 `STAGING-E2E-*` 事实已清理为 0，最终 23 项数据库对账与无密钥运营探针通过。外部持续告警调度仍需确认。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
 
 ## V2 → V3 Prod 数据迁移状态
 
@@ -81,6 +81,6 @@
 - 第三轮 School 核心链路已通过：预定课时生成实际课时、学生月结锁定、锁定后新增课时拒绝、老师工资预览 / 锁定 / 手工调整 / 确认 / 撤销，以及工资锁定后的实际课时修改拒绝。一次性 staging 管理员与 `STAGING-E2E-CORE-*` 数据均已清理为 0。
 - 第四轮学费账单 / 收据已通过：preview fingerprint 冲突保护、账单生成与 unchanged replay、收入生成、JPY 6,000 Cash approve/callback、callback replay、live receipt 与 immutable issued receipt 均通过；随后清理为 0。
 - 第五轮 CNY canonical approve 已通过：CNY 123.45 收入与 CNY 67.89 支出均完成 Cash approve、School callback 和 replay 幂等，两个 School 记录均为 cash_confirmed；随后清理为 0。
-- 第六轮老师工资真实聚合已通过自动验收：同一老师 / 2099-05 / 同一 JPY 账户和付款日期的两条工资支出 JPY 2,100 与 JPY 1,800，经 Cash 正式聚合 RPC 只生成一条 JPY 3,900 流水；Cash approve replay、School batch callback replay、School sync marker replay 均幂等，冲突 School batch 身份被拒绝，两条 School 支出均为 `cash_confirmed`。保留 Cash batch `c9312d4f-4712-46b0-a08b-5081f3def62c`、transaction `4d7e6083-2c28-43ce-8a03-01314d3ba4a9` 和 School batch `6e55688a-1d74-44f6-ab9a-18fab19f4ea4`，等待 Cash staging UI 人工确认后再执行精确清理。
-- 第七轮 CNY→JPY FX 入站已通过自动验收：一条 CNY 88.00 confirmed School 收入经 Cash 正式购汇生成双向关联的 CNY `fx_out` / JPY 1,800 `fx_in`，School 生成唯一法人账户入金与 inbound event；callback replay 与 Cash sync marker replay 幂等，冲突 payload / identity 被拒绝，CNY / JPY update / delete 四种 guard 均通过。保留 CNY FX `22223532-2609-439a-bb48-3b48b53f34e1`、JPY FX `091daf51-6326-41b7-83a2-b40d17493da2`、School event `aad7aa27-62f8-4220-9371-c71265a5f7b2` 等证据等待 UI 确认。
+- 第六轮老师工资真实聚合已通过自动与人工验收：同一老师 / 2099-05 / 同一 JPY 账户和付款日期的两条工资支出 JPY 2,100 与 JPY 1,800，经 Cash 正式聚合 RPC 只生成一条 JPY 3,900 流水；Cash approve replay、School batch callback replay、School sync marker replay 均幂等，冲突 School batch 身份被拒绝。用户确认 Cash UI 的合计、唯一流水与 School 同步只读状态正常后，使用全身份匹配脚本清理为 0。
+- 第七轮 CNY→JPY FX 入站已通过自动与人工验收：一条 CNY 88.00 confirmed School 收入经 Cash 正式购汇生成双向关联的 CNY `fx_out` / JPY 1,800 `fx_in`，School 生成唯一法人账户入金与 inbound event；callback replay 与 Cash sync marker replay 幂等，冲突 payload / identity 被拒绝，CNY / JPY update / delete 四种 guard 均通过。用户确认 Cash UI 的关联与 School 同步只读状态正常后，使用全身份匹配脚本清理为 0。
 - 第八轮私塾打工主链路已通过：外部工作地点、JPY 5,000 预定→实际课时、交通费 500、调整 -200、JPY 5,300 月结 preview / lock / export、锁定后课时修改拒绝、收入生成幂等、生成收入后撤销拒绝，以及真实 Cash approve / callback / replay 全部通过；随后精确清理为 0。
