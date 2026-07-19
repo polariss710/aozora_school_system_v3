@@ -278,7 +278,22 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 ## 2026-07-19 第二十轮普通教学迁移发现合同
 
 - 新增 `scripts/migration/v2-core-teaching-readonly-inventory.sql`。该合同以 `REPEATABLE READ + READ ONLY` transaction 返回普通教学 `2026-07+` 候选事实、引用闭包、收入 / 支出和 legacy payment 审计的表存在性、字段字典与外键字典；明确 `containsBusinessRows=false`，最后 rollback。
-- 对应静态合同测试禁止 DML / DDL。该文件尚未在 School V2 production 执行，不读取、复制或写入 production business data；其用途仅是让下一步字段 mapping 建立在当前实际 schema 上，而非凭历史代码猜测。
+- 对应静态合同测试禁止 DML / DDL。该文件的用途是让下一步字段 mapping 建立在当前实际 schema 上，而非凭历史代码猜测。
+- 用户授权后已在 School V2 production Dashboard 执行该查询。执行结果为 17 / 17 候选表存在、403 个字段、36 条外键；没有返回业务行。查询在 `REPEATABLE READ + READ ONLY` transaction 后 rollback，未读取 / 复制 / 写入业务数据，也未冻结或修改 production。
+- 字段级映射和阻断项已记录到 `docs/v2-v3-core-teaching-migration-mapping.md`。当前明确禁止建立普通教学 source snapshot 或 persistent importer，直到多维工资、月结 adjustment / carryover、附件和 legacy payment request 的无损承载决策完成。
+
+## 2026-07-19 第二十一轮普通教学 aggregate-only 范围基线
+
+- 新增 `scripts/migration/v2-core-teaching-aggregate-inventory.sql` 与静态合同测试。该查询从 `2026-07` 起只返回按业务月 / 状态 / 币种的汇总、无身份引用闭包与关键孤儿计数；其 transaction 为 `REPEATABLE READ + READ ONLY`，最后 rollback，禁止 DML / DDL 与业务行输出。
+- 用户授权后已在 School V2 production Dashboard 执行。结果当前仅含课时、学生账单、收入与支出四个有范围内事实的聚合 section；学生月结、工资 locks / details / adjustments、结转、附件与 payment request 均为 0。引用闭包为 2 个业务归属、6 名学生、8 名老师、7 个科目，未返回任何 UUID、姓名或业务行。
+- `wage detail → lesson`、`wage adjustment → lock`、`attachment → expense`、`carryover → settlement` 四项孤儿检查均为 0。production 没有写入、复制、冻结或数据清理；该结果只作为普通教学迁移设计基线，不授权 source snapshot 或 staging import。
+- 随后把初始演练窗口收紧为 `2026-07` 至 `2026-12`，并增加 actual → planned 的无身份关联汇总。25 条范围内 actual 均连接到 source planned，缺失为 0；完成、补课完成与取消可确定映射至 V3 预定 / 实际状态。production 另有 3 条业务月 `2099` 的远期收入汇总；它们明确排除在本次范围外，没有被复制、删除、修改或作为业务行读取，待独立异常处置。
+
+## 2026-07-19 第二十二轮普通教学迁移审计承载
+
+- 新增 School Prisma migration `20260719193000_add_core_teaching_migration_audit`：创建 `core_teaching_migration_batches`，并给通用 `migration_record_audits` 增加可选的 `core_teaching_batch_id`。两类 batch 互斥；现有私塾打工 audit 继续使用原 `import_batch_id`，没有迁移、改写或删除既有事实。
+- 批次表强制 source SHA-256、`YYYY-MM` 范围、非空来源键 / 文件名 / 程序版本，并撤销 `anon` / `authenticated` 的全部权限。它只承载未来普通教学 snapshot 的 hash、范围、汇总元数据和逐行 audit 归属，不创建业务记录、Cash request 或 Cash transaction。
+- 本地 Prisma format / validate 与 16 项 migration 合同测试通过。迁移已只部署到 `v3-staging`；只读验收确认已完成 migration 为 22、batch 表和 audit 字段存在、浏览器角色 grant 为 0。现行 School / Cash production 未连接、未写入。
 
 ## 环境防串线
 

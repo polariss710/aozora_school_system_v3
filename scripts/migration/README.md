@@ -66,7 +66,7 @@ staging SQL-only constraint verifier is already recorded separately.
 deliberately difficult to invoke: it accepts only the explicit v3-staging
 project ref, hard-rejects both current production refs, requires the literal
 `--apply` argument and `MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging`, checks
-the 21-migration / staging-Cash baseline, and performs the entire plan in one
+the 22-migration / staging-Cash baseline, and performs the entire plan in one
 transaction.
 
 It reads the snapshot and both mapping files only from outside this repository;
@@ -110,6 +110,26 @@ it, and record its SHA-256 plus the `capturedAt` cutoff. The School snapshot
 and Cash ledger snapshot are separate because the current production systems
 are separate projects; their IDs are reconciled after extraction rather than
 assuming a shared transaction across projects.
+
+## Core teaching source discovery
+
+`v2-core-teaching-readonly-inventory.sql` is the preliminary discovery contract
+for ordinary teaching. It is a `REPEATABLE READ, READ ONLY` transaction that
+only reads `information_schema`, returns the candidate table / column / foreign
+key dictionary as one JSON value, and rolls back. It must never be used as a
+business-data exporter.
+
+The resulting field-level mapping and known target-model gaps are recorded in
+`docs/v2-v3-core-teaching-migration-mapping.md`. Until the blocking items in
+that document are resolved, there is intentionally no ordinary-teaching
+snapshot exporter or persistent importer.
+
+`v2-core-teaching-aggregate-inventory.sql` is the follow-up range contract. It
+uses the same read-only rollback boundary and returns only aggregate counts,
+amounts, reference-closure counts, and selected orphan counts for the fixed
+initial teaching-rehearsal window `2026-07` through `2026-12`; it does not
+return business rows. Run its static
+contract test through `pnpm test:migration` before any source execution.
 
 ## Cash ledger plan generator
 

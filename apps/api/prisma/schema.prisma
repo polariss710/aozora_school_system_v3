@@ -1039,6 +1039,7 @@ model HistoricalExternalWorkImportBatch {
 model MigrationRecordAudit {
   id                      String                     @id @default(uuid()) @db.Uuid
   importBatchId           String?                    @map("import_batch_id") @db.Uuid
+  coreTeachingBatchId     String?                    @map("core_teaching_batch_id") @db.Uuid
   sourceSystem            String                     @map("source_system")
   sourceTable             String                     @map("source_table")
   sourceId                String                     @map("source_id") @db.Uuid
@@ -1051,12 +1052,32 @@ model MigrationRecordAudit {
   migrationProgramVersion String                     @map("migration_program_version")
   migratedAt              DateTime                   @default(now()) @map("migrated_at") @db.Timestamptz(6)
 
-  importBatch HistoricalExternalWorkImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  importBatch       HistoricalExternalWorkImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  coreTeachingBatch CoreTeachingMigrationBatch?        @relation(fields: [coreTeachingBatchId], references: [id], onDelete: Restrict)
 
   @@unique([sourceSystem, sourceTable, sourceId])
   @@unique([targetTable, targetId])
   @@index([importBatchId, disposition])
+  @@index([coreTeachingBatchId, disposition])
   @@map("migration_record_audits")
+}
+
+model CoreTeachingMigrationBatch {
+  id                      String   @id @db.Uuid
+  sourceKey               String   @unique @map("source_key")
+  sourceSha256            String   @map("source_sha256") @db.Char(64)
+  sourceFilename          String   @map("source_filename")
+  periodStart             String   @map("period_start") @db.VarChar(7)
+  periodEnd               String   @map("period_end") @db.VarChar(7)
+  expectedSummary         Json     @map("expected_summary")
+  sourceSnapshotMetadata  Json     @map("source_snapshot_metadata")
+  migrationProgramVersion String   @map("migration_program_version")
+  migratedAt              DateTime @default(now()) @map("migrated_at") @db.Timestamptz(6)
+
+  recordAudits MigrationRecordAudit[]
+
+  @@index([periodStart, periodEnd])
+  @@map("core_teaching_migration_batches")
 }
 
 model LegacyIncomeLinkageEvent {

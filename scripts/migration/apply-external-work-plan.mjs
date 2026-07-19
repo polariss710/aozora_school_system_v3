@@ -14,6 +14,7 @@ const knownProductionProjectRefs = new Set([
   "ahtgiwdzocerkonrjmdo",
   "xlcdqvlfzspcxdoidsrr",
 ]);
+const requiredSchoolMigrationCount = 22;
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function invariant(condition, message) {
@@ -65,7 +66,10 @@ async function assertTargetBaseline(prisma) {
   const migrationRows = await prisma.$queryRawUnsafe(
     "select count(*)::int as count from public._prisma_migrations where finished_at is not null and rolled_back_at is null",
   );
-  invariant(migrationRows[0]?.count === 21, "target does not have the required 21 School migrations");
+  invariant(
+    migrationRows[0]?.count === requiredSchoolMigrationCount,
+    `target does not have the required ${requiredSchoolMigrationCount} School migrations`,
+  );
   const stagingCashRows = await prisma.$queryRawUnsafe(
     "select count(*)::int as count from public.home_accounts where name like 'STAGING Cash %'",
   );

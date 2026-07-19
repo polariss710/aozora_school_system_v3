@@ -163,4 +163,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、最终数据库对账和无密钥运营探针已通过，报告已形成。School schema 当前为 21 个 migrations；新增历史迁移审计 schema 的回滚式合成验收通过，最终读回为 2 个新增 migration、3 张新表、1 条强化 provenance constraint、0 个 `anon` / `authenticated` grant、0 条合成批次残留。每小时 GitHub Actions 调度、手动运行、定时重试和失败邮件接收均已验证。受控 production snapshot 的 School 私塾打工和 Cash ledger 初始副本已导入 staging，计数、8 条跨系统关联和两套 importer 幂等复跑均通过；production 未写入。普通教学范围、final delta / freeze、切换窗口与负责人清单尚未完成，因此仍不得进入 `v3-prod` 建设。
+截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、最终数据库对账和无密钥运营探针已通过，报告已形成。School schema 当前为 22 个 migrations；新增历史迁移审计与普通教学迁移批次 schema 的回滚式 / staging 验收已通过，普通教学批次表与 `migration_record_audits.core_teaching_batch_id` 均存在，`anon` / `authenticated` grant 为 0。每小时 GitHub Actions 调度、手动运行、定时重试和失败邮件接收均已验证。受控 production snapshot 的 School 私塾打工和 Cash ledger 初始副本已导入 staging，计数、8 条跨系统关联和两套 importer 幂等复跑均通过；production 未写入。普通教学范围、final delta / freeze、切换窗口与负责人清单尚未完成，因此仍不得进入 `v3-prod` 建设。
