@@ -137,8 +137,8 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - Cash pending request 没有 cancel 合同；真实外部请求不支持撤回。
 - FX 入站不支持部分购汇分摊，只支持 CNY 精确合计匹配。
 - 生产数据 mapping、迁移程序、Cash ledger 迁移和 prod 切换不进入本轮空 staging 建设。
-- 运营告警、prod 切换窗口、负责人清单在 staging E2E 完成后形成。
-- 当前已完成 staging 基础设施、schema、权限、seed、部署、健康检查、完整合成业务 E2E、工资聚合 / FX UI 人工验收、所有验收事实清理、最终数据库对账与无密钥运营探针。完整报告见 `docs/staging-reconciliation-report.md`；外部持续告警调度和 production 数据迁移演练仍未完成，因此不进入 `v3-prod` 建设。
+- 运营告警的接收设置、prod 切换窗口、负责人清单仍需在进入 prod 前确认。
+- 当前已完成 staging 基础设施、schema、权限、seed、部署、健康检查、完整合成业务 E2E、工资聚合 / FX UI 人工验收、所有验收事实清理、最终数据库对账与无密钥运营探针。每小时 GitHub Actions workflow 已配置在 staging 分支，待进入默认分支后验证定时运行和通知接收；production 数据迁移演练仍未完成，因此不进入 `v3-prod` 建设。
 
 ## 2026-07-19 第四轮学费账单与收据 E2E
 
@@ -192,6 +192,12 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - `operational-smoke.mjs` 通过 API、DB、School bundle、Cash config、精确 CORS 与 dev/staging 防串线；Render 免费实例冷启动容忍设为 90 秒。
 - 正式合成验收报告：`docs/staging-reconciliation-report.md`；运营手册：`docs/staging-operations-runbook.md`。
 - 已形成只读 `docs/v3-prod-promotion-runbook.md` 草案，覆盖候选冻结、空 prod、只读盘点、staging 迁移演练、initial / final delta、单点切换与回滚触发条件；没有执行其中任何 production 操作。
+
+## 2026-07-19 第十轮运营探针调度配置
+
+- 新增 `.github/workflows/staging-operational-monitor.yml`，每小时第 17 分钟运行 `scripts/staging/operational-smoke.mjs`，并提供手动运行入口。
+- workflow 使用 Node.js 22、只读仓库权限、8 分钟 job 超时和禁止并发取消；不配置 Supabase、Render 或用户 secrets。
+- GitHub 定时 workflow 只从默认分支执行。当前先提交至 `codex/v3-staging`，进入默认分支前定时任务尚未启用；失败通知取决于 GitHub 账户与仓库通知设置。
 
 ## 环境防串线
 
