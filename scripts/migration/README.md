@@ -121,4 +121,10 @@ UUIDs, rewrites only `user_id`, and never copies `auth.users` or Auth secrets.
 It validates the account, fixed-item/template, transfer-account, JPY↔CNY FX
 and external-request transaction references before a target is contacted. A
 missing owner mapping or a broken reference is a hard failure. The persistent
-Cash importer is the next step; do not substitute the School importer for it.
+Cash importer is `apply-cash-ledger-plan.mjs`. It uses the same explicit
+v3-staging target/confirmation guard as the School importer, requires every
+mapped staging Auth user to already exist, verifies the complete target table
+column set before writing, inserts the JPY/CNY rows with FX links temporarily
+null, restores those links in the same transaction, and then verifies every
+target JSON row. A complete byte-equivalent retry returns `already_applied`;
+partial or mismatched UUIDs fail without deletion.

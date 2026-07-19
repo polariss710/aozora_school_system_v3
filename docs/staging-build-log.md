@@ -249,6 +249,14 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - target 写入前已能发现缺少 owner mapping、fixed item 的 account/template 断链、transaction 的 account/transfer/FX 双向断链及 external request 的 account/created transaction 断链。
 - 合成合同测试新增确定性、owner mapping 缺失拒绝与 FX linkage 断链拒绝；`pnpm test:migration` 共 13 项通过。未读取或写入任何 production 数据，Cash persistent importer 尚未执行。
 
+## 2026-07-19 第十七轮 Cash staging 持久导入器
+
+- 新增 `scripts/migration/apply-cash-ledger-plan.mjs`，复用 School importer 的 `v3-staging` project ref、URL、字面 `--apply` 与双重确认保护；当前两套 production ref 在连接前即被拒绝。
+- preflight 要求 staging 仍有 4 个专用 Cash seed、owner mapping 的每个目标 UUID 都已存在于 staging `auth.users`，并要求 snapshot 每张非空表的字段集合与 target 完全相同。
+- 事务顺序为 account → channel/template/item → JPY/CNY transaction（暂空 FX link）→ external request → 恢复 FX 双向 link → 全行 JSON 对账。保留 source UUID，仅替换 `user_id`；不创建、复制或修改 source/staging Auth user。
+- 任一已有 source UUID 若只存在部分、或完整行与计划不同即停止；只有全部行逐字段一致时才返回 `already_applied`。没有 delete / truncate / source 连接路径。
+- `node --check`、`pnpm test:migration` 13 项、API build 和 45 项 API 测试均通过。尚未输入 production snapshot、未连接或写入任何 production 数据，staging persistent import 尚未执行。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
