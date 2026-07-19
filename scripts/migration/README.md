@@ -110,3 +110,15 @@ it, and record its SHA-256 plus the `capturedAt` cutoff. The School snapshot
 and Cash ledger snapshot are separate because the current production systems
 are separate projects; their IDs are reconciled after extraction rather than
 assuming a shared transaction across projects.
+
+## Cash ledger plan generator
+
+`plan-cash-ledger-migration.mjs` is also database-free. It accepts the Cash
+read-only JSON snapshot and an explicit source-owner → staging-Auth-user map,
+then produces a deterministic plan. It preserves ledger/account/transaction
+UUIDs, rewrites only `user_id`, and never copies `auth.users` or Auth secrets.
+
+It validates the account, fixed-item/template, transfer-account, JPY↔CNY FX
+and external-request transaction references before a target is contacted. A
+missing owner mapping or a broken reference is a hard failure. The persistent
+Cash importer is the next step; do not substitute the School importer for it.

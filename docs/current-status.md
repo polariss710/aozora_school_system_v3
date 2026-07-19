@@ -70,6 +70,7 @@
 - 新增 rollback-only target applier：仅接受 `dev` / `staging`、要求 URL 与 project ref 一致，并硬拒绝现行两套 production project。v3-dev 已完成全量合成 plan 的 transaction insert / reconciliation / forced rollback，残留为 0；该工具没有持久 apply 模式。
 - 已按 production 实际字段冻结 School 私塾打工与 Cash ledger 的 source snapshot SQL 合同。二者均为 `REPEATABLE READ + READ ONLY`，返回单一 JSON snapshot 后 rollback；snapshot 只能保存在仓库外的受控加密位置。尚未执行逐行 production 导出或 staging 导入。
 - School staging 的持久导入器已完成但未执行：只接受 project ref `bxnxdkbjlxkcqwzzeyds`、显式 `--apply` 与双重 staging 确认，硬拒绝两套现行 production project；检查 21 migration / staging Cash seed / workplace / Cash owner-account 映射，在单 transaction 内写入并对账。相同完整审计计划只返回 `already_applied`，任何部分冲突均停止且不删除目标数据。
+- Cash ledger 的确定性计划器已完成但未执行：只读取受控 JSON snapshot，保留 account / transaction UUID，只将每条 ledger row 的 source `user_id` 显式映射为 staging Auth user，绝不复制 `auth.users`。在接触 target 前校验账户、固定项目、跨账户转账、JPY↔CNY FX 双向关联与 external request 的 transaction 引用闭包。
 - 未创建正式迁移批次，未导入任何 production 数据，未创建或写入 `v3-prod`，也未执行 prod 切换。
 
 下一阶段是完成独立 Cash ledger importer 与 staging Cash owner mapping，再用只读连接生成带 cutoff 的 source snapshot，写入独立受控文件后做 School↔Cash ID 对账，并将经过 hash 验证的副本导入 staging。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。

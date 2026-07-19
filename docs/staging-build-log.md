@@ -242,6 +242,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 导入按单 transaction 执行并逐表对账，保证 0 个新 Cash request。完整相同 audit plan 重跑返回 `already_applied`；部分 audit、source UUID 或字段冲突立即失败，不删除 staging 或 source 行。
 - 合成合同测试新增 persistent target boundary 与 synced mapping 缺失拒绝；`pnpm test:migration` 为 10 项通过，API build 与 45 项 API 测试均通过。未连接、读取或写入任何 production 数据，持久导入器尚未执行。
 
+## 2026-07-19 第十六轮 Cash ledger 迁移计划合同
+
+- 新增 `scripts/migration/plan-cash-ledger-migration.mjs`，只读取本地 Cash snapshot 与 source owner → staging Auth user mapping；没有数据库连接、Auth 创建或写入能力。
+- account、payment channel、fixed template/item、JPY/CNY transaction 与 external request 保留 source UUID。计划器只替换每条 ledger row 的 `user_id`，明确输出 `authUsersCopied=0`，因此不复制生产 Auth user、hash、session 或 key。
+- target 写入前已能发现缺少 owner mapping、fixed item 的 account/template 断链、transaction 的 account/transfer/FX 双向断链及 external request 的 account/created transaction 断链。
+- 合成合同测试新增确定性、owner mapping 缺失拒绝与 FX linkage 断链拒绝；`pnpm test:migration` 共 13 项通过。未读取或写入任何 production 数据，Cash persistent importer 尚未执行。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
