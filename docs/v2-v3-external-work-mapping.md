@@ -14,12 +14,12 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 
 | V2 来源 | V3 目标 | 身份政策 | 当前结论 |
 | --- | --- | --- | --- |
-| `school_historical_part_time_work_import_batches` | 待新增历史迁移批次表 | 原 batch UUID 必须沿用 | V3 当前无承载表，schema blocker |
-| `school_part_time_work_lessons` | `external_work_lessons` | 原 lesson UUID 沿用；planned/actual 关系保持 | 业务字段可映射；历史批次、原行号、软删除审计尚无承载 |
+| `school_historical_part_time_work_import_batches` | `historical_external_work_import_batches` | 原 batch UUID 必须沿用 | schema 已在 dev / staging 验证 |
+| `school_part_time_work_lessons` | `external_work_lessons` | 原 lesson UUID 沿用；planned/actual 关系保持 | 历史批次、原行号与软删除 audit-only 已可承载 |
 | `school_part_time_work_monthly_settlements` | `external_work_monthly_settlements` | 原 settlement UUID 沿用 | 主金额可映射；V2 状态与 V3 状态需受控转换 |
 | `school_part_time_work_monthly_settlement_details` | `external_work_settlement_details` | 原 detail UUID 沿用 | 可直接保持 settlement / actual lesson 引用 |
 | `school_income_records` | `income_records` | 原 income UUID 沿用 | `source_snapshot` 与历史确认状态尚无完整承载 |
-| `school_personal_cash_income_linkage_events` | 待新增 history-only linkage 表；必要时另建 V3 `cash_requests` 引用 | 原 event UUID、幂等键和 Cash identity 原样保留 | 不得把 `historical_confirmed` 伪造成 Cash transaction |
+| `school_personal_cash_income_linkage_events` | `legacy_income_linkage_events` | 原 event UUID、幂等键和 Cash identity 原样保留 | `historical_confirmed` 与正式 Cash transaction 已由约束分离 |
 | `school_part_time_work_income_requests` | 只迁移仍被正式链引用的 legacy request audit | 原 request UUID 沿用 | 盘点仅 1 条已删除且未提交 Cash 的旧 request；保留 audit，不进入运营请求 |
 | Cash `home_*` ledger | V3 prod `home_*` | 原 account/request/transaction/batch/FX UUID 保留 | 独立 Cash ledger 迁移阶段，不由本文程序写入 |
 
@@ -42,8 +42,8 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 | `transportation_fee_jpy` | `transportation_fee_jpy` | 原值 |
 | `lesson_wage_jpy` | `lesson_wage_jpy` | 原值，不按时长重算 |
 | `memo` | `memo` | 原值 |
-| `historical_import_batch_id` | 待新增 provenance FK | 原 UUID |
-| `historical_source_row` | 待新增 provenance 字段 | 原正整数 |
+| `historical_import_batch_id` | `historical_import_batch_id` provenance FK | 原 UUID |
+| `historical_source_row` | `historical_source_row` | 原正整数；与 batch 必须同时存在 |
 | `lesson_count` / `cumulative_hours` | 历史 source snapshot | 仅为 V2 展示字段，不进入 V3 工资计算，但不得丢失 |
 | `created_at` / `updated_at` / `deleted_at` | 目标时间戳 + 历史 source snapshot | 原时间必须保留；15 条 soft-deleted lesson 全部只进入 migration audit，不进入运营事实 |
 
@@ -66,16 +66,18 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 - pending / rejected / failed / blocked 事件是否进入运营 `cash_requests`，取决于冻结时最终状态和实际引用闭包；不得只按状态批量转换。
 - V2 `business_entity_id` 作为 legacy snapshot 保存，不用于给私塾打工补造 V3 普通教学业务归属。
 
-## 目标 schema 必补能力
+## 目标 schema 状态
 
-正式迁移程序前至少需要版本化实现：
+以下能力已通过版本化 migration 在 dev / staging 实现并用合成事务验收：
 
 1. 历史迁移批次表：保存原 batch UUID、source key、SHA-256、文件名、期间、预期行数/金额、result snapshot 与导入时间。
 2. 迁移记录审计表：保存 source system/table/UUID、target table/UUID、原始 row snapshot、内容 SHA-256、migration batch 和程序版本；source 与 target 均一对一。
 3. `external_work_lessons` 的历史 batch / source row 可查询身份，以及 `(batch, source row, lesson type)` 唯一约束。
 4. history-only income linkage 表：完整保存 V2 event 和 Cash identity，但不参与 V3 新业务状态流转。
 5. 能区分 `historical_confirmed` 与真实 `cash_confirmed` 的 income 历史状态或等价不可变审计表示。
-6. 对上述历史表的普通 API 写入禁用；只允许迁移执行角色插入，运营端只读。
+6. 对上述历史表的普通 API 写入禁用；`anon` / `authenticated` 无表权限，运营 API 未暴露写入口。
+
+数据库无关的计划器 `scripts/migration/plan-external-work-migration.mjs` 已实现固定范围、精确 workplace mapping、引用闭包、状态转换、逐行哈希、计划哈希和 School/Cash 写入分离。当前仍未实现或执行读取 production 逐行快照及目标 DML apply。
 
 ## 迁移顺序
 
@@ -103,4 +105,4 @@ V3 prod 已确定为 School + Cash 共置的新 project；现行 Cash production
 - 20 条 linkage 中 12 条 `historical_confirmed`（无 Cash transaction），8 条 `synced`（8 个唯一 CNY transaction）。所有 linkage source / idempotency / transaction 必填约束均通过。
 - 8 个 synced transaction 在 Cash production 全部解析，账户、CNY 金额和 income 方向全部一致；总额 CNY 36,276.77，JPY transaction ID 碰撞为 0。5 条带正式 external reference，3 条为旧式既存交易，后者不得补造 external metadata。
 
-V3 prod 尚未创建，因此目标 UUID 冲突只能在空 prod preflight 时验证。正式 migration DML 仍需先补齐本文 schema blocker，并使用合成 fixture 做 staging 演练；本次盘点没有导入任何 production 数据。
+V3 prod 尚未创建，因此目标 UUID 冲突只能在空 prod preflight 时验证。schema blocker 与纯合成计划 fixture 已完成；正式 migration DML、production 逐行快照和 production 数据副本导入均未实现或执行。本次盘点没有导入任何 production 数据。

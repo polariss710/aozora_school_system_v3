@@ -211,6 +211,14 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - staging 回滚式合成验收覆盖 migrated / audit-only、historical-confirmed / synced linkage、重复来源、migrated 缺失 target、历史课时缺失 source row、历史确认误带 Cash transaction 和不生成 Cash request；最终残留为 0 / 0 / 0。
 - 最终只读复核：21 个 applied migrations、2 个本轮 migration、3 张新表、1 条 provenance constraint、0 个 `anon` / `authenticated` grant、0 条合成批次残留。未读取或导入 production 行数据，现行 School / Cash production 未写入。
 
+## 2026-07-19 第十二轮迁移计划合同
+
+- 新增数据库无关的 `scripts/migration/plan-external-work-migration.mjs`，只读取本地 JSON snapshot 与精确 workplace map，不含数据库连接或写入能力。
+- 固定迁移合同为 `2025-12` 至 `2026-11`；保留原 UUID，校验 planned / actual、settlement / detail、income / linkage 引用，并把 soft-deleted lesson 转为 audit-only。
+- planned 已有 active actual 时映射为 `actual_created`；`historical_confirmed` income 映射为 `record_status=historical_confirmed / cash_status=not_requested`，不得生成 Cash request 或 Cash transaction。
+- source snapshot、workplace mapping、每条 audit source row 与完整 migration plan 均生成稳定 SHA-256；相同输入重复计划结果完全相同。
+- 纯合成 fixture 的 5 项合同测试通过：确定性与 0 Cash 写入、historical-confirmed 误带 Cash transaction 拒绝、缺失精确 workplace mapping 拒绝、synced Cash identity 原样保留但不生成 Cash 事实、重复 active actual 拒绝。fixture 不含 production 数据，也未连接任何数据库。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

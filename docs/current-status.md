@@ -66,9 +66,10 @@
 - 已完成 School V2 / Cash production aggregate-only 只读盘点和私塾打工逐字段 mapping；没有执行 production SQL 写入、RPC 或数据复制。
 - V3 已增加历史导入批次、课时来源行、逐记录迁移审计和 legacy income linkage schema；`historical_confirmed` 与正式 Cash 请求分离。
 - 两个 migration 已依次应用到 `v3-dev` 和 `v3-staging`。回滚式合成验收覆盖成功、幂等、缺失目标、缺失来源行和历史确认误带 Cash transaction 等边界，dev / staging 残留均为 0。
+- 数据库无关的私塾打工迁移计划器已完成：固定 `2025-12` 至 `2026-11`、精确 workplace mapping、原 UUID、引用闭包、状态转换、逐行 / snapshot / plan SHA-256 和 0 Cash 写入均有合成测试；尚无 target DML apply 能力。
 - 未创建正式迁移批次，未导入任何 production 数据，未创建或写入 `v3-prod`，也未执行 prod 切换。
 
-下一阶段需要实现只读取源、写入 staging 的可重跑迁移程序，并仅用合成迁移 fixture 完成全量对账；在用户继续禁止 production 数据副本的边界下，不把真实 production 行导入 staging。
+下一阶段需要实现只接受已验证 plan、写入 staging 的事务型 DML apply 与重跑对账，并继续只使用合成 fixture；在用户继续禁止 production 数据副本的边界下，不读取或导入 production 逐行数据。
 
 2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，没有写入或导出逐行业务数据。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`。对应历史 batch、record audit、history-only linkage 和历史状态 schema 已在 dev / staging 通过合成验收，尚未导入任何 production 数据。
 
