@@ -77,7 +77,7 @@
 - 已提供 `scripts/migration/verify-staging-snapshot-rehearsal.mjs`，可在 staging 的 read-only transaction 中基于同一受控 snapshot / mapping 重建计划并复核计数、审计、0 School Cash request 与跨系统关联；本次返回 `verified`。
 - 未创建或写入 `v3-prod`，也未执行 prod 切换。当前副本是带 cutoff 的初始演练；由于 production 仍持续写入，正式上线前仍需 final delta / freeze、全范围迁移与切换演练。
 
-下一阶段是把本次初始副本演练扩展为可重复验证报告，并准备普通教学范围的 mapping / final delta / freeze 方案。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
+下一阶段是准备普通教学范围的 mapping / final delta / freeze 方案。已新增只读核心教学结构与引用盘点合同；它只返回候选表、字段与外键元数据，不包含 business row，待 future School V2 source inventory 使用。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
 
 2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，并以受控、逐行 snapshot 在 staging 完成初始演练；production 未写入。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`。对应历史 batch、record audit、history-only linkage 和历史状态 schema 已在 dev / staging 通过合成验收；本次 staging 导入后的完整计数、关联和幂等复核已通过。
 

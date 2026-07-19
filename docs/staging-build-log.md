@@ -275,6 +275,11 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 新增 `scripts/migration/verify-staging-snapshot-rehearsal.mjs` 作为可重复只读验收入口。它同样要求 staging project ref / URL / 双重确认，且在 read-only transaction 中从受控 snapshot / mapping 重建两个 plan，验证所有 source UUID 计数、902 条 audit、0 条本次 School Cash request 以及 8 条 synced linkage 的 account owner / transaction；首次复核已返回 `verified`。
 - 本次是按 snapshot cutoff 的初始副本演练，不等同 production cutover。production 持续写入，正式上线前仍需 final delta / freeze、普通教学范围迁移与独立切换演练；`v3-prod` 未创建或写入。
 
+## 2026-07-19 第二十轮普通教学迁移发现合同
+
+- 新增 `scripts/migration/v2-core-teaching-readonly-inventory.sql`。该合同以 `REPEATABLE READ + READ ONLY` transaction 返回普通教学 `2026-07+` 候选事实、引用闭包、收入 / 支出和 legacy payment 审计的表存在性、字段字典与外键字典；明确 `containsBusinessRows=false`，最后 rollback。
+- 对应静态合同测试禁止 DML / DDL。该文件尚未在 School V2 production 执行，不读取、复制或写入 production business data；其用途仅是让下一步字段 mapping 建立在当前实际 schema 上，而非凭历史代码猜测。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

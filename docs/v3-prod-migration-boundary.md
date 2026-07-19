@@ -80,7 +80,7 @@
 
 V3 当前目标模型包括 `external_workplaces`、`external_work_lessons`、`external_work_monthly_settlements`、`external_work_settlement_details`、`income_records` 和 `cash_requests`。正式执行前必须建立逐表、逐字段映射，证明 V2 每条来源记录在 V3 中的去向；没有安全映射的字段不得静默丢弃。
 
-当前 V3 schema 尚未完整承载历史导入批次、原始行快照、来源文件哈希和个人 Cash 联动事件的全部身份字段。未来执行阶段必须先通过版本化 schema / migration 或专用审计映射表补齐承载能力，再导入 prod。本文件不授权使用备注字段拼接、名称匹配或重新生成身份来绕过该缺口。
+V3 已通过版本化 schema / migration 增加历史导入批次、原始行、来源 snapshot / hash 与 legacy Cash linkage 审计承载，并已用于私塾打工 staging 初始副本演练。普通教学模块仍必须先完成逐表字段 mapping 与受控来源盘点，确认同等身份和审计字段可无损落位；本文件不授权使用备注字段拼接、名称匹配或重新生成身份来绕过该缺口。
 
 ## 6. 历史身份与不可改写字段
 
@@ -207,12 +207,10 @@ Cash 边界在执行前必须二选一并记录环境拓扑，不能临时混用
 
 以下工作均未在本次文档阶段执行：
 
-1. V2 只读数据盘点和逐表字段字典。
-2. V3 历史身份 / 导入批次 / linkage 审计字段的 schema 设计。
-3. V2 → V3 ID mapping 与私塾打工逐字段 mapping。
-4. Cash 继续复用或独立 ledger 迁移的最终拓扑决策。
-5. staging / prod 迁移程序、回滚程序和校验报告实现。
-6. staging 全量演练、幂等重跑和异常处理。
-7. prod 全量、最终增量、冻结和单点切换。
+1. 普通教学 V2 只读数据盘点和逐表字段字典（已冻结结构 / 外键 inventory 合同，尚未运行）。
+2. 普通教学 V2 → V3 ID mapping、状态转换与历史审计落位；私塾打工 mapping 与 staging 初始演练已完成。
+3. 普通教学的 staging 迁移程序、回滚程序和校验报告。
+4. 普通教学 staging 全量演练、幂等重跑和异常处理。
+5. prod 全量、最终增量、冻结和单点切换。
 
 进入上述任何执行项前，必须另立实施计划、只读盘点、备份、审批、回滚和验收记录。
