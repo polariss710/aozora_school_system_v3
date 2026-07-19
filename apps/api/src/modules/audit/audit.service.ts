@@ -1,7 +1,11 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { AuditRiskLevel, Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service";
-import { CreateAuditEventInput, ListAuditEventsQuery } from "./audit.types";
+import {
+  CreateAuditEventInput,
+  ListAuditEventsQuery,
+  ListMigrationRecordAuditsQuery,
+} from "./audit.types";
 
 const defaultLimit = 50;
 const maxLimit = 200;
@@ -27,6 +31,34 @@ const auditEventSelect = {
     },
   },
 } satisfies Prisma.AuditEventSelect;
+
+const migrationRecordAuditSelect = {
+  id: true,
+  sourceSystem: true,
+  sourceTable: true,
+  sourceId: true,
+  targetTable: true,
+  targetId: true,
+  disposition: true,
+  sourceRowNumber: true,
+  sourceSha256: true,
+  migrationProgramVersion: true,
+  migratedAt: true,
+  importBatch: {
+    select: {
+      sourceKey: true,
+      periodStart: true,
+      periodEnd: true,
+    },
+  },
+  coreTeachingBatch: {
+    select: {
+      sourceKey: true,
+      periodStart: true,
+      periodEnd: true,
+    },
+  },
+} satisfies Prisma.MigrationRecordAuditSelect;
 
 @Injectable()
 export class AuditService {
@@ -75,6 +107,26 @@ export class AuditService {
     }
 
     return { event };
+  }
+
+  async listMigrationRecordAudits(query: ListMigrationRecordAuditsQuery) {
+    const targetTable = this.normalizeString(query.targetTable);
+    const targetId = this.normalizeString(query.targetId);
+
+    if (!targetTable || !targetId) {
+      return { items: [], total: 0 };
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.migrationRecordAudit.findMany({
+        where: { targetTable, targetId },
+        orderBy: { migratedAt: "desc" },
+        select: migrationRecordAuditSelect,
+      }),
+      this.prisma.migrationRecordAudit.count({ where: { targetTable, targetId } }),
+    ]);
+
+    return { items, total };
   }
 
   private buildWhere(query: ListAuditEventsQuery): Prisma.AuditEventWhereInput {

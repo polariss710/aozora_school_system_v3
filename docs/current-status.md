@@ -87,6 +87,8 @@
 
 V3 Web 的收入 / 支出页已同步识别 `historical_confirmed`：列表状态显示为“历史已确认”，统计单列该状态，详情明确该记录只读且不创建 Cash 请求；页面不再硬编码为 dev API，以当前部署环境 API 为准。
 
+历史已确认的收入 / 支出详情现提供“查看迁移审计”入口。该只读接口按当前目标表与记录 ID 查询，返回来源类别、批次键 / 期间、行号、SHA-256、程序版本和迁移时间；选择字段明确排除原始来源快照及业务行内容。
+
 普通教学 aggregate-only 结果现由本地门禁工具复核：未支持的 dependent fact、关键孤儿和异常 actual→planned 组合均会阻止下一步受限快照准备；范围外的远期计数会被显式报告但不会进入窗口。该工具不连接数据库、不读取或输出业务行。
 
 2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，并以受控、逐行 snapshot 在 staging 完成初始演练；production 未写入。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`。对应历史 batch、record audit、history-only linkage 和历史状态 schema 已在 dev / staging 通过合成验收；本次 staging 导入后的完整计数、关联和幂等复核已通过。

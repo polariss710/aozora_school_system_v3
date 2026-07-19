@@ -1015,6 +1015,30 @@ export interface AuditEventRecord {
   } | null;
 }
 
+export interface MigrationRecordAuditRecord {
+  id: string;
+  sourceSystem: string;
+  sourceTable: string;
+  sourceId: string;
+  targetTable: string | null;
+  targetId: string | null;
+  disposition: "migrated" | "audit_only" | "skipped";
+  sourceRowNumber: number | null;
+  sourceSha256: string;
+  migrationProgramVersion: string;
+  migratedAt: string;
+  importBatch: {
+    sourceKey: string;
+    periodStart: string;
+    periodEnd: string;
+  } | null;
+  coreTeachingBatch: {
+    sourceKey: string;
+    periodStart: string;
+    periodEnd: string;
+  } | null;
+}
+
 interface ApiHealthResponse {
   service: string;
   status: "ok";
@@ -1490,6 +1514,17 @@ export function listExternalWorkSettlements(accessToken: string) {
 
 export function listAuditEvents(accessToken: string) {
   return requestJson<ListResponse<AuditEventRecord>>("/audit/events?limit=100", {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listMigrationRecordAudits(
+  accessToken: string,
+  targetTable: string,
+  targetId: string,
+) {
+  const query = new URLSearchParams({ targetTable, targetId });
+  return requestJson<ItemsResponse<MigrationRecordAuditRecord>>(`/audit/migration-records?${query.toString()}`, {
     headers: authorizedHeaders(accessToken),
   });
 }
