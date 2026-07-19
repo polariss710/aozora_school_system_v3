@@ -39,7 +39,7 @@
 
 | 检查组 | 结果 |
 | --- | --- |
-| School migrations | 19 / 19 applied |
+| School migrations | 21 / 21 applied |
 | Cash schema | 10 tables / 48 functions / 10 RLS policies / 4 distinct guards |
 | Cash staging seed | 4 accounts / 3 allow School requests |
 | 临时管理员 | 0 |

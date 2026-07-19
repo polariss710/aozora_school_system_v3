@@ -7,7 +7,7 @@ create temporary table staging_final_checks (
 ) on commit drop;
 
 insert into staging_final_checks values
-  ('school_migrations_applied', (select count(*) from public._prisma_migrations where finished_at is not null and rolled_back_at is null), 19),
+  ('school_migrations_applied', (select count(*) from public._prisma_migrations where finished_at is not null and rolled_back_at is null), 21),
   ('cash_home_tables', (select count(*) from information_schema.tables where table_schema='public' and table_name like 'home\_%' escape '\'), 10),
   ('cash_home_functions', (select count(*) from information_schema.routines where routine_schema='public' and routine_name like 'home\_%' escape '\'), 48),
   ('cash_home_rls_policies', (select count(*) from pg_policies where schemaname='public' and tablename like 'home\_%' escape '\'), 10),

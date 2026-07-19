@@ -201,6 +201,16 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 用户确认后，`codex/v3-staging` 以 fast-forward 合入默认分支；workflow 手动运行通过。首次 scheduled run 的单个并行请求在 90 秒超时并发出失败邮件，逐项复核五个 staging 地址均为 HTTP 200，同一次 scheduled run 重试后 9 秒通过。
 - 为降低 Render 冷启动误报，探针对网络错误、超时和 HTTP 5xx 加入 10 秒等待后的一次自动重试，并为 API、DB、School、Cash、bundle 与 CORS 请求输出独立目标名称。失败邮件接收已验证，持续告警标记为启用。
 
+## 2026-07-19 第十一轮历史迁移审计 schema
+
+- 新增 migration `20260719170000_add_legacy_migration_audit` 与 `20260719173000_strengthen_historical_lesson_provenance`，School migration 总数由 19 提升为 21。
+- schema 新增历史外部工作导入批次、课时批次 / 来源行、逐记录迁移审计和 legacy income linkage event；`historical_confirmed` 明确不创建正式 Cash request，也不得携带 Cash transaction 身份。
+- 初次合成约束验收发现 PostgreSQL `CHECK` 的 `NULL` 结果会放行“有批次、无来源行”的记录；以第二个追加 migration 明确要求两个 provenance 字段同时存在且来源行大于 0，未修改已应用 migration 历史。
+- 两个 migration 先在 `v3-dev` 应用；API 10 files / 45 tests、API build、Prisma validate / generate 均通过。回滚式合成验收通过，batch / income / workplace 残留均为 0。
+- 同一组带校验和的 versioned migration 随后应用到 project ref `bxnxdkbjlxkcqwzzeyds` 对应的 `v3-staging`。执行前保护确认既有 19 个 migration 与 4 个 `STAGING Cash` 账户，未连接 dev 或 production。
+- staging 回滚式合成验收覆盖 migrated / audit-only、historical-confirmed / synced linkage、重复来源、migrated 缺失 target、历史课时缺失 source row、历史确认误带 Cash transaction 和不生成 Cash request；最终残留为 0 / 0 / 0。
+- 最终只读复核：21 个 applied migrations、2 个本轮 migration、3 张新表、1 条 provenance constraint、0 个 `anon` / `authenticated` grant、0 条合成批次残留。未读取或导入 production 行数据，现行 School / Cash production 未写入。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
