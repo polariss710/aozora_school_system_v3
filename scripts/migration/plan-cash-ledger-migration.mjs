@@ -83,9 +83,14 @@ export function buildCashLedgerMigrationPlan(snapshot, ownerMapping, options = {
   const cnyTransactions = indexRows(rows.cnyTransactions, "CNY transaction");
   const allTransactions = new Set([...jpyTransactions.keys(), ...cnyTransactions.keys()]);
 
+  for (const row of rows.fixedTemplates) {
+    assertOptionalReference(row, "default_account_id", accounts, `fixed template ${row.id}`);
+  }
   for (const row of rows.fixedMonthItems) {
     assertOptionalReference(row, "template_id", templates, `fixed month item ${row.id}`);
     assertOptionalReference(row, "account_id", accounts, `fixed month item ${row.id}`);
+    assertOptionalReference(row, "linked_jpy_transaction_id", jpyTransactions, `fixed month item ${row.id}`);
+    assertOptionalReference(row, "linked_cny_transaction_id", cnyTransactions, `fixed month item ${row.id}`);
   }
   for (const [currency, transactions, linkedField, opposite] of [
     ["JPY", rows.jpyTransactions, "linked_cny_transaction_id", cnyTransactions],

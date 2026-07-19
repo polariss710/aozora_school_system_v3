@@ -99,12 +99,25 @@ function withoutLink(row, field) {
   return { ...row, [field]: null };
 }
 
+function withoutLinks(row, fields) {
+  return fields.reduce((result, field) => withoutLink(result, field), row);
+}
+
 async function insertPlan(tx, plan) {
   for (const [key, table] of tableSteps) {
-    const linkField = key === "jpyTransactions" ? "linked_cny_transaction_id" : key === "cnyTransactions" ? "linked_jpy_transaction_id" : null;
-    for (const row of plan.target[key]) await insertRow(tx, table, linkField ? withoutLink(row, linkField) : row);
+    const deferredFields =
+      key === "fixedMonthItems"
+        ? ["linked_jpy_transaction_id", "linked_cny_transaction_id"]
+        : key === "jpyTransactions"
+          ? ["linked_cny_transaction_id"]
+          : key === "cnyTransactions"
+            ? ["linked_jpy_transaction_id"]
+            : [];
+    for (const row of plan.target[key]) await insertRow(tx, table, withoutLinks(row, deferredFields));
   }
   for (const [key, table, field] of [
+    ["fixedMonthItems", "home_fixed_month_items", "linked_jpy_transaction_id"],
+    ["fixedMonthItems", "home_fixed_month_items", "linked_cny_transaction_id"],
     ["jpyTransactions", "home_jpy_transactions", "linked_cny_transaction_id"],
     ["cnyTransactions", "home_cny_transactions", "linked_jpy_transaction_id"],
   ]) {

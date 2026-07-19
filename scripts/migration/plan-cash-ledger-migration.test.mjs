@@ -43,3 +43,17 @@ test("rejects broken Cash transaction references", () => {
   invalid.cnyTransactions[0].linked_jpy_transaction_id = "91000000-0000-4000-8000-000000000099";
   assert.throws(() => buildCashLedgerMigrationPlan(invalid, ownerMap()), /references a missing source row/);
 });
+
+test("rejects a fixed month item linked to a missing transaction", () => {
+  const invalid = snapshot();
+  invalid.fixedTemplates = [{ id: "91000000-0000-4000-8000-000000000006", user_id: sourceUser, default_account_id: accountId }];
+  invalid.fixedMonthItems = [{
+    id: "91000000-0000-4000-8000-000000000007",
+    user_id: sourceUser,
+    template_id: invalid.fixedTemplates[0].id,
+    account_id: accountId,
+    linked_jpy_transaction_id: "91000000-0000-4000-8000-000000000099",
+    linked_cny_transaction_id: null,
+  }];
+  assert.throws(() => buildCashLedgerMigrationPlan(invalid, ownerMap()), /fixed month item .*references a missing source row/);
+});

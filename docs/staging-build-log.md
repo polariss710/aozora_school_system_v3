@@ -266,6 +266,14 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - School / Cash plan 均在本地生成：School plan hash `5183df5060c669cd39442f553485aec3da0119c1ca9ca79652ce897abe13080c`（557 target lessons、21 settlement、20 income、0 Cash request/transaction）；Cash plan hash `e82e79b46458fda41e0309b295ff9199e20606d66929cdf78d93f0d84a7ca93f`（7 account、87 transaction、33 request、0 Auth user copied）。
 - School CLI 入口补齐可选第三个 Cash linkage mapping 参数；`pnpm test:migration` 13 项通过。生产项目只执行只读 snapshot；staging business facts 尚未导入，下一门槛是受控 staging database URL 以执行已有持久 importer。
 
+## 2026-07-19 第十九轮 production snapshot 初始副本演练
+
+- 仅使用仓库外、`700` 目录中的 `600` snapshot / mapping / staging connection 文件。两个 source snapshot 保持各自 `REPEATABLE READ + READ ONLY` cutoff；未连接、写入、冻结、清理或修改任一 production project。
+- Cash 初次持久导入因 fixed month item 的 transaction link 早于 transaction insert 而触发外键约束，transaction 全量回滚，未留下部分 Cash 数据。随后把 importer 修正为先插入 fixed item 的空 link，待 JPY/CNY transaction 全部落库后在同一 transaction 恢复 fixed-item 与 FX links；计划器也新增 fixed-item JPY/CNY link 闭包校验。
+- 修正后 Cash staging import 返回 `applied`：7 account、3 payment channel、25 fixed template、53 fixed month item、29 JPY transaction、58 CNY transaction、33 external request；`authUsersCopied=0`。School staging import 返回 `applied`：3 batch、557 lesson、21 settlement、264 detail、20 income、20 linkage、902 migration audit，并保持 `cashRequests=0` / `cashTransactions=0`。
+- 两套 importer 的第二次执行均返回 `already_applied`。staging 只读聚合核对确认 School 21 migrations、3 个 legacy workplace、所有上述计数准确；Cash 为 4 个 staging seed 加 7 个迁入 account。8 条 synced linkage 全部存在正确 staging Cash account owner 与对应 JPY/CNY transaction，缺失为 0。
+- 本次是按 snapshot cutoff 的初始副本演练，不等同 production cutover。production 持续写入，正式上线前仍需 final delta / freeze、普通教学范围迁移与独立切换演练；`v3-prod` 未创建或写入。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
