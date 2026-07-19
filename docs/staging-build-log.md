@@ -307,6 +307,12 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 任一工资明细 / 调整、结转、附件、payment request 或异常课时关联非零即输出 blocker，禁止进入受限 source snapshot 准备。范围外未来事实仅以无身份计数显式报告，不会混入窗口。
 - 合成合同覆盖全绿、工资调整拒绝与 actual 缺少 planned 来源拒绝；`pnpm test:migration` 共 19 项通过。该工具只允许推进到行级 snapshot 合同设计，不能授权 persistent importer、Cash 创建或 production cutover。
 
+## 2026-07-19 第二十五轮 staging 财务历史状态页面
+
+- V3 Web 的收入 / 支出真实 API 列表现在识别 `historical_confirmed`。该状态显示为“历史已确认”，以独立统计指标呈现；抽屉详情说明其只保留来源确认事实，不创建或提交 Cash 请求。
+- 因为历史状态不满足既有 pending-only 操作条件，页面保持只读，不提供提交 Cash、作废、报销或创建账户交易的入口。既有初始 staging 演练中的 historical-confirmed 收入将不再被误示为“待提交 Cash”。
+- 全部页面的 API 描述移除硬编码 `dev` 文案，改为当前环境 API；`pnpm --dir apps/web build` 通过。此项仅修改前端与文档，没有连接或变更 production 数据。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
