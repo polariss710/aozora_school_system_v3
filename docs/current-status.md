@@ -71,6 +71,8 @@
 
 下一阶段开始前，需要先完成只读盘点、schema / mapping 设计、Cash 拓扑确认、迁移与回滚程序设计，再进入 staging 演练。
 
+2026-07-19 已完成私塾打工链路的代码级逐表 / 逐字段 mapping 草案，并准备 aggregate-only、transaction read-only 的 V2 inventory SQL；尚未连接或读取 production。mapping 已确认历史 batch、原始 row provenance、history-only Cash linkage 和历史确认状态为 V3 schema blocker，实际 soft-delete、linkage status 与 legacy request 引用数量需在用户明确授权 production 只读盘点后冻结。
+
 ## Staging 准备状态
 
 - `docs/staging-readiness-checklist.md` 已确定 staging 的冻结点、schema 安装顺序、Render 配置、数据范围、E2E 矩阵、对账、失败恢复和完成标准。
