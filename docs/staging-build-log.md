@@ -301,6 +301,12 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 既有服务只允许 `pending` 支出进入编辑、报销、账户交易或作废路径，因此该新状态默认无法进入任何会创建或改写 Cash 事实的操作；没有新增生产连接、Cash request 或 Cash transaction 行为。
 - `20260719194500_add_historical_confirmed_expense_status` 已仅部署至 `v3-staging`。只读事务验收确认已完成 migration 为 23，且 PostgreSQL 枚举值存在；School / Cash production 未连接、未读取、未写入。
 
+## 2026-07-19 第二十四轮普通教学 aggregate 自动门禁
+
+- 新增 `assess-core-teaching-aggregate-readiness.mjs`。它只接受既有 aggregate-only JSON，不连接数据库、不包含或输出业务行；固定检查初始演练窗口、只读来源元数据、未支持 dependent fact、关键引用孤儿和 actual → planned 状态组合。
+- 任一工资明细 / 调整、结转、附件、payment request 或异常课时关联非零即输出 blocker，禁止进入受限 source snapshot 准备。范围外未来事实仅以无身份计数显式报告，不会混入窗口。
+- 合成合同覆盖全绿、工资调整拒绝与 actual 缺少 planned 来源拒绝；`pnpm test:migration` 共 19 项通过。该工具只允许推进到行级 snapshot 合同设计，不能授权 persistent importer、Cash 创建或 production cutover。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

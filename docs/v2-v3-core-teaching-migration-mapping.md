@@ -81,6 +81,8 @@ business entities / students / teachers / subjects
 
 这是一份当前 cutoff 的范围基线，不是 source snapshot，更不是上线导入授权。production 继续写入时，未来 final delta / freeze 必须重新生成相同合同的结果。
 
+本仓库还提供 `assess-core-teaching-aggregate-readiness.mjs`，只消费上述 aggregate JSON。它将工资明细 / 调整、结转、附件、payment request、引用孤儿与 actual→planned 状态组合设为硬门禁；任一不满足即拒绝准备受限快照。通过仅表示当前窗口可进入“行级 snapshot 合同设计”，不表示已授权 persistent importer、Cash 创建或 production cutover。
+
 ## 7. 课时与远期异常结论
 
 - 汇总确认 25 条 actual 课时都通过 `planned_lesson_id` 连接到 source planned 课时，缺失关联为 0；其中 20 条 completed、4 条 makeup completed、1 条 cancelled。没有无计划来源的 actual 课时。
