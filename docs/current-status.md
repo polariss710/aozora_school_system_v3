@@ -83,6 +83,8 @@
 
 初始普通教学演练窗口现固定为 `2026-07` 至 `2026-12`，避免把生产库内 3 条业务月 `2099` 的远期收入异常误导入；这些记录没有被查看为业务行、没有被复制、删除或修改，并留待独立处置。范围内 25 条 actual 课时均能解析到 planned 来源，缺失为 0；该课时拆分规则已记录到普通教学 mapping。
 
+为避免把当前范围内的历史已支付支出伪造为新的 V3 Cash 操作，V3 增加 `ExpenseRecordStatus.historical_confirmed`。该状态与既有收入历史状态一致：不含 Cash identity、不能再进入编辑 / 报销 / 创建账户交易路径；只用于受控历史导入及审计。
+
 2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，并以受控、逐行 snapshot 在 staging 完成初始演练；production 未写入。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`。对应历史 batch、record audit、history-only linkage 和历史状态 schema 已在 dev / staging 通过合成验收；本次 staging 导入后的完整计数、关联和幂等复核已通过。
 
 ## Staging 准备状态

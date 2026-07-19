@@ -295,6 +295,12 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 批次表强制 source SHA-256、`YYYY-MM` 范围、非空来源键 / 文件名 / 程序版本，并撤销 `anon` / `authenticated` 的全部权限。它只承载未来普通教学 snapshot 的 hash、范围、汇总元数据和逐行 audit 归属，不创建业务记录、Cash request 或 Cash transaction。
 - 本地 Prisma format / validate 与 16 项 migration 合同测试通过。迁移已只部署到 `v3-staging`；只读验收确认已完成 migration 为 22、batch 表和 audit 字段存在、浏览器角色 grant 为 0。现行 School / Cash production 未连接、未写入。
 
+## 2026-07-19 第二十三轮历史已确认支出状态
+
+- 初始普通教学窗口内存在历史已支付支出，但若没有 V3 Cash request / transaction 身份，不能标记为 `cash_confirmed`，更不能重建付款。为此新增 `ExpenseRecordStatus.historical_confirmed`，与既有收入历史状态保持相同语义：仅用于受控历史导入与审计。
+- 既有服务只允许 `pending` 支出进入编辑、报销、账户交易或作废路径，因此该新状态默认无法进入任何会创建或改写 Cash 事实的操作；没有新增生产连接、Cash request 或 Cash transaction 行为。
+- `20260719194500_add_historical_confirmed_expense_status` 已仅部署至 `v3-staging`。只读事务验收确认已完成 migration 为 23，且 PostgreSQL 枚举值存在；School / Cash production 未连接、未读取、未写入。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

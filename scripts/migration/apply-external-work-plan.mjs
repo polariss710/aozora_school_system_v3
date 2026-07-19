@@ -14,7 +14,7 @@ const knownProductionProjectRefs = new Set([
   "ahtgiwdzocerkonrjmdo",
   "xlcdqvlfzspcxdoidsrr",
 ]);
-const requiredSchoolMigrationCount = 22;
+const requiredSchoolMigrationCount = 23;
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function invariant(condition, message) {

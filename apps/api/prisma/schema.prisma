@@ -66,6 +66,7 @@ enum ExpenseRecordStatus {
   pending
   voided
   cash_confirmed
+  historical_confirmed
 }
 
 enum CashRequestStatus {

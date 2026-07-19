@@ -66,7 +66,7 @@ staging SQL-only constraint verifier is already recorded separately.
 deliberately difficult to invoke: it accepts only the explicit v3-staging
 project ref, hard-rejects both current production refs, requires the literal
 `--apply` argument and `MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging`, checks
-the 22-migration / staging-Cash baseline, and performs the entire plan in one
+the 23-migration / staging-Cash baseline, and performs the entire plan in one
 transaction.
 
 It reads the snapshot and both mapping files only from outside this repository;

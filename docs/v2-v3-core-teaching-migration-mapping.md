@@ -29,7 +29,7 @@
 | `school_teacher_wage_lock_details` | `teacher_wage_snapshot_details` + 审计 | 跟随工资快照 | 要以原 lesson UUID 关联；V3 当前详情缺少旧 CNY、汇率、交通 / 场地及状态字段，需放入不可变 snapshot 或扩展后再导入。 |
 | `school_teacher_wage_detail_adjustments` | 工资快照 `manual_adjustment_jpy` / `calculation_snapshot` + 单行审计 | 跟随工资快照 | **结构缺口**：V3 没有独立明细调整历史；多条调整的前后值与原因必须可逐条审计。 |
 | `school_income_records` | `income_records` + 审计；Cash 仅按已批准的 ledger 迁移合同解析 | 跟随已选业务链 | 原币种、原金额、状态、冲销 / 取消、来源快照均要保留；不得生成新的 Cash request。 |
-| `school_expense_records` | `expense_records` + 审计；Cash 仅按已批准的 ledger 迁移合同解析 | 跟随已选业务链 | 原币种、原金额、工资 / 业务来源、状态、报销 / 冲销信息均需保留；不得重建付款或 Cash request。 |
+| `school_expense_records` | `expense_records` + 审计；Cash 仅按已批准的 ledger 迁移合同解析 | 跟随已选业务链 | 原币种、原金额、工资 / 业务来源、状态、报销 / 冲销信息均需保留；历史已支付但无 V3 Cash 身份的行使用 `historical_confirmed`，不得重建付款或 Cash request。 |
 | `school_expense_attachments` | 独立受控附件迁移清单 + 审计 | 仅被迁移支出引用 | **结构缺口**：V3 当前没有附件元数据 / storage 目标模型。没有文件哈希、对象复制、访问控制和回滚方案时不得搬运或丢弃附件。 |
 | `school_payment_requests` | 仅 legacy 审计承载（必要时 `migration_record_audits` / 专用承载） | 仅被已选收入 / 支出链引用 | 不映射为新的 V3 `cash_requests`；必须先确认 source type、付款 / 冲销 / reissue 关系和 Cash ledger ID 的唯一去向。 |
 
