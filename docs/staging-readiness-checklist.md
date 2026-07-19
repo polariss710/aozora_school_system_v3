@@ -5,7 +5,7 @@
 ## 1. 当前结论
 
 - `v3-staging` 基础设施已于 2026-07-18 创建：独立 Tokyo Supabase project、School API、School 静态站和 Cash 静态站均已上线。
-- schema、权限、staging Auth / seed、部署健康与 CORS 边界已通过。基础 School / Cash smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback 和老师工资真实聚合 callback 已通过；私塾打工、FX 入站和完整对账报告仍未执行，因此本文第 10 节完成标准仍未通过。
+- schema、权限、staging Auth / seed、部署健康与 CORS 边界已通过。基础 School / Cash smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路已通过；两项 UI 确认、运营告警和完整对账报告仍未完成，因此本文第 10 节完成标准仍未通过。
 - 不得把 dev key、dev Auth user、dev 测试数据或 dev callback 身份复制到 staging。
 - `v3-staging` 继续采用同环境共置 School + Cash 的一个 Supabase project；School 业务权威仍在 NestJS domain service，Cash 仍通过 `home_*`、RLS 和受控 RPC 边界运行。
 - staging 创建前的 dev 主链路、异常恢复和迁移脚本冻结证据已记录；后续候选变化仍必须重新冻结和重跑本清单。
@@ -104,6 +104,8 @@
 - 第四轮学费账单 / 收据链路通过：JPY 6,000 preview fingerprint guard、bill/income 幂等、Cash approve/callback/replay、live receipt 与 immutable issued receipt 均通过，清理零残留。
 - 第五轮 CNY canonical approve 通过：CNY 123.45 income 与 CNY 67.89 expense 均 approve、callback、replay 幂等并回写 `cash_confirmed`，清理零残留。
 - 第六轮老师工资真实聚合通过自动验收：JPY 2,100 / 1,800 两条同组工资只生成一条 JPY 3,900 Cash transaction；聚合 approve、School batch callback 与 School-sync marker 重放均幂等，冲突 School batch 身份被拒绝，两条 School 支出均 confirmed。Cash / School batch / transaction 身份已保留，等待 Cash staging UI 人工确认。
+- 第七轮 CNY→JPY FX 入站通过自动验收：CNY 88.00 confirmed 来源收入匹配一组双向 Cash FX pair，School 创建唯一 JPY 1,800 法人账户流水；callback / sync 重放幂等、冲突身份拒绝、CNY / JPY 双侧四种 mutation guard 通过。证据保留等待 Cash staging UI 人工确认。
+- 第八轮私塾打工通过：外部地点、planned→actual、JPY 5,300 月结 preview / lock / export、锁后课时保护、收入幂等、真实 Cash approve / callback / replay 全部通过，精确清理零残留。
 
 以上只是第一轮基础与跨系统提交验收，不替代下列完整矩阵。
 
@@ -159,4 +161,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-19，基础 smoke、Cash 回滚型验收、JPY/CNY canonical approve / reject / callback / 幂等恢复、课程→实际课时→学生月结→老师工资 snapshot、学费账单 / 收据和工资 expense→Cash 真实聚合 callback 已通过；工资聚合 UI 人工确认、私塾打工、FX 入站和完整对账报告仍待完成，本节仍为未通过。
+截至 2026-07-19，基础 smoke、Cash 回滚型验收、JPY/CNY canonical approve / reject / callback / 幂等恢复、课程→实际课时→学生月结→老师工资 snapshot、学费账单 / 收据、工资真实聚合、CNY→JPY FX 入站和私塾打工主链路已通过；工资聚合 / FX UI 人工确认、运营告警和完整对账报告仍待完成，本节仍为未通过。

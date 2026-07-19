@@ -138,7 +138,7 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - FX 入站不支持部分购汇分摊，只支持 CNY 精确合计匹配。
 - 生产数据 mapping、迁移程序、Cash ledger 迁移和 prod 切换不进入本轮空 staging 建设。
 - 运营告警、prod 切换窗口、负责人清单在 staging E2E 完成后形成。
-- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、基础 / pending / 回滚型 E2E、JPY / CNY canonical callback、课程 / 学生月结 / 老师工资 snapshot、学费账单 / 收据和老师工资真实聚合 callback。工资聚合 UI 人工确认、FX 入站、私塾打工和完整对账报告尚未完成，因此 staging 尚未达到第 10 节完成标准。
+- 当前完成的是 staging 基础设施、schema、权限、seed、部署、健康检查、基础 / pending / 回滚型 E2E、JPY / CNY canonical callback、课程 / 学生月结 / 老师工资 snapshot、学费账单 / 收据、老师工资真实聚合 callback、FX 入站和私塾打工主链路。工资聚合 / FX UI 人工确认、运营告警和完整对账报告尚未完成，因此 staging 尚未达到第 10 节完成标准。
 
 ## 2026-07-19 第四轮学费账单与收据 E2E
 
@@ -164,6 +164,24 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 保留身份：Cash batch `c9312d4f-4712-46b0-a08b-5081f3def62c`；Cash transaction `4d7e6083-2c28-43ce-8a03-01314d3ba4a9`；School batch `6e55688a-1d74-44f6-ab9a-18fab19f4ea4`；Cash requests `9680bd4c-ef9a-4347-aab5-416b39d9719e` / `c7ea787c-18e7-4433-b25d-a93694f9243c`。
 - 临时 School 管理员已删除（后置盘点 0），Cash staging 密码已恢复原 encrypted password。业务证据为 Cash staging UI 人工验收而保留，确认前不清理。
 - 后置回归：API 10 files / 45 tests、API build 与 Web build 均通过；Web 仅保留已知的大 chunk warning。
+
+## 2026-07-19 第七轮 CNY→JPY FX 入站 E2E
+
+- 脚本：`scripts/staging/fx-inbound-smoke.mjs`；独立对账：`scripts/staging/verify-fx-inbound-e2e.sql`。
+- 合成标记：`STAGING-E2E-FX-1784423188456`。一条 CNY 88.00 School 手工收入先经真实 Cash approve、School callback 和 replay 确认为来源候选；Cash 正式 `home_create_cny_to_jpy_fx` 生成 CNY `fx_out` `22223532-2609-439a-bb48-3b48b53f34e1` 与 JPY 1,800 `fx_in` `091daf51-6326-41b7-83a2-b40d17493da2`。
+- School options 重新读取交易对并只返回同一 CNY 账户的 confirmed 收入和 active JPY corporate account；callback 创建 inbound event `aad7aa27-62f8-4220-9371-c71265a5f7b2` 与唯一 account transaction `76591bca-0529-4ae0-9a03-2309886877b2`，来源收入推进到 `account_transaction_created`。
+- 首次运行在 Render 冷启动期间于 School 登录前超时，后置盘点确认临时用户、income 和 FX 均为 0；第二次业务创建成功，但脚本因 Prisma Decimal JSON 为字符串 `"88"` 而在类型严格断言处停止。修正数值化比较后沿原 FX / School 身份继续，未重建交易。
+- 相同 School callback replay 幂等，冲突 corporate account 被 409 拒绝；Cash sync `cccba270-6779-44c6-88ad-2bbe4b09f618` 首次写入、相同身份重放幂等、冲突 School event 拒绝。独立 SQL 对账通过，并在 rollback 事务验证 CNY / JPY 两侧 update / delete 四种 guard。
+- 业务证据保留等待 Cash staging UI 人工确认；`cleanup-finalized-fx-inbound-e2e.sql` 已在 rollback 事务中完成全链精确清理试运行，确认前不执行正式清理。
+
+## 2026-07-19 第八轮私塾打工主链路 E2E
+
+- 脚本：`scripts/staging/external-work-smoke.mjs`；清理：`scripts/staging/cleanup-external-work-e2e.sql`。
+- 合成工作地点与 2099-07 一条 2 小时课时完成 planned→actual；课时工资 JPY 5,000、交通费 JPY 500、结算调整 -JPY 200，月结 preview / lock / export 总额为 JPY 5,300。
+- 月结锁定后修改实际课时被拒绝；收入生成首次创建且 replay 返回同一 income，生成收入后 settlement revoke 被拒绝。
+- JPY 5,300 收入完成真实 Cash approve、School callback 和 callback replay，最终 settlement 为 `income_created`，income 为 `cash_confirmed`。
+- 全身份清理返回 `residual_rows = 0`；临时 School 管理员删除、Cash 密码恢复。没有读取或导入 production 数据。
+- 后置盘点：临时管理员 0、首次超时 FX marker 0、私塾打工 marker 0；待 UI 确认的工资 batch 1、FX sync 1 保持完整。API 10 files / 45 tests、API build 与 Web build 均通过，Web 仅保留已知的大 chunk warning。
 
 ## 环境防串线
 

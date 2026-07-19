@@ -44,6 +44,25 @@ expects exactly two expense IDs in `STAGING_WAGE_EXPENSE_IDS`. Run
 `verify-wage-batch-e2e.sql` afterward; the verified evidence is intentionally
 retained for UI acceptance and must not be removed by generic cleanup.
 
+`fx-inbound-smoke.mjs` covers a confirmed CNY School income, the real Cash
+CNY-to-JPY FX creation RPC, server-verified inbound options, School callback /
+replay / conflict protection, and the Cash School-sync marker / replay. Run
+`verify-fx-inbound-e2e.sql` afterward; it reconciles the source income, FX pair,
+School event and account transaction, then exercises all four Cash mutation
+guards inside a rolled-back transaction. Evidence is retained for UI review.
+
+`external-work-smoke.mjs` covers external workplace creation, planned→actual
+lesson generation, settlement preview / lock / export, post-lock mutation
+protection, idempotent income generation, post-income revoke protection, and
+real JPY Cash approval / callback / replay. `cleanup-external-work-e2e.sql`
+requires the fully reconciled JPY 5,300 chain before deleting it.
+
+After manual UI review, use the evidence-specific
+`cleanup-finalized-wage-batch-e2e.sql` and
+`cleanup-finalized-fx-inbound-e2e.sql`. They pin every retained identity and
+reconcile both systems before deleting anything; a mismatch rolls back the
+whole cleanup transaction.
+
 ## School to Cash smoke
 
 Use the same three environment variables with:
