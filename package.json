@@ -9,6 +9,7 @@
     "build:api": "pnpm --dir apps/api build",
     "test:api": "pnpm --dir apps/api test",
     "test:migration": "node --test scripts/migration/plan-external-work-migration.test.mjs",
+    "verify:migration:rollback": "node scripts/migration/verify-external-work-plan-apply.mjs",
     "dev:web": "pnpm --dir apps/web dev",
     "build:web": "pnpm --dir apps/web build"
   }

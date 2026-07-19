@@ -219,6 +219,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - source snapshot、workplace mapping、每条 audit source row 与完整 migration plan 均生成稳定 SHA-256；相同输入重复计划结果完全相同。
 - 纯合成 fixture 的 5 项合同测试通过：确定性与 0 Cash 写入、historical-confirmed 误带 Cash transaction 拒绝、缺失精确 workplace mapping 拒绝、synced Cash identity 原样保留但不生成 Cash 事实、重复 active actual 拒绝。fixture 不含 production 数据，也未连接任何数据库。
 
+## 2026-07-19 第十三轮 rollback-only target apply
+
+- 新增 `scripts/migration/verify-external-work-plan-apply.mjs`。它以 Prisma transaction 按 batch → planned / actual lesson → income → settlement → detail → linkage → audit 的依赖顺序写入完整计划，再逐表对账、确认 0 个 Cash request，最后主动抛出 rollback sentinel。
+- 仅接受 `MIGRATION_TEST_ENV=dev|staging`，要求数据库 URL 包含显式 target project ref，并硬拒绝当前 Cash production 与 School V2 production project ref；工具不含持久 apply 入口。
+- 为合成 fixture 自动创建的 workplace 也在同一 transaction 内，并以明确 rollback marker 复核零残留。
+- v3-dev 验收通过：1 batch、2 lessons、1 settlement、1 detail、1 income、1 history-only linkage、8 audit；Cash request / transaction 均为 0，transaction rollback 后 batch / income / workplace residual 均为 0。没有读取或导入 production 行数据。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

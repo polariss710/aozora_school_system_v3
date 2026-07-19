@@ -39,3 +39,20 @@ node --test scripts/migration/plan-external-work-migration.test.mjs
 
 The fixture files contain synthetic UUIDs and values only. They do not contain
 production data.
+
+## Transactional rollback apply verification
+
+`verify-external-work-plan-apply.mjs` executes the plan in one database
+transaction, reconciles every target row, verifies that no Cash request was
+created, then intentionally rolls the transaction back. It never has a
+persistent apply mode.
+
+It requires explicit `MIGRATION_TEST_*` environment variables, accepts only
+`dev` or `staging`, requires the target URL to contain the expected project
+ref, and hard-rejects both current production project refs. For the synthetic
+fixture only, absent mapped workplaces are created inside the rollback-only
+transaction and therefore cannot persist.
+
+The v3-dev run has been recorded in `docs/staging-build-log.md`. The same
+transactional verifier still needs a staging credential path; the existing
+staging SQL-only constraint verifier is already recorded separately.
