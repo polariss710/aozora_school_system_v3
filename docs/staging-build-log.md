@@ -226,6 +226,14 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 为合成 fixture 自动创建的 workplace 也在同一 transaction 内，并以明确 rollback marker 复核零残留。
 - v3-dev 验收通过：1 batch、2 lessons、1 settlement、1 detail、1 income、1 history-only linkage、8 audit；Cash request / transaction 均为 0，transaction rollback 后 batch / income / workplace residual 均为 0。没有读取或导入 production 行数据。
 
+## 2026-07-19 第十四轮生产 snapshot 边界
+
+- 用户授权 production 数据进入 staging 演练，但明确要求不影响现行 production；同时确认 School / Cash 当日仍有新增数据。
+- 在 School production 与 Cash production 各执行一次 schema-only `information_schema.columns` 读取，确认 source 字段后冻结两个独立 snapshot SQL 合同；本次没有读取业务行或写入任何 production 对象。
+- `export-v2-external-work-snapshot.sql` 和 `export-cash-ledger-snapshot.sql` 均为 `REPEATABLE READ, READ ONLY` transaction，设置 90 秒 statement timeout / 5 秒 lock timeout，只返回一个 versioned JSON value 并 rollback。
+- 两个 production project 无法共享数据库 transaction，因此 snapshot 分别记录 `capturedAt`。迁移演练以各自 cutoff 为初始事实边界，再用 School legacy linkage 的 Cash transaction UUID 对账；正式切换另执行 final delta / freeze，不把持续写入中的 production 当作永久静态快照。
+- snapshot JSON 仅允许保存在仓库外的受控加密位置，禁止 commit、Render 环境变量、前端 bundle 或日志输出。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

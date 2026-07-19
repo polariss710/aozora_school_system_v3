@@ -59,3 +59,17 @@ rollback verifier through `pnpm verify:migration:rollback`.
 The v3-dev run has been recorded in `docs/staging-build-log.md`. The same
 transactional verifier still needs a staging credential path; the existing
 staging SQL-only constraint verifier is already recorded separately.
+
+## Production source snapshots
+
+`export-v2-external-work-snapshot.sql` and
+`export-cash-ledger-snapshot.sql` are source-side `REPEATABLE READ, READ ONLY`
+queries. They return one versioned JSON value and roll the transaction back.
+They do not contain `COPY`, file writes, DML, DDL, or RPC calls.
+
+Run them only with dedicated source read-only credentials. Snapshot JSON is
+production data: keep it encrypted and outside this repository, do not commit
+it, and record its SHA-256 plus the `capturedAt` cutoff. The School snapshot
+and Cash ledger snapshot are separate because the current production systems
+are separate projects; their IDs are reconciled after extraction rather than
+assuming a shared transaction across projects.

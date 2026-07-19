@@ -8,7 +8,7 @@
     "dev:api": "pnpm --dir apps/api dev",
     "build:api": "pnpm --dir apps/api build",
     "test:api": "pnpm --dir apps/api test",
-    "test:migration": "node --test scripts/migration/plan-external-work-migration.test.mjs",
+    "test:migration": "node --test scripts/migration/*.test.mjs",
     "verify:migration:rollback": "node scripts/migration/verify-external-work-plan-apply.mjs scripts/migration/fixtures/external-work-synthetic-snapshot.json scripts/migration/fixtures/external-work-synthetic-workplace-map.json",
     "dev:web": "pnpm --dir apps/web dev",
     "build:web": "pnpm --dir apps/web build"
