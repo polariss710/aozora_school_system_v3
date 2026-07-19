@@ -45,7 +45,7 @@
 - Cash 现行合同没有 pending cancel，因此 V3 真实外部请求暂不支持撤回。
 - Cash FX 入站当前仍不支持部分购汇分摊，只支持所选已确认 CNY 收入合计与 FX 转出金额完全相等；staging 真实 CNY→JPY FX 入站、重放、冲突、双侧 guard 和 Cash UI 人工验收已通过，验收事实已精确清理，prod 尚未开始。
 - 老师工资聚合付款、聚合审计与整组拒绝已完成 dev 代码、数据库、Cash dev v3-6 浏览器和用户人工验收；staging 真实聚合 approve / callback / replay / School sync 和 Cash UI 人工验收已通过，验收事实已精确清理，prod 尚未开始。
-- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路均已通过自动与必要人工验收；所有 `STAGING-E2E-*` 事实已清理为 0，最终 23 项数据库对账与无密钥运营探针通过。每小时 GitHub Actions 探针已配置在 staging 分支，待进入仓库默认分支、验证定时运行与通知设置后才视为完全启用。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
+- `v3-staging` 基础设施、凭据、callback URL、CORS 与空库 seed 已配置。基础 smoke、School 核心、学费账单 / 收据、JPY / CNY canonical callback、老师工资真实聚合 callback、FX 入站和私塾打工主链路均已通过自动与必要人工验收；所有 `STAGING-E2E-*` 事实已清理为 0，最终 23 项数据库对账与无密钥运营探针通过。每小时 GitHub Actions 探针已进入默认分支并启用，手动、定时重试和失败邮件接收均已验证。`v3-prod` 未创建，Cash ledger 生产迁移未开始。
 
 ## V2 → V3 Prod 数据迁移状态
 
@@ -61,20 +61,40 @@
 
 正式政策详见 `docs/v3-prod-migration-boundary.md`。
 
-### 尚未执行
+### 已完成的迁移准备
 
-- 未运行任何迁移 SQL、RPC 或数据复制程序。
-- 未写入 V2、V3 dev、staging、prod 或 Cash 数据库。
-- 未创建正式迁移批次或修改生产数据。
-- 未执行 V2 只读盘点、逐字段 mapping、staging 演练或 prod 切换。
-- 未补充 V3 承载历史导入批次、原始行快照、来源文件哈希和个人 Cash linkage 身份所需的 schema。
+- 已完成 School V2 / Cash production aggregate-only 只读盘点和私塾打工逐字段 mapping；没有执行 production SQL 写入、RPC 或数据复制。
+- V3 已增加历史导入批次、课时来源行、逐记录迁移审计和 legacy income linkage schema；`historical_confirmed` 与正式 Cash 请求分离。
+- 两个 migration 已依次应用到 `v3-dev` 和 `v3-staging`。回滚式合成验收覆盖成功、幂等、缺失目标、缺失来源行和历史确认误带 Cash transaction 等边界，dev / staging 残留均为 0。
+- 数据库无关的私塾打工迁移计划器已完成：固定 `2025-12` 至 `2026-11`、精确 workplace mapping、原 UUID、引用闭包、状态转换、逐行 / snapshot / plan SHA-256 和 0 Cash 写入均有合成测试；存在 synced Cash linkage 时强制要求 source Cash owner / account → staging identity 的显式映射。
+- 新增 rollback-only target applier：仅接受 `dev` / `staging`、要求 URL 与 project ref 一致，并硬拒绝现行两套 production project。v3-dev 已完成全量合成 plan 的 transaction insert / reconciliation / forced rollback，残留为 0；该工具没有持久 apply 模式。
+- 已按 production 实际字段冻结 School 私塾打工与 Cash ledger 的 source snapshot SQL 合同。二者均为 `REPEATABLE READ + READ ONLY`，返回单一 JSON snapshot 后 rollback；snapshot 只能保存在仓库外的受控加密位置。
+- School staging 的持久导入器只接受 project ref `bxnxdkbjlxkcqwzzeyds`、显式 `--apply` 与双重 staging 确认，硬拒绝两套现行 production project；检查 22 migration / staging Cash seed / workplace / Cash owner-account 映射，在单 transaction 内写入并对账。相同完整审计计划只返回 `already_applied`，任何部分冲突均停止且不删除目标数据。
+- Cash ledger 的确定性计划器只读取受控 JSON snapshot，保留 account / transaction UUID，只将每条 ledger row 的 source `user_id` 显式映射为 staging Auth user，绝不复制 `auth.users`。在接触 target 前校验账户、固定项目、跨账户转账、JPY↔CNY FX 双向关联与 external request 的 transaction 引用闭包。
+- Cash staging 的持久导入器复用 School 的 v3-staging-only / 双重确认 / production-ref 拒绝边界，要求所有映射后的 staging Auth user 已存在，逐表字段合同完全一致；JPY/CNY FX 与 fixed-item transaction links 在同一 transaction 内先安全落行、再恢复链接并逐行 JSON 对账。完整一致重跑返回 `already_applied`，半批或不一致 UUID 直接拒绝。
+- 2026-07-19 已生成并保存受控 School / Cash production read-only snapshot；两份各自有 cutoff、SHA-256、`600` 文件权限和独立 mapping。8 条 synced School linkage 全部命中 Cash snapshot。随后只向 `v3-staging` 导入经过 hash 验证的初始演练副本：School 3 batch / 557 target lesson / 21 settlement / 264 detail / 20 income / 20 linkage / 902 audit，Cash 7 account / 87 transaction / 33 request；不复制 Auth user，也不创建新的 School Cash request。
+- 两套 importer 的复跑均返回 `already_applied`。数据库聚合复核确认 8 条 synced linkage 均能在 staging 找到正确的 Cash account owner 与对应 transaction，缺失为 0；production 仅执行只读 snapshot，没有写入、删除或冻结。
+- 已提供 `scripts/migration/verify-staging-snapshot-rehearsal.mjs`，可在 staging 的 read-only transaction 中基于同一受控 snapshot / mapping 重建计划并复核计数、审计、0 School Cash request 与跨系统关联；本次返回 `verified`。
+- 未创建或写入 `v3-prod`，也未执行 prod 切换。当前副本是带 cutoff 的初始演练；由于 production 仍持续写入，正式上线前仍需 final delta / freeze、全范围迁移与切换演练。
 
-下一阶段开始前，需要先完成只读盘点、schema / mapping 设计、Cash 拓扑确认、迁移与回滚程序设计，再进入 staging 演练。
+下一阶段是准备普通教学范围的 mapping / final delta / freeze 方案。2026-07-19 已在用户授权下对 School V2 production 执行核心教学只读结构盘点：`REPEATABLE READ, READ ONLY`、仅 `information_schema`、随后 rollback；17 / 17 候选源表存在，共 403 个字段、36 条外键，未返回 business row，也没有写入或冻结 production。逐表目标去向和明确阻断项见 `docs/v2-v3-core-teaching-migration-mapping.md`：多维工资规则 / 明细调整、学生结转调整、附件和 legacy payment request 仍需版本化承载或明确保留策略，普通教学 snapshot / importer 在此之前不会建立。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
+
+紧接着已执行初始 `2026-07` 至 `2026-12` 普通教学 aggregate-only 盘点：只有课时、账单、收入、支出出现范围内汇总；月结、工资锁定 / 明细 / 调整、结转、附件和 payment request 均为零。引用闭包和四项关键孤儿检查已通过，未返回身份或业务行。该基线不构成 source snapshot 或导入授权；普通教学模型缺口仍须先解决。
+
+初始普通教学演练窗口现固定为 `2026-07` 至 `2026-12`，避免把生产库内 3 条业务月 `2099` 的远期收入异常误导入；这些记录没有被查看为业务行、没有被复制、删除或修改，并留待独立处置。范围内 25 条 actual 课时均能解析到 planned 来源，缺失为 0；该课时拆分规则已记录到普通教学 mapping。
+
+为避免把当前范围内的历史已支付支出伪造为新的 V3 Cash 操作，V3 增加 `ExpenseRecordStatus.historical_confirmed`。该状态与既有收入历史状态一致：不含 Cash identity、不能再进入编辑 / 报销 / 创建账户交易路径；只用于受控历史导入及审计。
+
+V3 Web 的收入 / 支出页已同步识别 `historical_confirmed`：列表状态显示为“历史已确认”，统计单列该状态，详情明确该记录只读且不创建 Cash 请求；页面不再硬编码为 dev API，以当前部署环境 API 为准。
+
+普通教学 aggregate-only 结果现由本地门禁工具复核：未支持的 dependent fact、关键孤儿和异常 actual→planned 组合均会阻止下一步受限快照准备；范围外的远期计数会被显式报告但不会进入窗口。该工具不连接数据库、不读取或输出业务行。
+
+2026-07-19 用户授权后已完成 School V2 / Cash production aggregate-only 只读盘点，并以受控、逐行 snapshot 在 staging 完成初始演练；production 未写入。私塾打工范围确认 3 个历史 batch、167 组历史 planned/actual、22 个 settlement、20 条 canonical income/linkage；12 条为 historical-confirmed，8 条 synced Cash transaction 已在 Cash production 全部解析。Cash production 为 7 个 account、58 条 CNY transaction、29 条 JPY transaction、53 条 fixed item 和 33 条 external request，引用孤儿为 0。完整无身份报告见 `docs/prod-readonly-inventory-20260719.md`。对应历史 batch、record audit、history-only linkage 和历史状态 schema 已在 dev / staging 通过合成验收；本次 staging 导入后的完整计数、关联和幂等复核已通过。
 
 ## Staging 准备状态
 
 - `docs/staging-readiness-checklist.md` 已确定 staging 的冻结点、schema 安装顺序、Render 配置、数据范围、E2E 矩阵、对账、失败恢复和完成标准。
-- `aozora-school-v3-staging` 已在 Tokyo 创建；School 19 个 migrations 和 Cash 10 表 / 48 函数 / 10 policies / 4 guards 已安装并验证，4 个合成 Cash 账户已 seed，未导入 production 数据。
+- `aozora-school-v3-staging` 已在 Tokyo 创建；School 22 个 migrations 和 Cash 10 表 / 48 函数 / 10 policies / 4 guards 已安装并验证，4 个合成 Cash 账户已 seed。其后已完成一次受控 School 私塾打工与 Cash ledger production snapshot 初始副本演练；production 未写入。
 - School staging API、School staging 静态站与 Cash staging 静态站均已 live；API 和数据库 health 为 ok，CORS 只允许两个 staging 前端，School bundle 不再包含 dev 回退 URL。Cash staging 已部署 `4b9dba7`，线上页面显示 `家庭账本 STAGING / V3 验收环境`，静态资源版本为 `20260718-cash-staging-v3-2`。
 - 第一轮 API / pending / Cash 回滚型 E2E 与第二轮 JPY approve / reject / callback / 幂等恢复证据已记录于 `docs/staging-build-log.md`；剩余完整矩阵与全量对账通过前 staging 不算完成，也不得进入 `v3-prod` 建设。
 - 第二轮 JPY 2,200 approved 与 JPY 1,100 rejected 已完成人工 Cash staging UI 验收；随后使用全身份匹配的事务脚本清理，School / Cash / 唯一 Cash transaction / 相关审计均已删除，全部 `STAGING-E2E-*` 盘点为 0。

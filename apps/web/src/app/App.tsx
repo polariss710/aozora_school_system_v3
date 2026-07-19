@@ -4551,7 +4551,7 @@ function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState):
 
   return {
     ...baseSettingsPage,
-    description: "真实 dev API 只读设置列表；新增和编辑入口后续按类型逐步接入",
+    description: "真实 API 只读设置列表；新增和编辑入口后续按类型逐步接入",
     metrics: [
       { label: "业务归属", value: `${settingsApi.counts.businessEntities} 个`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
       { label: "School 账户", value: `${settingsApi.counts.accounts} 个`, sub: "法人 + 垫付账户", tone: "emerald", icon: Landmark },
@@ -4620,8 +4620,8 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
     return {
       ...basePage,
       description: isError
-        ? `真实 dev API 课时读取失败：${plannedState.message ?? actualState.message ?? "请稍后重试"}`
-        : "正在读取真实 dev API 课时列表；第一层只读展示",
+        ? `真实 API 课时读取失败：${plannedState.message ?? actualState.message ?? "请稍后重试"}`
+        : "正在读取真实 API 课时列表；第一层只读展示",
       primaryAction: undefined,
       secondaryAction: undefined,
       metrics: [
@@ -4649,7 +4649,7 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
 
   return {
     ...basePage,
-    description: "真实 dev API 课时列表；支持新增预定课时、生成实际、取消、待补课和全新课时删除",
+    description: "真实 API 课时列表；支持新增预定课时、生成实际、取消、待补课和全新课时删除",
     primaryAction: "新增预定课时",
     secondaryAction: undefined,
     metrics: [
@@ -4852,8 +4852,8 @@ function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListStat
     ...basePage,
     description:
       tuitionApi.status === "error"
-        ? `真实 dev API 学费账单读取失败：${tuitionApi.message}`
-        : "真实 dev API 学费账单列表；金额来自后端账单快照，收入和作废动作受状态保护",
+        ? `真实 API 学费账单读取失败：${tuitionApi.message}`
+        : "真实 API 学费账单列表；金额来自后端账单快照，收入和作废动作受状态保护",
     primaryAction: "生成账单",
     secondaryAction: undefined,
     batchAction: undefined,
@@ -5005,8 +5005,8 @@ function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: Financ
     ...basePage,
     description:
       settlementApi.status === "error"
-        ? `真实 dev API 月度结算读取失败：${settlementApi.message}`
-        : "真实 dev API 学生月度结算；预览、锁定、撤销和重新锁定均由后端校验",
+        ? `真实 API 月度结算读取失败：${settlementApi.message}`
+        : "真实 API 学生月度结算；预览、锁定、撤销和重新锁定均由后端校验",
     primaryAction: settlementApi.status === "ready" ? "生成结算预览" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
@@ -5149,8 +5149,8 @@ function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState)
     ...basePage,
     description:
       wageRuleApi.status === "error"
-        ? `真实 dev API 工资规则读取失败：${wageRuleApi.message}`
-        : "真实 dev API 工资规则列表；按老师和业务归属维护课时单价",
+        ? `真实 API 工资规则读取失败：${wageRuleApi.message}`
+        : "真实 API 工资规则列表；按老师和业务归属维护课时单价",
     primaryAction: wageRuleApi.status === "ready" ? "新增工资规则" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
@@ -5248,8 +5248,8 @@ function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceLis
     ...basePage,
     description:
       wageSnapshotApi.status === "error"
-        ? `真实 dev API 工资结算读取失败：${wageSnapshotApi.message}`
-        : "真实 dev API 工资快照列表；支持预览、锁定、工资调整、确认、撤销和版本化重锁",
+        ? `真实 API 工资结算读取失败：${wageSnapshotApi.message}`
+        : "真实 API 工资快照列表；支持预览、锁定、工资调整、确认、撤销和版本化重锁",
     primaryAction: wageSnapshotApi.status === "ready" ? "生成工资预览" : undefined,
     secondaryAction: undefined,
     batchAction: undefined,
@@ -5371,7 +5371,7 @@ function buildWageImportPage(basePage: PageConfig, wageImportApi: FinanceListSta
     ...basePage,
     description:
       wageImportApi.status === "error"
-        ? `真实 dev API 勤务表状态读取失败：${wageImportApi.message}`
+        ? `真实 API 勤务表状态读取失败：${wageImportApi.message}`
         : "每位老师每月一份勤务表；跨业务归属合并导出并分别写回工资快照",
     primaryAction: undefined,
     secondaryAction: undefined,
@@ -5536,8 +5536,8 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
       ...basePage,
       description:
         externalLessonApi.status === "error"
-          ? `真实 dev API 打工课时读取失败：${externalLessonApi.message}`
-          : "正在读取真实 dev API 打工课时列表；第一层只读展示",
+          ? `真实 API 打工课时读取失败：${externalLessonApi.message}`
+          : "正在读取真实 API 打工课时列表；第一层只读展示",
       primaryAction: undefined,
       metrics: [
         {
@@ -5564,7 +5564,7 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
 
   return {
     ...basePage,
-    description: "真实 dev API 打工课时列表；第一层只读展示预定和实际课时对应关系",
+    description: "真实 API 打工课时列表；第一层只读展示预定和实际课时对应关系",
     primaryAction: undefined,
     metrics: [
       { label: "预定课时", value: `${plannedCount} 节`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
@@ -5720,8 +5720,8 @@ function buildExternalWorkSettlementsPage(basePage: PageConfig, settlementApi: F
     ...basePage,
     description:
       settlementApi.status === "error"
-        ? `真实 dev API 打工结算读取失败：${settlementApi.message}`
-        : "真实 dev API 打工结算列表；第一层只读展示，锁定、撤销和生成收入会在第二层接入",
+        ? `真实 API 打工结算读取失败：${settlementApi.message}`
+        : "真实 API 打工结算列表；第一层只读展示，锁定、撤销和生成收入会在第二层接入",
     primaryAction: undefined,
     secondaryAction: undefined,
     batchAction: undefined,
@@ -5833,8 +5833,8 @@ function buildAuditPage(basePage: PageConfig, auditApi: FinanceListState): PageC
     ...basePage,
     description:
       auditApi.status === "error"
-        ? `真实 dev API 审计事件读取失败：${auditApi.message}`
-        : "真实 dev API 审计事件列表；第一层只读展示关键业务操作记录",
+        ? `真实 API 审计事件读取失败：${auditApi.message}`
+        : "真实 API 审计事件列表；第一层只读展示关键业务操作记录",
     batchAction: undefined,
     selectable: false,
     rows: auditApi.rows,
@@ -5952,19 +5952,19 @@ function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListStat
     ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
   ).length;
   const confirmedCount = incomeApi.rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
-  const voidedCount = incomeApi.rows.filter((row) => row.status === "已作废").length;
+  const historicalConfirmedCount = incomeApi.rows.filter((row) => row.status === "历史已确认").length;
 
   return {
     ...basePage,
-    description: "真实 dev API 收入记录列表；手动新增、手动作废和 Cash 请求提交已接入",
+    description: "真实 API 收入记录列表；历史确认记录只读，不会重复提交 Cash",
     primaryAction: "新增手动收入",
     batchAction: undefined,
     selectable: false,
     metrics: [
-      { label: "收入记录", value: `${incomeApi.total} 条`, sub: "来自 dev API", tone: "emerald", icon: ReceiptText },
+      { label: "收入记录", value: `${incomeApi.total} 条`, sub: "来自当前环境 API", tone: "emerald", icon: ReceiptText },
       { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: Banknote },
-      { label: "已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: "sky", icon: CheckCircle2 },
-      { label: "已作废", value: `${voidedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: LockKeyhole },
+      { label: "Cash 已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: "sky", icon: CheckCircle2 },
+      { label: "历史已确认", value: `${historicalConfirmedCount} 条`, sub: "只读，不创建 Cash", tone: "violet", icon: History },
     ],
     rows: incomeApi.rows,
   };
@@ -5979,19 +5979,19 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
     ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
   ).length;
   const confirmedCount = expenseApi.rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
-  const voidedCount = expenseApi.rows.filter((row) => row.status === "已作废").length;
+  const historicalConfirmedCount = expenseApi.rows.filter((row) => row.status === "历史已确认").length;
 
   return {
     ...basePage,
-    description: "真实 dev API 支出记录列表；手动支出和老师工资支出均可进入 Cash 请求链路",
+    description: "真实 API 支出记录列表；历史确认支出只读，不会重复提交 Cash",
     primaryAction: "新增手动支出",
     batchAction: undefined,
     selectable: false,
     metrics: [
-      { label: "支出记录", value: `${expenseApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: Banknote },
+      { label: "支出记录", value: `${expenseApi.total} 条`, sub: "来自当前环境 API", tone: "sky", icon: Banknote },
       { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: Clock },
-      { label: "已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: "emerald", icon: CheckCircle2 },
-      { label: "已作废", value: `${voidedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: LockKeyhole },
+      { label: "Cash 已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: "emerald", icon: CheckCircle2 },
+      { label: "历史已确认", value: `${historicalConfirmedCount} 条`, sub: "只读，不创建 Cash", tone: "violet", icon: History },
     ],
     rows: expenseApi.rows,
   };
@@ -6012,7 +6012,7 @@ function buildCashRequestsPage(basePage: PageConfig, cashRequestApi: FinanceList
 
   return {
     ...basePage,
-    description: "真实 dev API Cash 请求列表；School 端可撤回待确认请求，确认和拒绝由 Cash 端回写",
+    description: "真实 API Cash 请求列表；School 端可撤回待确认请求，确认和拒绝由 Cash 端回写",
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -6037,7 +6037,7 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
 
   return {
     ...basePage,
-    description: "真实 dev API Cash 入站事件列表；入站请求由 Cash 端发起，School 端只处理已入账冲销",
+    description: "真实 API Cash 入站事件列表；入站请求由 Cash 端发起，School 端只处理已入账冲销",
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -6062,7 +6062,7 @@ function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceL
 
   return {
     ...basePage,
-    description: "真实 dev API 账户流水列表；新增流水、收入/支出入账和冲销动作后续接入",
+    description: "真实 API 账户流水列表；新增流水、收入/支出入账和冲销动作后续接入",
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -6303,7 +6303,11 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
           { label: "业务归属", value: businessEntityName },
           { label: "学生", value: record.student?.name ?? "-" },
           { label: "原始金额", value: amount },
+          { label: "记录状态", value: status.label },
           { label: "Cash 状态", value: cashStatus },
+          ...(record.recordStatus === "historical_confirmed"
+            ? [{ label: "历史迁移保护", value: "仅保留来源确认事实；不会创建或提交 Cash 请求" }]
+            : []),
           {
             label: "学费收据",
             value: record.receiptIssued
@@ -6370,7 +6374,11 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
           { label: "业务归属", value: businessEntityName },
           { label: "老师", value: record.teacher?.name ?? "-" },
           { label: "原始金额", value: amount },
+          { label: "记录状态", value: status.label },
           { label: "Cash 状态", value: cashStatus },
+          ...(record.recordStatus === "historical_confirmed"
+            ? [{ label: "历史迁移保护", value: "仅保留来源确认事实；不会创建或提交 Cash 请求" }]
+            : []),
           { label: "备注", value: record.memo ?? "-" },
         ],
       },
@@ -6491,7 +6499,7 @@ function buildReimbursementsPage(basePage: PageConfig, reimbursementApi: Finance
 
   return {
     ...basePage,
-    description: "真实 dev API 报销列表；从垫付支出生成法人出金和垫付入金，已完成报销可作废",
+    description: "真实 API 报销列表；从垫付支出生成法人出金和垫付入金，已完成报销可作废",
     batchAction: undefined,
     selectable: false,
     metrics: [
@@ -6555,6 +6563,10 @@ function getDefaultReimbursementCorporateAccountId(
 function getFinancialRecordStatusView(recordStatus: string, cashStatus: string): { label: string; tone: Tone } {
   if (recordStatus === "voided") {
     return { label: "已作废", tone: "slate" };
+  }
+
+  if (recordStatus === "historical_confirmed") {
+    return { label: "历史已确认", tone: "violet" };
   }
 
   if (cashStatus === "account_transaction_created") {

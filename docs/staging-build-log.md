@@ -198,6 +198,120 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 新增 `.github/workflows/staging-operational-monitor.yml`，每小时第 17 分钟运行 `scripts/staging/operational-smoke.mjs`，并提供手动运行入口。
 - workflow 使用 Node.js 22、只读仓库权限、8 分钟 job 超时和禁止并发取消；不配置 Supabase、Render 或用户 secrets。
 - GitHub 定时 workflow 只从默认分支执行。当前先提交至 `codex/v3-staging`，进入默认分支前定时任务尚未启用；失败通知取决于 GitHub 账户与仓库通知设置。
+- 用户确认后，`codex/v3-staging` 以 fast-forward 合入默认分支；workflow 手动运行通过。首次 scheduled run 的单个并行请求在 90 秒超时并发出失败邮件，逐项复核五个 staging 地址均为 HTTP 200，同一次 scheduled run 重试后 9 秒通过。
+- 为降低 Render 冷启动误报，探针对网络错误、超时和 HTTP 5xx 加入 10 秒等待后的一次自动重试，并为 API、DB、School、Cash、bundle 与 CORS 请求输出独立目标名称。失败邮件接收已验证，持续告警标记为启用。
+
+## 2026-07-19 第十一轮历史迁移审计 schema
+
+- 新增 migration `20260719170000_add_legacy_migration_audit` 与 `20260719173000_strengthen_historical_lesson_provenance`，School migration 总数由 19 提升为 21。
+- schema 新增历史外部工作导入批次、课时批次 / 来源行、逐记录迁移审计和 legacy income linkage event；`historical_confirmed` 明确不创建正式 Cash request，也不得携带 Cash transaction 身份。
+- 初次合成约束验收发现 PostgreSQL `CHECK` 的 `NULL` 结果会放行“有批次、无来源行”的记录；以第二个追加 migration 明确要求两个 provenance 字段同时存在且来源行大于 0，未修改已应用 migration 历史。
+- 两个 migration 先在 `v3-dev` 应用；API 10 files / 45 tests、API build、Prisma validate / generate 均通过。回滚式合成验收通过，batch / income / workplace 残留均为 0。
+- 同一组带校验和的 versioned migration 随后应用到 project ref `bxnxdkbjlxkcqwzzeyds` 对应的 `v3-staging`。执行前保护确认既有 19 个 migration 与 4 个 `STAGING Cash` 账户，未连接 dev 或 production。
+- staging 回滚式合成验收覆盖 migrated / audit-only、historical-confirmed / synced linkage、重复来源、migrated 缺失 target、历史课时缺失 source row、历史确认误带 Cash transaction 和不生成 Cash request；最终残留为 0 / 0 / 0。
+- 最终只读复核：21 个 applied migrations、2 个本轮 migration、3 张新表、1 条 provenance constraint、0 个 `anon` / `authenticated` grant、0 条合成批次残留。未读取或导入 production 行数据，现行 School / Cash production 未写入。
+
+## 2026-07-19 第十二轮迁移计划合同
+
+- 新增数据库无关的 `scripts/migration/plan-external-work-migration.mjs`，只读取本地 JSON snapshot 与精确 workplace map，不含数据库连接或写入能力。
+- 固定迁移合同为 `2025-12` 至 `2026-11`；保留原 UUID，校验 planned / actual、settlement / detail、income / linkage 引用，并把 soft-deleted lesson 转为 audit-only。
+- planned 已有 active actual 时映射为 `actual_created`；`historical_confirmed` income 映射为 `record_status=historical_confirmed / cash_status=not_requested`，不得生成 Cash request 或 Cash transaction。
+- source snapshot、workplace mapping、每条 audit source row 与完整 migration plan 均生成稳定 SHA-256；相同输入重复计划结果完全相同。
+- 纯合成 fixture 的 5 项合同测试通过：确定性与 0 Cash 写入、historical-confirmed 误带 Cash transaction 拒绝、缺失精确 workplace mapping 拒绝、synced Cash identity 原样保留但不生成 Cash 事实、重复 active actual 拒绝。fixture 不含 production 数据，也未连接任何数据库。
+
+## 2026-07-19 第十三轮 rollback-only target apply
+
+- 新增 `scripts/migration/verify-external-work-plan-apply.mjs`。它以 Prisma transaction 按 batch → planned / actual lesson → income → settlement → detail → linkage → audit 的依赖顺序写入完整计划，再逐表对账、确认 0 个 Cash request，最后主动抛出 rollback sentinel。
+- 仅接受 `MIGRATION_TEST_ENV=dev|staging`，要求数据库 URL 包含显式 target project ref，并硬拒绝当前 Cash production 与 School V2 production project ref；工具不含持久 apply 入口。
+- 为合成 fixture 自动创建的 workplace 也在同一 transaction 内，并以明确 rollback marker 复核零残留。
+- v3-dev 验收通过：1 batch、2 lessons、1 settlement、1 detail、1 income、1 history-only linkage、8 audit；Cash request / transaction 均为 0，transaction rollback 后 batch / income / workplace residual 均为 0。没有读取或导入 production 行数据。
+
+## 2026-07-19 第十四轮生产 snapshot 边界
+
+- 用户授权 production 数据进入 staging 演练，但明确要求不影响现行 production；同时确认 School / Cash 当日仍有新增数据。
+- 在 School production 与 Cash production 各执行一次 schema-only `information_schema.columns` 读取，确认 source 字段后冻结两个独立 snapshot SQL 合同；本次没有读取业务行或写入任何 production 对象。
+- `export-v2-external-work-snapshot.sql` 和 `export-cash-ledger-snapshot.sql` 均为 `REPEATABLE READ, READ ONLY` transaction，设置 90 秒 statement timeout / 5 秒 lock timeout，只返回一个 versioned JSON value 并 rollback。
+- 两个 production project 无法共享数据库 transaction，因此 snapshot 分别记录 `capturedAt`。迁移演练以各自 cutoff 为初始事实边界，再用 School legacy linkage 的 Cash transaction UUID 对账；正式切换另执行 final delta / freeze，不把持续写入中的 production 当作永久静态快照。
+- snapshot JSON 仅允许保存在仓库外的受控加密位置，禁止 commit、Render 环境变量、前端 bundle 或日志输出。
+
+## 2026-07-19 第十五轮 School staging 持久导入器
+
+- 新增 `scripts/migration/apply-external-work-plan.mjs`。它只读取仓库外、非 group/world readable 的 snapshot 与 mapping JSON；输出仅含 plan hash、状态和汇总数，不输出 production 行。
+- 该入口只接受 `MIGRATION_TARGET_ENV=staging`、project ref `bxnxdkbjlxkcqwzzeyds`、URL 同 ref、字面 `--apply` 及 `MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging`；当前 School V2 / Cash production ref 被硬拒绝，检查发生于任何数据库连接前。
+- 目标 preflight 要求 21 个 School migration、4 个 `STAGING Cash` seed、精确 active workplace mapping，以及 synced linkage 的 staging Cash owner/account mapping。历史 account-name snapshot 不与当前 account name 比较，避免生产账户后续改名误伤历史事实。
+- 导入按单 transaction 执行并逐表对账，保证 0 个新 Cash request。完整相同 audit plan 重跑返回 `already_applied`；部分 audit、source UUID 或字段冲突立即失败，不删除 staging 或 source 行。
+- 合成合同测试新增 persistent target boundary 与 synced mapping 缺失拒绝；`pnpm test:migration` 为 10 项通过，API build 与 45 项 API 测试均通过。未连接、读取或写入任何 production 数据，持久导入器尚未执行。
+
+## 2026-07-19 第十六轮 Cash ledger 迁移计划合同
+
+- 新增 `scripts/migration/plan-cash-ledger-migration.mjs`，只读取本地 Cash snapshot 与 source owner → staging Auth user mapping；没有数据库连接、Auth 创建或写入能力。
+- account、payment channel、fixed template/item、JPY/CNY transaction 与 external request 保留 source UUID。计划器只替换每条 ledger row 的 `user_id`，明确输出 `authUsersCopied=0`，因此不复制生产 Auth user、hash、session 或 key。
+- target 写入前已能发现缺少 owner mapping、fixed item 的 account/template 断链、transaction 的 account/transfer/FX 双向断链及 external request 的 account/created transaction 断链。
+- 合成合同测试新增确定性、owner mapping 缺失拒绝与 FX linkage 断链拒绝；`pnpm test:migration` 共 13 项通过。未读取或写入任何 production 数据，Cash persistent importer 尚未执行。
+
+## 2026-07-19 第十七轮 Cash staging 持久导入器
+
+- 新增 `scripts/migration/apply-cash-ledger-plan.mjs`，复用 School importer 的 `v3-staging` project ref、URL、字面 `--apply` 与双重确认保护；当前两套 production ref 在连接前即被拒绝。
+- preflight 要求 staging 仍有 4 个专用 Cash seed、owner mapping 的每个目标 UUID 都已存在于 staging `auth.users`，并要求 snapshot 每张非空表的字段集合与 target 完全相同。
+- 事务顺序为 account → channel/template/item → JPY/CNY transaction（暂空 FX link）→ external request → 恢复 FX 双向 link → 全行 JSON 对账。保留 source UUID，仅替换 `user_id`；不创建、复制或修改 source/staging Auth user。
+- 任一已有 source UUID 若只存在部分、或完整行与计划不同即停止；只有全部行逐字段一致时才返回 `already_applied`。没有 delete / truncate / source 连接路径。
+- `node --check`、`pnpm test:migration` 13 项、API build 和 45 项 API 测试均通过。尚未输入 production snapshot、未连接或写入任何 production 数据，staging persistent import 尚未执行。
+
+## 2026-07-19 第十八轮受控 production snapshot 与 staging mapping
+
+- 用户创建了仓库外、权限 `700` 的受控目录；两份 snapshot、三份 mapping 及两份 plan 都以 `600` 保存，均未进入 Git、Render 或前端。Dashboard 不支持 `psql` 的 `\set` 元命令，因此仅在 Dashboard 运行时移除该行；保留的 SQL 仍是 `REPEATABLE READ, READ ONLY` transaction 并 rollback。
+- School V2 snapshot cutoff 为 `2026-07-19T09:18:49.543818+00:00`，SHA-256 为 `de9b5e63d1c50809b50a3a2243fc57f8dabe7a25b8ed85ea7e740fe5a25e9682`；Cash snapshot cutoff 为 `2026-07-19T09:20:17.713179+00:00`，SHA-256 为 `14a3c7ac80ca0fd66150614c571dc9ad1f434ea122ff25c98568567ca001e302`。
+- 本地合同复核：School 3 batch / 572 source lessons / 22 settlement / 20 income / 20 linkage，Cash 7 account / 29 JPY / 58 CNY transaction / 33 request；8 条 synced School linkage 的 Cash transaction ID 全部存在于 Cash snapshot（缺失 0）。
+- staging 原有 0 个 external workplace；两次缺少 `id` / `updated_at` 的 insert 均整体回滚为 0，随后只在 staging 创建 3 个 active `legacy-*` workplace，并生成精确 workplace mapping。Cash source owner 映射至既有 staging Cash seed Auth user；不复制任何 Auth user。
+- School / Cash plan 均在本地生成：School plan hash `5183df5060c669cd39442f553485aec3da0119c1ca9ca79652ce897abe13080c`（557 target lessons、21 settlement、20 income、0 Cash request/transaction）；Cash plan hash `e82e79b46458fda41e0309b295ff9199e20606d66929cdf78d93f0d84a7ca93f`（7 account、87 transaction、33 request、0 Auth user copied）。
+- School CLI 入口补齐可选第三个 Cash linkage mapping 参数；`pnpm test:migration` 13 项通过。生产项目只执行只读 snapshot；staging business facts 尚未导入，下一门槛是受控 staging database URL 以执行已有持久 importer。
+
+## 2026-07-19 第十九轮 production snapshot 初始副本演练
+
+- 仅使用仓库外、`700` 目录中的 `600` snapshot / mapping / staging connection 文件。两个 source snapshot 保持各自 `REPEATABLE READ + READ ONLY` cutoff；未连接、写入、冻结、清理或修改任一 production project。
+- Cash 初次持久导入因 fixed month item 的 transaction link 早于 transaction insert 而触发外键约束，transaction 全量回滚，未留下部分 Cash 数据。随后把 importer 修正为先插入 fixed item 的空 link，待 JPY/CNY transaction 全部落库后在同一 transaction 恢复 fixed-item 与 FX links；计划器也新增 fixed-item JPY/CNY link 闭包校验。
+- 修正后 Cash staging import 返回 `applied`：7 account、3 payment channel、25 fixed template、53 fixed month item、29 JPY transaction、58 CNY transaction、33 external request；`authUsersCopied=0`。School staging import 返回 `applied`：3 batch、557 lesson、21 settlement、264 detail、20 income、20 linkage、902 migration audit，并保持 `cashRequests=0` / `cashTransactions=0`。
+- 两套 importer 的第二次执行均返回 `already_applied`。staging 只读聚合核对确认 School 21 migrations、3 个 legacy workplace、所有上述计数准确；Cash 为 4 个 staging seed 加 7 个迁入 account。8 条 synced linkage 全部存在正确 staging Cash account owner 与对应 JPY/CNY transaction，缺失为 0。
+- 新增 `scripts/migration/verify-staging-snapshot-rehearsal.mjs` 作为可重复只读验收入口。它同样要求 staging project ref / URL / 双重确认，且在 read-only transaction 中从受控 snapshot / mapping 重建两个 plan，验证所有 source UUID 计数、902 条 audit、0 条本次 School Cash request 以及 8 条 synced linkage 的 account owner / transaction；首次复核已返回 `verified`。
+- 本次是按 snapshot cutoff 的初始副本演练，不等同 production cutover。production 持续写入，正式上线前仍需 final delta / freeze、普通教学范围迁移与独立切换演练；`v3-prod` 未创建或写入。
+
+## 2026-07-19 第二十轮普通教学迁移发现合同
+
+- 新增 `scripts/migration/v2-core-teaching-readonly-inventory.sql`。该合同以 `REPEATABLE READ + READ ONLY` transaction 返回普通教学 `2026-07+` 候选事实、引用闭包、收入 / 支出和 legacy payment 审计的表存在性、字段字典与外键字典；明确 `containsBusinessRows=false`，最后 rollback。
+- 对应静态合同测试禁止 DML / DDL。该文件的用途是让下一步字段 mapping 建立在当前实际 schema 上，而非凭历史代码猜测。
+- 用户授权后已在 School V2 production Dashboard 执行该查询。执行结果为 17 / 17 候选表存在、403 个字段、36 条外键；没有返回业务行。查询在 `REPEATABLE READ + READ ONLY` transaction 后 rollback，未读取 / 复制 / 写入业务数据，也未冻结或修改 production。
+- 字段级映射和阻断项已记录到 `docs/v2-v3-core-teaching-migration-mapping.md`。当前明确禁止建立普通教学 source snapshot 或 persistent importer，直到多维工资、月结 adjustment / carryover、附件和 legacy payment request 的无损承载决策完成。
+
+## 2026-07-19 第二十一轮普通教学 aggregate-only 范围基线
+
+- 新增 `scripts/migration/v2-core-teaching-aggregate-inventory.sql` 与静态合同测试。该查询从 `2026-07` 起只返回按业务月 / 状态 / 币种的汇总、无身份引用闭包与关键孤儿计数；其 transaction 为 `REPEATABLE READ + READ ONLY`，最后 rollback，禁止 DML / DDL 与业务行输出。
+- 用户授权后已在 School V2 production Dashboard 执行。结果当前仅含课时、学生账单、收入与支出四个有范围内事实的聚合 section；学生月结、工资 locks / details / adjustments、结转、附件与 payment request 均为 0。引用闭包为 2 个业务归属、6 名学生、8 名老师、7 个科目，未返回任何 UUID、姓名或业务行。
+- `wage detail → lesson`、`wage adjustment → lock`、`attachment → expense`、`carryover → settlement` 四项孤儿检查均为 0。production 没有写入、复制、冻结或数据清理；该结果只作为普通教学迁移设计基线，不授权 source snapshot 或 staging import。
+- 随后把初始演练窗口收紧为 `2026-07` 至 `2026-12`，并增加 actual → planned 的无身份关联汇总。25 条范围内 actual 均连接到 source planned，缺失为 0；完成、补课完成与取消可确定映射至 V3 预定 / 实际状态。production 另有 3 条业务月 `2099` 的远期收入汇总；它们明确排除在本次范围外，没有被复制、删除、修改或作为业务行读取，待独立异常处置。
+
+## 2026-07-19 第二十二轮普通教学迁移审计承载
+
+- 新增 School Prisma migration `20260719193000_add_core_teaching_migration_audit`：创建 `core_teaching_migration_batches`，并给通用 `migration_record_audits` 增加可选的 `core_teaching_batch_id`。两类 batch 互斥；现有私塾打工 audit 继续使用原 `import_batch_id`，没有迁移、改写或删除既有事实。
+- 批次表强制 source SHA-256、`YYYY-MM` 范围、非空来源键 / 文件名 / 程序版本，并撤销 `anon` / `authenticated` 的全部权限。它只承载未来普通教学 snapshot 的 hash、范围、汇总元数据和逐行 audit 归属，不创建业务记录、Cash request 或 Cash transaction。
+- 本地 Prisma format / validate 与 16 项 migration 合同测试通过。迁移已只部署到 `v3-staging`；只读验收确认已完成 migration 为 22、batch 表和 audit 字段存在、浏览器角色 grant 为 0。现行 School / Cash production 未连接、未写入。
+
+## 2026-07-19 第二十三轮历史已确认支出状态
+
+- 初始普通教学窗口内存在历史已支付支出，但若没有 V3 Cash request / transaction 身份，不能标记为 `cash_confirmed`，更不能重建付款。为此新增 `ExpenseRecordStatus.historical_confirmed`，与既有收入历史状态保持相同语义：仅用于受控历史导入与审计。
+- 既有服务只允许 `pending` 支出进入编辑、报销、账户交易或作废路径，因此该新状态默认无法进入任何会创建或改写 Cash 事实的操作；没有新增生产连接、Cash request 或 Cash transaction 行为。
+- `20260719194500_add_historical_confirmed_expense_status` 已仅部署至 `v3-staging`。只读事务验收确认已完成 migration 为 23，且 PostgreSQL 枚举值存在；School / Cash production 未连接、未读取、未写入。
+
+## 2026-07-19 第二十四轮普通教学 aggregate 自动门禁
+
+- 新增 `assess-core-teaching-aggregate-readiness.mjs`。它只接受既有 aggregate-only JSON，不连接数据库、不包含或输出业务行；固定检查初始演练窗口、只读来源元数据、未支持 dependent fact、关键引用孤儿和 actual → planned 状态组合。
+- 任一工资明细 / 调整、结转、附件、payment request 或异常课时关联非零即输出 blocker，禁止进入受限 source snapshot 准备。范围外未来事实仅以无身份计数显式报告，不会混入窗口。
+- 合成合同覆盖全绿、工资调整拒绝与 actual 缺少 planned 来源拒绝；`pnpm test:migration` 共 19 项通过。该工具只允许推进到行级 snapshot 合同设计，不能授权 persistent importer、Cash 创建或 production cutover。
+
+## 2026-07-19 第二十五轮 staging 财务历史状态页面
+
+- V3 Web 的收入 / 支出真实 API 列表现在识别 `historical_confirmed`。该状态显示为“历史已确认”，以独立统计指标呈现；抽屉详情说明其只保留来源确认事实，不创建或提交 Cash 请求。
+- 因为历史状态不满足既有 pending-only 操作条件，页面保持只读，不提供提交 Cash、作废、报销或创建账户交易的入口。既有初始 staging 演练中的 historical-confirmed 收入将不再被误示为“待提交 Cash”。
+- 全部页面的 API 描述移除硬编码 `dev` 文案，改为当前环境 API；`pnpm --dir apps/web build` 通过。此项仅修改前端与文档，没有连接或变更 production 数据。
 
 ## 环境防串线
 

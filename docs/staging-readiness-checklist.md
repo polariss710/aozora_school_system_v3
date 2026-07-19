@@ -5,7 +5,7 @@
 ## 1. 当前结论
 
 - `v3-staging` 基础设施已于 2026-07-18 创建：独立 Tokyo Supabase project、School API、School 静态站和 Cash 静态站均已上线。
-- schema、权限、staging Auth / seed、部署健康、CORS、完整合成业务 E2E、工资 / FX UI、验收事实清理、最终数据库对账与无密钥运营探针已通过。每小时 GitHub Actions 调度已配置在 staging 分支，但进入默认分支、定时运行和通知接收尚待验证；production 数据迁移演练也未完成，因此本文第 10 节完成标准仍未全部通过。
+- schema、权限、staging Auth / seed、部署健康、CORS、完整合成业务 E2E、工资 / FX UI、验收事实清理、最终数据库对账与无密钥运营探针已通过。历史迁移审计 schema 已提升到 21 个 School migrations，并通过回滚式合成迁移验收和零残留复核。每小时 GitHub Actions 调度已进入默认分支，手动运行、定时重试和失败邮件接收已验证；production 数据迁移演练仍未完成，因此本文第 10 节完成标准仍未全部通过。
 - 不得把 dev key、dev Auth user、dev 测试数据或 dev callback 身份复制到 staging。
 - `v3-staging` 继续采用同环境共置 School + Cash 的一个 Supabase project；School 业务权威仍在 NestJS domain service，Cash 仍通过 `home_*`、RLS 和受控 RPC 边界运行。
 - staging 创建前的 dev 主链路、异常恢复和迁移脚本冻结证据已记录；后续候选变化仍必须重新冻结和重跑本清单。
@@ -82,6 +82,8 @@
 - 私塾打工按完整 2026 结算年度 `2025-12` 至 `2026-11` 导入，并保留完整审计链。
 - 如使用真实数据副本，必须记录来源快照、脱敏方式、导入批次、行数和哈希。
 - Cash ledger 迁移若进入本轮，必须使用独立 Cash ledger 迁移程序和对账报告；不得由 School 数据迁移顺带生成 Cash 流水。
+- source 只能执行 `REPEATABLE READ, READ ONLY` snapshot；School 与 Cash 各自记录 `capturedAt` cutoff。当天持续写入的数据不属于该次演练副本，绝不在 source 上冻结、清理或双写。
+- School persistent importer 只能写入 `v3-staging`，并要求已存在的 staging workplace 与 Cash owner/account 显式 mapping；任何缺失或冲突必须停止，不能通过清空 production 或临时改写 production 数据解决。
 
 ## 7. 必过 E2E 矩阵
 
@@ -161,4 +163,4 @@
 
 完成标准通过前，不创建或写入 `v3-prod`。
 
-截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、23 项最终数据库对账和无密钥运营探针已通过，报告已形成。每小时 GitHub Actions 调度已写入 staging 分支，但进入默认分支、首次定时运行和通知接收尚待验证。由于用户禁止导入 production 数据，本轮也未执行 production 数据副本迁移演练；因此本节仍未全部通过，且不得进入 `v3-prod` 建设。
+截至 2026-07-19，空 staging 的完整合成业务 E2E、必要 UI、精确清理、最终数据库对账和无密钥运营探针已通过，报告已形成。School schema 当前为 23 个 migrations；新增历史迁移审计、普通教学迁移批次 schema 与历史已确认支出状态的回滚式 / staging 验收已通过，普通教学批次表与 `migration_record_audits.core_teaching_batch_id` 均存在，`anon` / `authenticated` grant 为 0。每小时 GitHub Actions 调度、手动运行、定时重试和失败邮件接收均已验证。受控 production snapshot 的 School 私塾打工和 Cash ledger 初始副本已导入 staging，计数、8 条跨系统关联和两套 importer 幂等复跑均通过；production 未写入。普通教学范围、final delta / freeze、切换窗口与负责人清单尚未完成，因此仍不得进入 `v3-prod` 建设。

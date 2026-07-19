@@ -59,12 +59,14 @@ enum IncomeRecordStatus {
   pending
   voided
   cash_confirmed
+  historical_confirmed
 }
 
 enum ExpenseRecordStatus {
   pending
   voided
   cash_confirmed
+  historical_confirmed
 }
 
 enum CashRequestStatus {
@@ -123,6 +125,23 @@ enum ExternalWorkSettlementStatus {
   locked
   income_created
   revoked
+}
+
+enum MigrationRecordDisposition {
+  migrated
+  audit_only
+  skipped
+}
+
+enum LegacyIncomeLinkageStatus {
+  pending
+  pending_cash_request
+  awaiting_cash_confirmation
+  synced
+  historical_confirmed
+  cash_rejected
+  failed
+  blocked
 }
 
 enum StudentSettlementStatus {
@@ -709,6 +728,7 @@ model IncomeRecord {
   cashRequests           CashRequest[]
   accountTransactions    AccountTransaction[]
   receiptRecords         ReceiptRecord[]
+  legacyLinkageEvents    LegacyIncomeLinkageEvent[]
 
   @@index([sourceType, sourceId])
   @@index([studentId, yearMonth])
@@ -896,33 +916,37 @@ model ExternalWorkplace {
 }
 
 model ExternalWorkLesson {
-  id                   String                   @id @default(uuid()) @db.Uuid
-  workplaceId          String                   @map("workplace_id") @db.Uuid
-  yearMonth            String                   @map("year_month") @db.VarChar(7)
-  lessonType           ExternalWorkLessonType   @map("lesson_type")
-  plannedLessonId      String?                  @unique @map("planned_lesson_id") @db.Uuid
-  lessonDate           DateTime                 @map("lesson_date") @db.Date
-  startTime            String                   @map("start_time") @db.VarChar(5)
-  endTime              String                   @map("end_time") @db.VarChar(5)
-  durationHours        Decimal                  @map("duration_hours") @db.Decimal(6, 2)
-  instructorName       String                   @map("instructor_name")
-  lessonTitle          String?                  @map("lesson_title")
-  hourlyRateJpy        Int                      @map("hourly_rate_jpy")
-  transportationFeeJpy Int                      @default(0) @map("transportation_fee_jpy")
-  lessonWageJpy        Int                      @map("lesson_wage_jpy")
-  status               ExternalWorkLessonStatus @default(scheduled)
-  content              String?
-  memo                 String?
-  sourceType           String                   @default("manual") @map("source_type")
-  sourceId             String?                  @map("source_id")
-  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                      String                   @id @default(uuid()) @db.Uuid
+  workplaceId             String                   @map("workplace_id") @db.Uuid
+  yearMonth               String                   @map("year_month") @db.VarChar(7)
+  lessonType              ExternalWorkLessonType   @map("lesson_type")
+  plannedLessonId         String?                  @unique @map("planned_lesson_id") @db.Uuid
+  lessonDate              DateTime                 @map("lesson_date") @db.Date
+  startTime               String                   @map("start_time") @db.VarChar(5)
+  endTime                 String                   @map("end_time") @db.VarChar(5)
+  durationHours           Decimal                  @map("duration_hours") @db.Decimal(6, 2)
+  instructorName          String                   @map("instructor_name")
+  lessonTitle             String?                  @map("lesson_title")
+  hourlyRateJpy           Int                      @map("hourly_rate_jpy")
+  transportationFeeJpy    Int                      @default(0) @map("transportation_fee_jpy")
+  lessonWageJpy           Int                      @map("lesson_wage_jpy")
+  status                  ExternalWorkLessonStatus @default(scheduled)
+  content                 String?
+  memo                    String?
+  sourceType              String                   @default("manual") @map("source_type")
+  sourceId                String?                  @map("source_id")
+  historicalImportBatchId String?                  @map("historical_import_batch_id") @db.Uuid
+  historicalSourceRow     Int?                     @map("historical_source_row")
+  createdAt               DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workplace         ExternalWorkplace              @relation(fields: [workplaceId], references: [id], onDelete: Restrict)
-  plannedLesson     ExternalWorkLesson?            @relation("ExternalWorkPlannedActual", fields: [plannedLessonId], references: [id], onDelete: Restrict)
-  actualLesson      ExternalWorkLesson?            @relation("ExternalWorkPlannedActual")
-  settlementDetails ExternalWorkSettlementDetail[]
+  workplace             ExternalWorkplace                  @relation(fields: [workplaceId], references: [id], onDelete: Restrict)
+  plannedLesson         ExternalWorkLesson?                @relation("ExternalWorkPlannedActual", fields: [plannedLessonId], references: [id], onDelete: Restrict)
+  actualLesson          ExternalWorkLesson?                @relation("ExternalWorkPlannedActual")
+  settlementDetails     ExternalWorkSettlementDetail[]
+  historicalImportBatch HistoricalExternalWorkImportBatch? @relation(fields: [historicalImportBatchId], references: [id], onDelete: Restrict)
 
+  @@unique([historicalImportBatchId, historicalSourceRow, lessonType])
   @@index([workplaceId, yearMonth])
   @@index([yearMonth])
   @@index([lessonType])
@@ -983,6 +1007,127 @@ model ExternalWorkSettlementDetail {
   @@unique([settlementId, actualLessonId])
   @@index([actualLessonId])
   @@map("external_work_settlement_details")
+}
+
+model HistoricalExternalWorkImportBatch {
+  id                      String   @id @db.Uuid
+  sourceKey               String   @unique @map("source_key")
+  sourceSha256            String   @map("source_sha256") @db.Char(64)
+  sourceFilename          String   @map("source_filename")
+  importKind              String   @map("import_kind")
+  workplaceNameSnapshot   String   @map("workplace_name_snapshot")
+  periodStart             String   @map("period_start") @db.VarChar(7)
+  periodEnd               String   @map("period_end") @db.VarChar(7)
+  expectedLessonCount     Int      @map("expected_lesson_count")
+  expectedTotalJpy        Int      @map("expected_total_jpy")
+  expectedTotalCny        Decimal  @map("expected_total_cny") @db.Decimal(14, 2)
+  sourceStatus            String   @map("source_status")
+  resultSnapshot          Json     @map("result_snapshot")
+  importedBySnapshot      String   @map("imported_by_snapshot")
+  sourceImportedAt        DateTime @map("source_imported_at") @db.Timestamptz(6)
+  sourceCreatedAt         DateTime @map("source_created_at") @db.Timestamptz(6)
+  migrationProgramVersion String   @map("migration_program_version")
+  migratedAt              DateTime @default(now()) @map("migrated_at") @db.Timestamptz(6)
+
+  lessons             ExternalWorkLesson[]
+  recordAudits        MigrationRecordAudit[]
+  legacyLinkageEvents LegacyIncomeLinkageEvent[]
+
+  @@index([periodStart, periodEnd])
+  @@map("historical_external_work_import_batches")
+}
+
+model MigrationRecordAudit {
+  id                      String                     @id @default(uuid()) @db.Uuid
+  importBatchId           String?                    @map("import_batch_id") @db.Uuid
+  coreTeachingBatchId     String?                    @map("core_teaching_batch_id") @db.Uuid
+  sourceSystem            String                     @map("source_system")
+  sourceTable             String                     @map("source_table")
+  sourceId                String                     @map("source_id") @db.Uuid
+  targetTable             String?                    @map("target_table")
+  targetId                String?                    @map("target_id") @db.Uuid
+  disposition             MigrationRecordDisposition
+  sourceRowNumber         Int?                       @map("source_row_number")
+  sourceSnapshot          Json                       @map("source_snapshot")
+  sourceSha256            String                     @map("source_sha256") @db.Char(64)
+  migrationProgramVersion String                     @map("migration_program_version")
+  migratedAt              DateTime                   @default(now()) @map("migrated_at") @db.Timestamptz(6)
+
+  importBatch       HistoricalExternalWorkImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  coreTeachingBatch CoreTeachingMigrationBatch?        @relation(fields: [coreTeachingBatchId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceSystem, sourceTable, sourceId])
+  @@unique([targetTable, targetId])
+  @@index([importBatchId, disposition])
+  @@index([coreTeachingBatchId, disposition])
+  @@map("migration_record_audits")
+}
+
+model CoreTeachingMigrationBatch {
+  id                      String   @id @db.Uuid
+  sourceKey               String   @unique @map("source_key")
+  sourceSha256            String   @map("source_sha256") @db.Char(64)
+  sourceFilename          String   @map("source_filename")
+  periodStart             String   @map("period_start") @db.VarChar(7)
+  periodEnd               String   @map("period_end") @db.VarChar(7)
+  expectedSummary         Json     @map("expected_summary")
+  sourceSnapshotMetadata  Json     @map("source_snapshot_metadata")
+  migrationProgramVersion String   @map("migration_program_version")
+  migratedAt              DateTime @default(now()) @map("migrated_at") @db.Timestamptz(6)
+
+  recordAudits MigrationRecordAudit[]
+
+  @@index([periodStart, periodEnd])
+  @@map("core_teaching_migration_batches")
+}
+
+model LegacyIncomeLinkageEvent {
+  id                       String                    @id @db.Uuid
+  importBatchId            String?                   @map("import_batch_id") @db.Uuid
+  incomeRecordId           String                    @map("income_record_id") @db.Uuid
+  sourceTable              String                    @map("source_table")
+  sourceId                 String                    @map("source_id") @db.Uuid
+  sourceEventType          String                    @map("source_event_type")
+  legacyBusinessEntityId   String                    @map("legacy_business_entity_id") @db.Uuid
+  cashAccountMappingId     String?                   @map("cash_account_mapping_id") @db.Uuid
+  cashUserId               String?                   @map("cash_user_id") @db.Uuid
+  cashAccountId            String?                   @map("cash_account_id") @db.Uuid
+  cashAccountNameSnapshot  String?                   @map("cash_account_name_snapshot")
+  cashAccountTypeSnapshot  String?                   @map("cash_account_type_snapshot")
+  cashTransactionTable     String?                   @map("cash_transaction_table")
+  cashTransactionId        String?                   @map("cash_transaction_id") @db.Uuid
+  originalCurrency         CurrencyCode              @map("original_currency")
+  originalAmount           Decimal                   @map("original_amount") @db.Decimal(14, 2)
+  paymentCurrency          CurrencyCode?             @map("payment_currency")
+  paymentExchangeRate      Decimal?                  @map("payment_exchange_rate") @db.Decimal(18, 8)
+  paymentAmount            Decimal?                  @map("payment_amount") @db.Decimal(14, 2)
+  idempotencyKey           String                    @unique @map("idempotency_key")
+  syncStatus               LegacyIncomeLinkageStatus @map("sync_status")
+  attemptNo                Int                       @map("attempt_no")
+  cashRequestId            String?                   @map("cash_request_id") @db.Uuid
+  cashRequestStatus        String?                   @map("cash_request_status")
+  requestedAt              DateTime?                 @map("requested_at") @db.Timestamptz(6)
+  confirmedAt              DateTime?                 @map("confirmed_at") @db.Timestamptz(6)
+  rejectedAt               DateTime?                 @map("rejected_at") @db.Timestamptz(6)
+  rejectedReason           String?                   @map("rejected_reason")
+  cashRequestLastCheckedAt DateTime?                 @map("cash_request_last_checked_at") @db.Timestamptz(6)
+  retryCount               Int                       @map("retry_count")
+  lastError                String?                   @map("last_error")
+  note                     String?
+  sourceSnapshot           Json                      @map("source_snapshot")
+  sourceCreatedAt          DateTime                  @map("source_created_at") @db.Timestamptz(6)
+  sourceUpdatedAt          DateTime                  @map("source_updated_at") @db.Timestamptz(6)
+  sourceSyncedAt           DateTime?                 @map("source_synced_at") @db.Timestamptz(6)
+  migratedAt               DateTime                  @default(now()) @map("migrated_at") @db.Timestamptz(6)
+
+  importBatch  HistoricalExternalWorkImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  incomeRecord IncomeRecord                       @relation(fields: [incomeRecordId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceTable, sourceId, sourceEventType, attemptNo])
+  @@index([incomeRecordId])
+  @@index([cashTransactionId])
+  @@index([syncStatus])
+  @@map("legacy_income_linkage_events")
 }
 
 model AuditEvent {

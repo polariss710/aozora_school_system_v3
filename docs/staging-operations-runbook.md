@@ -14,7 +14,7 @@
 node scripts/staging/operational-smoke.mjs
 ```
 
-成功时输出 `ok=true`，并包含 `api`、`database`、`schoolFrontend`、`cashFrontend`、`cors` 五项结果；任一失败以非零状态退出。默认只访问三个 staging 域名，单请求允许 90 秒以容纳 Render 免费实例冷启动。
+成功时输出 `ok=true`，并包含 `api`、`database`、`schoolFrontend`、`cashFrontend`、`cors` 五项结果；任一失败以非零状态退出。默认只访问三个 staging 域名。每个请求允许 90 秒；网络错误、超时或 HTTP 5xx 会在等待 10 秒后自动重试一次，以容纳 Render 免费实例冷启动。两次均失败时，日志会明确输出失败目标名称。
 
 GitHub Actions 配置位于 `.github/workflows/staging-operational-monitor.yml`，每小时第 17 分钟执行一次，也支持 `workflow_dispatch` 手动运行。任务不读取 secrets，只使用仓库内脚本的 staging 默认 URL；失败会使 workflow 变红，并按 GitHub 账户与仓库通知设置发送 Actions 失败通知。
 
@@ -54,8 +54,8 @@ GitHub 的定时 workflow 只从仓库默认分支执行。当前配置先随 `c
 
 - Render deploy 失败邮件已实际到达项目账户，证明部署事件通知可用。
 - School 前端登录后每 60 秒显示 API / DB health，但这不是无人值守外部告警。
-- 仓库内无密钥探针已验收；GitHub Actions 每小时 workflow 已写入 staging 分支，待进入默认分支后开始定时执行。
+- 仓库内无密钥探针已验收；GitHub Actions 每小时 workflow 已进入默认分支并启用，手动运行和首次定时运行重试均成功。
 - GitHub Actions 的失败邮件 / Web 通知取决于 GitHub 账户和仓库通知设置；workflow 本身不保存或强制指定接收人。
 - 未经用户确认，不新增付费监控服务、不指定新的邮件/Slack 接收人，也不写入外部平台。
 
-workflow 进入默认分支、完成一次手动与一次定时成功运行，并确认通知接收设置后，才能把“运营告警”标记为完全启用。
+2026-07-19 首次定时运行因单请求 90 秒超时发出失败邮件；服务逐项复核均为 HTTP 200，同一次 scheduled run 重试后 9 秒通过。失败邮件已证明通知接收有效，探针随后加入单请求冷启动重试和目标名称诊断。当前“运营告警”已标记为启用。
