@@ -733,7 +733,7 @@ function ApiStatusBadge({
   const databaseOnline = apiHealth.database === "online";
   const label =
     apiHealth.status === "checking"
-      ? "API 检查中"
+      ? "API 唤醒中"
       : isOnline && databaseOnline
         ? "API 在线"
         : isOnline
@@ -9305,10 +9305,21 @@ function LoginScreen({
   const [rememberLogin, setRememberLogin] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const apiReady = apiHealth.status === "online" && apiHealth.database === "online";
 
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoginError(null);
+
+    if (!apiReady) {
+      setLoginError(
+        apiHealth.status === "checking"
+          ? "Staging API 正在从冷启动恢复。请等待状态变为“真实 API 已连接”后再登录。"
+          : "Staging API 暂不可用。请点击“重试”，确认 API 与数据库均已连接后再登录。",
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -9333,11 +9344,13 @@ function LoginScreen({
         ? "border-sky-200 bg-sky-50 text-sky-800"
       : "border-amber-200 bg-amber-50 text-amber-800";
   const apiStatusLabel =
-    apiHealth.status === "online" && apiHealth.database === "online"
+    apiReady
       ? "真实 API 已连接"
       : apiHealth.status === "checking"
-        ? "正在检查 API"
-        : "API 未连接，登录将进入 demo 模式";
+        ? "正在唤醒 staging API（首次访问最长约 90 秒）"
+        : apiHealth.status === "online"
+          ? "API 已连接，但数据库尚未就绪"
+          : "Staging API 暂未连接";
 
   return (
     <main
@@ -9426,10 +9439,10 @@ function LoginScreen({
 
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !apiReady}
               className="mt-7 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#1687D9] px-4 text-sm font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-wait disabled:bg-[#8cbfe3]"
             >
-              {isSubmitting ? "登录中" : "登录"}
+              {isSubmitting ? "登录中" : apiReady ? "登录" : "等待 API 就绪"}
               {isSubmitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
             </button>
 
@@ -9447,6 +9460,12 @@ function LoginScreen({
                 </button>
               </div>
               <div className="mt-1 truncate font-mono text-[11px] opacity-75">{apiHealth.apiBaseUrl}</div>
+              {apiHealth.status === "checking" && (
+                <div className="mt-1.5 leading-5 opacity-80">冷启动期间请保持本页打开；API 就绪后将自动允许登录。</div>
+              )}
+              {apiHealth.status !== "checking" && apiHealth.message && (
+                <div className="mt-1.5 leading-5 opacity-80">{apiHealth.message}</div>
+              )}
             </div>
           </form>
         </div>
