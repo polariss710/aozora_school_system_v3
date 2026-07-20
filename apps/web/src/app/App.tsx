@@ -4887,6 +4887,10 @@ function getLessonActionHint(
   planned: StudentPlannedLessonRecord,
   actual?: StudentActualLessonRecord,
 ) {
+  if (isHistoricalImportedLesson(planned)) {
+    return "这是从 V2 导入的历史课时，仅供对账与查看，不能在 Staging 中修改或继续生成业务记录。";
+  }
+
   if (actual) {
     return "已关联实际课时；后续会继续接入编辑、取消和工资联动。";
   }
@@ -7191,7 +7195,8 @@ function getLessonActionAvailability(pair: LessonPair) {
   const status = planned?.status;
   const hasActual = Boolean(pair.actualRecord || planned?.actualLesson);
   const isCompleted = status === "actual_created" || status === "makeup_completed";
-  const canActOnPlanned = Boolean(planned) && !hasActual && !isCompleted;
+  const isHistoricalImport = Boolean(planned && isHistoricalImportedLesson(planned));
+  const canActOnPlanned = Boolean(planned) && !isHistoricalImport && !hasActual && !isCompleted;
 
   return {
     canGenerateActual: canActOnPlanned && status !== "cancelled",
@@ -7200,6 +7205,10 @@ function getLessonActionAvailability(pair: LessonPair) {
     canRestore: canActOnPlanned && (status === "cancelled" || status === "makeup_pending"),
     canDeleteFresh: canActOnPlanned && status === "scheduled",
   };
+}
+
+function isHistoricalImportedLesson(lesson: Pick<StudentPlannedLessonRecord | StudentActualLessonRecord, "sourceType">) {
+  return lesson.sourceType === "legacy_v2_import";
 }
 
 function lessonActionButtonClass(
@@ -7230,7 +7239,12 @@ function LessonActionPanel({
   isSubmitting?: boolean;
 }) {
   const actions = getLessonActionAvailability(pair);
-  const disabledTitle = pair.plannedRecord ? "当前状态不能执行该动作" : "demo 数据没有后端记录";
+  const isHistoricalImport = Boolean(pair.plannedRecord && isHistoricalImportedLesson(pair.plannedRecord));
+  const disabledTitle = isHistoricalImport
+    ? "历史导入课时只读，不能在 Staging 中操作"
+    : pair.plannedRecord
+      ? "当前状态不能执行该动作"
+      : "demo 数据没有后端记录";
   const canCall = Boolean(onLessonAction) && !isSubmitting;
   const plannedStatus = pair.plannedRecord?.status;
   const showGenerateButton = !pair.plannedRecord || plannedStatus !== "cancelled";
@@ -7251,7 +7265,10 @@ function LessonActionPanel({
           <div className="text-xs font-medium text-muted-foreground">实际课时操作</div>
           <div className="mt-0.5 truncate text-sm font-semibold text-foreground">{pair.relation}</div>
         </div>
-        <StatusPill label={pair.plannedRecord ? "dev API" : "demo"} tone={pair.plannedRecord ? "emerald" : "slate"} />
+        <StatusPill
+          label={isHistoricalImport ? "历史导入 · 只读" : pair.plannedRecord ? "API" : "demo"}
+          tone={isHistoricalImport ? "amber" : pair.plannedRecord ? "emerald" : "slate"}
+        />
       </div>
       {!compact && <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{pair.actionHint}</p>}
       <div className={`${compact ? "mt-2" : "mt-3"} flex flex-wrap gap-2`}>
