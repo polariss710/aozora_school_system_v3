@@ -1235,8 +1235,9 @@ export function listExternalWorkplaces(accessToken: string) {
   });
 }
 
-export function listPlannedLessons(accessToken: string) {
-  return requestJson<ListResponse<StudentPlannedLessonRecord>>("/lessons/planned?limit=100", {
+export function listPlannedLessons(accessToken: string, query: Record<string, string> = {}) {
+  const search = new URLSearchParams({ limit: "500", ...query });
+  return requestJson<ListResponse<StudentPlannedLessonRecord>>(`/lessons/planned?${search.toString()}`, {
     headers: authorizedHeaders(accessToken),
   });
 }
@@ -1249,8 +1250,9 @@ export function createPlannedLesson(accessToken: string, input: CreatePlannedLes
   });
 }
 
-export function listActualLessons(accessToken: string) {
-  return requestJson<ListResponse<StudentActualLessonRecord>>("/lessons/actual?limit=100", {
+export function listActualLessons(accessToken: string, query: Record<string, string> = {}) {
+  const search = new URLSearchParams({ limit: "500", ...query });
+  return requestJson<ListResponse<StudentActualLessonRecord>>(`/lessons/actual?${search.toString()}`, {
     headers: authorizedHeaders(accessToken),
   });
 }
