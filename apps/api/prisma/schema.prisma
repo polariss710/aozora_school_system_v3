@@ -243,13 +243,15 @@ model RolePermission {
 }
 
 model BusinessEntity {
-  id        String       @id @default(uuid()) @db.Uuid
-  code      String       @unique
-  name      String
-  status    RecordStatus @default(active)
-  memo      String?
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique
+  name        String
+  status      RecordStatus @default(active)
+  memo        String?
+  legacyTable String?      @map("legacy_table")
+  legacyId    String?      @map("legacy_id")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   students       Student[]
   plannedLessons StudentPlannedLesson[]
@@ -259,6 +261,7 @@ model BusinessEntity {
   wageRules      TeacherWageRule[]
   wageSnapshots  TeacherWageSnapshot[]
 
+  @@unique([legacyTable, legacyId])
   @@index([status])
   @@map("business_entities")
 }
@@ -464,19 +467,22 @@ model Teacher {
 }
 
 model Subject {
-  id        String       @id @default(uuid()) @db.Uuid
-  code      String       @unique
-  name      String
-  category  String?
-  sortOrder Int          @default(0) @map("sort_order")
-  status    RecordStatus @default(active)
-  memo      String?
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique
+  name        String
+  category    String?
+  sortOrder   Int          @default(0) @map("sort_order")
+  status      RecordStatus @default(active)
+  memo        String?
+  legacyTable String?      @map("legacy_table")
+  legacyId    String?      @map("legacy_id")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
 
+  @@unique([legacyTable, legacyId])
   @@index([status])
   @@index([sortOrder])
   @@map("subjects")

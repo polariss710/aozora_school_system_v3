@@ -326,6 +326,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 门禁要求 staging 验收、私塾打工与 Cash ledger 演练、普通教学 mapping / snapshot / importer / rehearsal、production 授权和空目标、双人核验角色、有限冻结窗口及两项已知限制接受全部完备。任一缺失均列为 blocker。
 - 当前普通教学无损建模与 production 决策仍未完成，因此此门禁的预期结果为不可进入 production 准备；它把这一状态变成可复核的技术防线，而不是以文档措辞掩盖未决事项。没有 production 连接或写入。
 
+## 2026-07-20 第二十八轮普通教学主数据来源身份
+
+- 普通教学迁移审查确认通用 `migration_record_audits` 已能以 `audit_only` 承载 legacy payment request 的原始 snapshot 与来源身份，因此不建立或复用 V3 `cash_requests`。payment request 的具体 source type / reissue / Cash transaction 对账仍是后续逐行 mapping 门禁。
+- 新增 `20260720123000_add_reference_data_legacy_identity`：仅在 `business_entities` 与 `subjects` 增加可空但成对非空、复合唯一的 `legacy_table` / `legacy_id`。它让未来普通教学引用闭包以原来源身份核验，不使用名称匹配或备注拼接。
+- migration 仅应用到 `v3-staging`；只读结构复核确认四个字段、两个索引与两个 check constraint 均存在，Prisma history 为 24 个已完成 migrations。没有导入业务行、没有 Cash request / transaction 写入，也没有连接或修改现行 production。
+- `prisma format` / `validate`、API build 与 24 项迁移合同测试通过。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
