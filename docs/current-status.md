@@ -1,10 +1,11 @@
 # Aozora School System V3 当前状态
 
-更新日期：2026-07-20
+更新日期：2026-07-21
 
 ## 当前开发状态
 
 - V3 当前处于 dev 主链路实装与稳定测试阶段。
+- 2026-07-21 已登记并确认 V2 学生课时新口径，作为 V3 后续数据模型、月度应收、待补余额统计、教学运营首页与周课表设计基线：学生学费 / 月度应收只以正式预定课时为基础；实际完成、取消、补课和部分完成不自动退款或追加学费。取消和部分完成剩余时长形成归属原学生、原业务归属且可跨月保留的待补余额；补课 actual 按实际老师、科目、日期、时长进入老师工资。周课表为正式预定课时的只读排课 / 图片导出视图，不是独立事实来源。详见 `docs/project-rules.md` 与 `docs/aozora-school-v3-development-plan.md`。
 - 前端、NestJS API、Prisma schema 和 dev PostgreSQL 已建立，正式运营仍未切换到 V3。
 - 学费账单已完成生成预览、来源明细、版本判断和来源指纹保护；2026-07-16 人工验收第 1～8 项已全部通过，包括学费账单月份动态筛选修复。
 - School ↔ Cash 第一阶段服务端适配层已实装：环境隔离配置、Cash 可用账户只读、canonical income / expense pending request、approve/reject callback 验证、幂等 ID、失败复核和重试审计已进入 V3 API。
