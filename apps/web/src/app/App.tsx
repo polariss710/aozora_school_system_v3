@@ -255,6 +255,8 @@ interface DataRow {
   financeRecord?: {
     kind: "income" | "expense";
     sourceType: string;
+    sourceLabel: string;
+    yearMonth: string;
     recordStatus: string;
     cashStatus: string;
     originalCurrency: "JPY" | "CNY";
@@ -4175,7 +4177,12 @@ function BusinessPage({
   const [appliedFilterValues, setAppliedFilterValues] = useState<Record<string, string>>({});
   const [draftKeyword, setDraftKeyword] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
-  const isTuitionBillPage = page.key === "tuition-bills";
+  const supportsLocalFilters = [
+    "tuition-bills",
+    "student-settlements",
+    "income-records",
+    "expense-records",
+  ].includes(page.key);
 
   useEffect(() => {
     setDraftFilterValues({});
@@ -4185,17 +4192,22 @@ function BusinessPage({
   }, [page.key]);
 
   const visibleRows = useMemo(() => {
-    if (!isTuitionBillPage) return page.rows;
+    if (!supportsLocalFilters) return page.rows;
 
     const selectedMonth = appliedFilterValues[commonFilters.month.label];
     const selectedStudent = appliedFilterValues[commonFilters.student.label];
+    const selectedSource = appliedFilterValues[page.key === "income-records" ? "收入来源" : "支出分类"];
     const selectedStatus = appliedFilterValues[commonFilters.status.label];
     const normalizedKeyword = appliedKeyword.trim().toLocaleLowerCase();
 
     return page.rows.filter((row) => {
-      const record = row.tuitionBillRecord;
-      if (selectedMonth && record?.yearMonth !== selectedMonth) return false;
+      const tuitionBill = row.tuitionBillRecord;
+      const settlement = row.studentSettlementRecord;
+      const finance = row.financeRecord;
+      const yearMonth = tuitionBill?.yearMonth ?? settlement?.yearMonth ?? finance?.yearMonth;
+      if (selectedMonth && yearMonth !== selectedMonth) return false;
       if (selectedStudent && row.title !== selectedStudent) return false;
+      if (selectedSource && finance?.sourceLabel !== selectedSource) return false;
       if (selectedStatus && row.status !== selectedStatus) return false;
       if (!normalizedKeyword) return true;
 
@@ -4203,17 +4215,22 @@ function BusinessPage({
         row.title,
         row.subtitle,
         row.status,
-        record?.student.code,
-        record?.id,
+        tuitionBill?.student.code,
+        tuitionBill?.id,
+        settlement?.student.code,
+        settlement?.id,
+        finance?.sourceLabel,
+        finance?.sourceType,
+        finance?.yearMonth,
       ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
     });
-  }, [appliedFilterValues, appliedKeyword, isTuitionBillPage, page.rows]);
+  }, [appliedFilterValues, appliedKeyword, page.key, page.rows, supportsLocalFilters]);
   const visiblePage = useMemo(
-    () => isTuitionBillPage ? { ...page, rows: visibleRows } : page,
-    [isTuitionBillPage, page, visibleRows],
+    () => supportsLocalFilters ? { ...page, rows: visibleRows } : page,
+    [page, supportsLocalFilters, visibleRows],
   );
 
-  const resetTuitionBillFilters = () => {
+  const resetFilters = () => {
     setDraftFilterValues({});
     setAppliedFilterValues({});
     setDraftKeyword("");
@@ -4225,17 +4242,17 @@ function BusinessPage({
       <PageHeader page={page} onPrimary={onPrimary} />
       <FilterPanel
         filters={page.filters}
-        values={isTuitionBillPage ? draftFilterValues : undefined}
-        keyword={isTuitionBillPage ? draftKeyword : undefined}
-        onFilterChange={isTuitionBillPage ? (label, value) => {
+        values={supportsLocalFilters ? draftFilterValues : undefined}
+        keyword={supportsLocalFilters ? draftKeyword : undefined}
+        onFilterChange={supportsLocalFilters ? (label, value) => {
           setDraftFilterValues((current) => ({ ...current, [label]: value }));
         } : undefined}
-        onKeywordChange={isTuitionBillPage ? setDraftKeyword : undefined}
-        onQuery={isTuitionBillPage ? () => {
+        onKeywordChange={supportsLocalFilters ? setDraftKeyword : undefined}
+        onQuery={supportsLocalFilters ? () => {
           setAppliedFilterValues(draftFilterValues);
           setAppliedKeyword(draftKeyword);
         } : undefined}
-        onReset={isTuitionBillPage ? resetTuitionBillFilters : undefined}
+        onReset={supportsLocalFilters ? resetFilters : undefined}
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {page.metrics.map((metric) => (
@@ -5127,6 +5144,19 @@ function getTuitionBillStatusView(status: string): { label: string; tone: Tone }
 }
 
 function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: FinanceListState): PageConfig {
+  const recordMonths = settlementApi.rows.flatMap((row) =>
+    row.studentSettlementRecord ? [row.studentSettlementRecord.yearMonth] : [],
+  );
+  const recordStudents = settlementApi.rows.map((row) => row.title);
+  const recordStatuses = settlementApi.rows.map((row) => row.status);
+  const dynamicOptions = new Map<string, string[]>([
+    [
+      commonFilters.month.label,
+      [...new Set([...recordMonths, ...commonFilters.month.options])].sort((left, right) => right.localeCompare(left)),
+    ],
+    [commonFilters.student.label, [...new Set(recordStudents)].sort((left, right) => left.localeCompare(right, "zh-CN"))],
+    [commonFilters.status.label, [...new Set(recordStatuses)]],
+  ]);
   const readonlyBasePage: PageConfig = {
     ...basePage,
     description:
@@ -5137,6 +5167,10 @@ function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: Financ
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
+    filters: basePage.filters.map((filter) => ({
+      ...filter,
+      options: dynamicOptions.get(filter.label) ?? filter.options,
+    })),
     columns: [
       { key: "lessonCount", label: "课时", align: "right" },
       { key: "billableAmount", label: "应收课时费", align: "right" },
@@ -6079,6 +6113,14 @@ function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListStat
   ).length;
   const confirmedCount = incomeApi.rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
   const historicalConfirmedCount = incomeApi.rows.filter((row) => row.status === "历史已确认").length;
+  const dynamicOptions = new Map<string, string[]>([
+    [
+      commonFilters.month.label,
+      [...new Set(incomeApi.rows.map((row) => row.financeRecord?.yearMonth).filter(Boolean) as string[])].sort((left, right) => right.localeCompare(left)),
+    ],
+    ["收入来源", [...new Set(incomeApi.rows.map((row) => row.financeRecord?.sourceLabel).filter(Boolean) as string[])].sort((left, right) => left.localeCompare(right, "zh-CN"))],
+    [commonFilters.status.label, [...new Set(incomeApi.rows.map((row) => row.status))]],
+  ]);
 
   return {
     ...basePage,
@@ -6086,6 +6128,10 @@ function buildIncomeRecordsPage(basePage: PageConfig, incomeApi: FinanceListStat
     primaryAction: "新增手动收入",
     batchAction: undefined,
     selectable: false,
+    filters: basePage.filters.map((filter) => ({
+      ...filter,
+      options: dynamicOptions.get(filter.label) ?? filter.options,
+    })),
     metrics: [
       { label: "收入记录", value: `${incomeApi.total} 条`, sub: "来自当前环境 API", tone: "emerald", icon: ReceiptText },
       { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: Banknote },
@@ -6106,6 +6152,14 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
   ).length;
   const confirmedCount = expenseApi.rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
   const historicalConfirmedCount = expenseApi.rows.filter((row) => row.status === "历史已确认").length;
+  const dynamicOptions = new Map<string, string[]>([
+    [
+      commonFilters.month.label,
+      [...new Set(expenseApi.rows.map((row) => row.financeRecord?.yearMonth).filter(Boolean) as string[])].sort((left, right) => right.localeCompare(left)),
+    ],
+    ["支出分类", [...new Set(expenseApi.rows.map((row) => row.financeRecord?.sourceLabel).filter(Boolean) as string[])].sort((left, right) => left.localeCompare(right, "zh-CN"))],
+    [commonFilters.status.label, [...new Set(expenseApi.rows.map((row) => row.status))]],
+  ]);
 
   return {
     ...basePage,
@@ -6113,6 +6167,10 @@ function buildExpenseRecordsPage(basePage: PageConfig, expenseApi: FinanceListSt
     primaryAction: "新增手动支出",
     batchAction: undefined,
     selectable: false,
+    filters: basePage.filters.map((filter) => ({
+      ...filter,
+      options: dynamicOptions.get(filter.label) ?? filter.options,
+    })),
     metrics: [
       { label: "支出记录", value: `${expenseApi.total} 条`, sub: "来自当前环境 API", tone: "sky", icon: Banknote },
       { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: Clock },
@@ -6411,6 +6469,8 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
     financeRecord: {
       kind: "income",
       sourceType: record.sourceType,
+      sourceLabel,
+      yearMonth: record.yearMonth,
       recordStatus: record.recordStatus,
       cashStatus: record.cashStatus,
       originalCurrency: record.originalCurrency,
@@ -6488,6 +6548,8 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
     financeRecord: {
       kind: "expense",
       sourceType: record.sourceType,
+      sourceLabel: category,
+      yearMonth: record.yearMonth,
       recordStatus: record.recordStatus,
       cashStatus: record.cashStatus,
       originalCurrency: record.originalCurrency,
