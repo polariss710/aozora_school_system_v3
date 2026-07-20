@@ -143,6 +143,44 @@ result permits preparation of a restricted source-snapshot contract for eligible
 facts only; it does not authorize an importer, Cash creation, or a production
 cutover.
 
+## Core teaching controlled snapshot and staging preparation
+
+`validate-core-teaching-snapshot.mjs` is database-free. It validates a future
+ordinary-teaching business-row snapshot together with its separate exclusion
+manifest. The snapshot must preserve source UUIDs and reference closure for
+eligible business entities, students, teachers, subjects, lessons, settlements,
+bills, incomes and expenses. Its `aggregateInventorySha256` must pin the exact
+aggregate-only inventory from which the source export was prepared.
+
+The manifest is mandatory under `v2_readonly_retention_v1`: every discovered
+wage-detail / adjustment, student-settlement adjustment / carryover, attachment
+or legacy payment-request dependency must match one and only one recorded
+V2-readonly exclusion chain. It never outputs business rows; it returns only
+the snapshot hash and aggregate counts.
+
+`prepare-core-teaching-staging-import.mjs` combines that validation with the
+existing staging target guard. It accepts only the explicit staging project,
+the existing double confirmation, and three repository-external private files
+(mode `600` or stricter): snapshot, exclusion manifest and aggregate inventory.
+It returns `prepared_not_applied`; it does not initialize a database client,
+write target rows, create Cash requests or read production.
+
+```sh
+MIGRATION_TARGET_ENV=staging \
+MIGRATION_TARGET_PROJECT_REF=bxnxdkbjlxkcqwzzeyds \
+MIGRATION_TARGET_DATABASE_URL='postgresql://…bxnxdkbjlxkcqwzzeyds…' \
+MIGRATION_CONFIRM_STAGING_IMPORT=v3-staging \
+node scripts/migration/prepare-core-teaching-staging-import.mjs \
+  /controlled/path/core-teaching-snapshot.json \
+  /controlled/path/core-teaching-exclusions.json \
+  /controlled/path/core-teaching-aggregate.json \
+  --prepare-staging-import
+```
+
+This is not a persistent importer. A future importer must separately retain the
+same target boundary, one-transaction / idempotent reconciliation, zero-new-Cash
+request rule and a staging rehearsal before it can be considered.
+
 ## Final delta / freeze cutover gate
 
 `assess-cutover-readiness.mjs` is database-free and accepts only a metadata-only

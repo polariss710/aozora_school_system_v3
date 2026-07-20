@@ -1,7 +1,7 @@
 # V2 → V3 普通教学迁移映射与缺口清单
 
-更新日期：2026-07-19  
-状态：源结构与 aggregate-only 范围已核验；普通教学业务行尚未导出、未生成普通教学快照、未写入 staging / prod。普通教学迁移批次审计 schema 已单独部署到 staging。
+更新日期：2026-07-20
+状态：源结构与 aggregate-only 范围已核验；普通教学业务行尚未导出、未生成普通教学快照、未写入 staging / prod。快照与 V2 只读 exclusion manifest 的离线合同、哈希绑定及 staging-only 准备门禁已完成；普通教学迁移批次审计 schema 已单独部署到 staging。
 
 ## 1. 依据与边界
 
@@ -68,6 +68,8 @@ business entities / students / teachers / subjects
 
 1. 新增受控 JSON snapshot 合同；该 snapshot 必须位于仓库外、权限 `600`，并以 SHA-256 固定，且带明示 exclusion manifest。
 2. 普通教学 persistent importer 必须沿用 staging-only / 双确认 / production-ref 拒绝 / 单事务 / 幂等重跑 / 零新 Cash request 的防线；通过 staging 演练后，才能进入 final delta / freeze 设计。
+
+第一项的离线合同与 staging 准备门禁现已完成：它校验 source UUID / 引用闭包、aggregate inventory SHA-256、snapshot SHA-256、逐链 exclusion manifest 和 staging target。它只返回 hash 与计数，明确没有数据库连接或写入能力；尚未导出或读取新的 production 业务行。
 
 ## 5. 本次结构盘点结论
 
