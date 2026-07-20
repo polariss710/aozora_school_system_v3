@@ -79,7 +79,7 @@
 
 普通教学的 mapping / final delta / freeze 已进入受控准备阶段。2026-07-19 已在用户授权下对 School V2 production 执行核心教学只读结构盘点：`REPEATABLE READ, READ ONLY`、仅 `information_schema`、随后 rollback；17 / 17 候选源表存在，共 403 个字段、36 条外键，未返回 business row，也没有写入或冻结 production。逐表目标去向和明确阻断项见 `docs/v2-v3-core-teaching-migration-mapping.md`：多维工资规则 / 明细调整、学生结转调整、附件和 legacy payment request 仍需版本化承载或明确保留策略，普通教学 snapshot / importer 在此之前不会建立。新增 database-free `assess-cutover-readiness.mjs`，只有 staging 验收、普通教学演练、production 授权、空目标、负责人、冻结窗口和已知限制接受全部登记后才会给出 Go；它不包含业务行或凭据，也不能读取或改写 production。production 当前仍在写入，因此每次 snapshot 都按自身 `capturedAt` 作为初始批次边界；未来上线另走 final delta / freeze，不把今天的持续写入当作静态旧数据。
 
-2026-07-20 已仅向 `v3-staging` 应用 `20260720123000_add_reference_data_legacy_identity`：`business_entities` 与 `subjects` 均增加成对的 `legacy_table` / `legacy_id`、非空配对约束和复合唯一索引，支持未来普通教学按来源身份而非名称对账。结构只读复核与 Prisma migration history 均通过，staging migration 数为 24；没有导入业务行，也没有连接或修改 production。
+2026-07-20 已仅向 `v3-staging` 应用两项 reference legacy identity migration：`business_entities`、`students`、`teachers` 与 `subjects` 均具备成对的 `legacy_table` / `legacy_id`、非空配对约束和复合唯一索引，支持未来普通教学按来源身份而非名称对账。每项迁移均先完成 staging 聚合预检（无半成对数据），随后结构只读复核与 Prisma migration history 均通过，staging migration 数为 25；没有导入业务行，也没有连接或修改 production。
 
 紧接着已执行初始 `2026-07` 至 `2026-12` 普通教学 aggregate-only 盘点：只有课时、账单、收入、支出出现范围内汇总；月结、工资锁定 / 明细 / 调整、结转、附件和 payment request 均为零。引用闭包和四项关键孤儿检查已通过，未返回身份或业务行。该基线不构成 source snapshot 或导入授权；普通教学模型缺口仍须先解决。
 
