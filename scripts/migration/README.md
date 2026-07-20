@@ -204,6 +204,16 @@ This is not a persistent importer. A future importer must separately retain the
 same target boundary, one-transaction / idempotent reconciliation, zero-new-Cash
 request rule and a staging rehearsal before it can be considered.
 
+`plan-core-teaching-migration.mjs` and `apply-core-teaching-plan.mjs` implement
+that staging rehearsal. The importer accepts the same private snapshot,
+manifest and aggregate inventory, demands both staging confirmations and rejects
+the current production refs before connecting. It preserves source UUIDs and
+creates a `core_teaching_migration_batches` row plus per-record audits. Historical
+income and expense facts become `historical_confirmed`; it never creates a Cash
+request or Cash transaction. For the rare V2 one-planned-to-many-actual history,
+the first actual retains the normal operational relation and additional actuals
+use the read-only `legacy_planned_lesson_id` relation.
+
 ## Final delta / freeze cutover gate
 
 `assess-cutover-readiness.mjs` is database-free and accepts only a metadata-only

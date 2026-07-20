@@ -367,6 +367,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 新增 `create-core-teaching-exclusion-manifest.mjs`，只能从仓库外且权限为 `600` 的快照生成同样私有的 manifest；所有 candidate 必须采用固定 `v2_readonly_retention_v1` handling。当前快照生成的 manifest 为零条 exclusion，但政策与校验仍强制存在。
 - 以快照、manifest 和精确 aggregate inventory 执行 `prepare-core-teaching-staging-import.mjs`，返回 `prepared_not_applied`；该工具没有数据库客户端或写入路径。`pnpm test:migration` 共 39 项通过。普通教学 staging persistent importer 及业务行导入尚未执行。
 
+## 2026-07-20 第三十四轮普通教学 staging importer 演练
+
+- 新增确定性 `plan-core-teaching-migration.mjs` 和 staging-only `apply-core-teaching-plan.mjs`。执行器要求 staging project ref、既有 `v3-staging` 确认、额外 `core-teaching-staging` 确认、私有输入文件与精确 aggregate SHA-256；在连接目标前拒绝两套现行 production ref。
+- 初次 staging 演练发现两个真实结构差异，均因单事务而零残留回滚：现有 staging 代码与 V2 source code 同名、同一 planned 关联两条 V2 actual、以及同一学生同月多张 V2 账单但 source 无 V3 version。历史导入统一使用 `V2-` code namespace；新增 migration `20260720153000_add_legacy_actual_lesson_link`，额外 actual 使用只读 legacy foreign key；账单按稳定 source UUID 分配 V3 version，不虚构 replacement 关系，原始关系保留于审计。
+- migration 仅部署到 v3-staging，Prisma history 为 26。最终单事务写入 2 business entities、6 students、8 teachers、7 subjects、212 planned、29 actual、8 bills、8 incomes、1 expense 与 281 audits；0 settlement、0 exclusion、0 Cash request、0 Cash transaction。历史收入 / 支出均为 `historical_confirmed`。
+- 幂等重跑返回 `already_applied`。随后只读 transaction 复核 batch=1、audits=281、legacy actual links=1、关联 Cash request=0。`pnpm -C apps/api exec prisma validate` 与 `pnpm test:migration` 共 44 项通过；没有连接、写入、删除或冻结 School V2 / Cash production。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
