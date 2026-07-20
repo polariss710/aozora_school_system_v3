@@ -5,7 +5,7 @@
 ## 当前阶段
 
 - 普通教学受控 snapshot 已在 `v3-staging` 完成单事务初始演练并通过幂等、审计、0 Cash request 与 legacy actual link 复核；School schema 为 26 个 migrations。
-- `legacy_v2_import` 普通教学课时已在 API 拒绝日常写操作，School 页面明确显示“历史导入 · 只读”，避免验收误改副本。
+- `legacy_v2_import` 普通教学课时已在 API 拒绝日常写操作，School 页面明确显示“历史导入 · 只读”，并支持只读查看对应迁移审计元数据，避免验收误改副本。
 
 - 建设分支：`codex/v3-staging`。
 - School V3 基线：`main@2a0d73c`。
