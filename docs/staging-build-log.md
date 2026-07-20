@@ -353,6 +353,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 新增 `prepare-core-teaching-staging-import.mjs`：复用 explicit v3-staging project ref、production ref 拒绝与双重确认，并要求 snapshot / manifest / aggregate 文件全部位于仓库外且权限为 `600` 或更严。它只返回 `prepared_not_applied`，没有数据库客户端、DML、Cash request 或 Cash transaction 路径。
 - 7 项新增合同测试及完整 `pnpm test:migration` 共 31 项通过。没有执行 source SQL、读取新的 production 业务行、连接 staging 数据库或写入 School / Cash。
 
+## 2026-07-20 第三十二轮普通教学 source-side 导出合同与闭包防线
+
+- 新增 `export-v2-core-teaching-snapshot.sql`，只作为未来受授权的 source-side 模板。它是 `REPEATABLE READ + READ ONLY + ROLLBACK` 单 JSON 查询，要求调用者传入 source key / filename、SQL SHA-256 与 aggregate inventory SHA-256；没有 DML、DDL、RPC、文件写入或 V3 target 连接。
+- 查询只输出 eligible 主数据、课时、无调整/结转月结、未受排除链影响的账单/收入、无附件/非受影响工资支出；工资明细/调整、学生 adjustment/carryover、附件及 legacy payment request 改为独立 omission candidates。manifest 会随后用这些候选固定整链的 V2 只读处理。
+- 增加“排除链不得同时进入 eligible snapshot”校验；范围前 planned 课时只在被范围内 actual 课时引用时可带入，并标为 reference closure。未标记的范围前或任何范围后的 planned 事实都会被拒绝。
+- 新增 source SQL 静态测试和闭包测试后，完整 `pnpm test:migration` 共 35 项通过。该 SQL 没有在 School V2 production 执行；没有读取新的生产业务行、连接 staging 数据库或写入任一环境。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
