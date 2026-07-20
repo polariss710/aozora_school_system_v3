@@ -4726,7 +4726,7 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
         {
           label: "预定课时",
           value: isError ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自 API",
           tone: isError ? "rose" : "amber",
           icon: CalendarDays,
         },
@@ -4751,13 +4751,37 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
     primaryAction: "新增预定课时",
     secondaryAction: undefined,
     metrics: [
-      { label: "预定课时", value: `${plannedState.total}`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
+      { label: "预定课时", value: `${plannedState.total}`, sub: "来自 API", tone: "sky", icon: CalendarDays },
       { label: "实际课时", value: `${actualState.total}`, sub: "已生成或已完成", tone: "emerald", icon: ClipboardCheck },
       { label: "待生成实际", value: `${pendingActualCount}`, sub: "可继续处理", tone: "amber", icon: Clock },
       { label: "跨月补课", value: `${makeupCount}`, sub: "待补课 / 补课完成", tone: "cyan", icon: RefreshCw },
     ],
+    filters: buildLessonManagementFilters(plannedState.items, actualState.items),
     rows: [],
   };
+}
+
+function buildLessonManagementFilters(
+  plannedLessons: StudentPlannedLessonRecord[],
+  actualLessons: StudentActualLessonRecord[],
+): Filter[] {
+  const records = [...plannedLessons, ...actualLessons];
+  const uniqueOptions = (values: Array<string | null | undefined>) =>
+    [...new Set(values.filter((value): value is string => Boolean(value)))].sort((left, right) =>
+      left.localeCompare(right, "zh-CN"),
+    );
+
+  return [
+    {
+      label: commonFilters.month.label,
+      options: uniqueOptions(records.map((lesson) => lesson.yearMonth)).sort((left, right) => right.localeCompare(left)),
+    },
+    { label: commonFilters.student.label, options: uniqueOptions(records.map((lesson) => lesson.student.name)) },
+    { label: commonFilters.teacher.label, options: uniqueOptions(records.map((lesson) => lesson.teacher.name)) },
+    { label: "科目", options: uniqueOptions(records.map((lesson) => lesson.subject.name)) },
+    { label: "课时类型", options: ["普通课", "同月补课", "跨月补课"] },
+    { label: "对应状态", options: ["无对应实际课时", "已对应实际课时", "待补课", "已取消"] },
+  ];
 }
 
 function getLessonPairsForPage(studentChainApi: StudentChainApiState) {
@@ -7387,10 +7411,36 @@ function LessonManagementPage({
   onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
   lessonActionSubmittingId?: string | null;
 }) {
+  const [draftFilterValues, setDraftFilterValues] = useState<Record<string, string>>({});
+  const [appliedFilterValues, setAppliedFilterValues] = useState<Record<string, string>>({});
+  const [draftKeyword, setDraftKeyword] = useState("");
+  const [appliedKeyword, setAppliedKeyword] = useState("");
+  const visiblePairs = useMemo(
+    () => filterLessonPairs(pairs, appliedFilterValues, appliedKeyword),
+    [pairs, appliedFilterValues, appliedKeyword],
+  );
+  const resetFilters = () => {
+    setDraftFilterValues({});
+    setAppliedFilterValues({});
+    setDraftKeyword("");
+    setAppliedKeyword("");
+  };
+
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
       <PageHeader page={page} onPrimary={onPrimary} />
-      <FilterPanel filters={page.filters} />
+      <FilterPanel
+        filters={page.filters}
+        values={draftFilterValues}
+        keyword={draftKeyword}
+        onFilterChange={(label, value) => setDraftFilterValues((current) => ({ ...current, [label]: value }))}
+        onKeywordChange={setDraftKeyword}
+        onQuery={() => {
+          setAppliedFilterValues(draftFilterValues);
+          setAppliedKeyword(draftKeyword);
+        }}
+        onReset={resetFilters}
+      />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {page.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
@@ -7401,7 +7451,7 @@ function LessonManagementPage({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
             <h2 className="text-sm font-semibold text-foreground">课时记录</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">默认左右对应展示；普通列表可作为辅助视角后续补充。</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">默认左右对应展示；当前筛选匹配 {visiblePairs.length} / {pairs.length} 组记录。</p>
           </div>
           <div className="flex items-center gap-2">
             <ActionButton icon={Layers3} variant="secondary">
@@ -7421,8 +7471,8 @@ function LessonManagementPage({
             <span>预定课时</span>
             <span>实际课时 / 生成实际课时区</span>
           </div>
-          {pairs.length > 0 ? (
-            pairs.map((pair) => (
+          {visiblePairs.length > 0 ? (
+            visiblePairs.map((pair) => (
               <div className="grid items-stretch gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
                 <LessonFactCard label="预定课时" lesson={pair.planned} />
                 <LessonActualColumn
@@ -7441,6 +7491,57 @@ function LessonManagementPage({
       </section>
     </main>
   );
+}
+
+function filterLessonPairs(
+  pairs: LessonPair[],
+  filters: Record<string, string>,
+  keyword: string,
+) {
+  const selectedMonth = filters[commonFilters.month.label];
+  const selectedStudent = filters[commonFilters.student.label];
+  const selectedTeacher = filters[commonFilters.teacher.label];
+  const selectedSubject = filters["科目"];
+  const selectedType = filters["课时类型"];
+  const selectedRelation = filters["对应状态"];
+  const normalizedKeyword = keyword.trim().toLocaleLowerCase();
+
+  return pairs.filter((pair) => {
+    const lessons = [pair.plannedRecord, pair.actualRecord].filter(
+      (lesson): lesson is StudentPlannedLessonRecord | StudentActualLessonRecord => Boolean(lesson),
+    );
+    const primaryLesson = pair.plannedRecord ?? pair.actualRecord;
+    const relation = pair.relation;
+
+    if (selectedMonth && primaryLesson?.yearMonth !== selectedMonth) return false;
+    if (selectedStudent && !lessons.some((lesson) => lesson.student.name === selectedStudent)) return false;
+    if (selectedTeacher && !lessons.some((lesson) => lesson.teacher.name === selectedTeacher)) return false;
+    if (selectedSubject && !lessons.some((lesson) => lesson.subject.name === selectedSubject)) return false;
+    if (selectedType && getLessonPairType(pair) !== selectedType) return false;
+    if (selectedRelation && relation !== selectedRelation) return false;
+    if (!normalizedKeyword) return true;
+
+    return [
+      pair.planned.student,
+      pair.planned.teacher,
+      pair.planned.subject,
+      pair.planned.businessEntity,
+      pair.planned.content,
+      pair.actual?.teacher,
+      pair.actual?.content,
+      relation,
+      ...lessons.flatMap((lesson) => [lesson.student.code, lesson.teacher.code, lesson.subject.code, lesson.memo, lesson.content]),
+    ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
+  });
+}
+
+function getLessonPairType(pair: LessonPair) {
+  const planned = pair.plannedRecord;
+  const actual = pair.actualRecord;
+  if (planned?.status === "makeup_pending" || planned?.status === "makeup_completed") {
+    return actual && actual.yearMonth !== planned.yearMonth ? "跨月补课" : "同月补课";
+  }
+  return "普通课";
 }
 
 function getCurrentWeekMondayInput() {
