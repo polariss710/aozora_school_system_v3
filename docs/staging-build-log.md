@@ -346,6 +346,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - `assess-core-teaching-aggregate-readiness.mjs` 升级至 readiness contract v2，输出 `v2_readonly_retention_v1` 与按 dependent fact 汇总的 exclusion。此类计数不再作为模型缺口 blocker；关键引用孤儿和异常 actual → planned 状态仍会阻止 snapshot 准备。
 - 普通教学 mapping、staging checklist、prod boundary/runbook 同步要求未来受控 snapshot 携带逐链 exclusion manifest。尚未读取新的 production 业务行、建立普通教学 snapshot 或执行 staging 导入；现行 School / Cash production 未连接、未写入或修改。
 
+## 2026-07-20 第三十一轮普通教学受控快照与 staging 准备门禁
+
+- 新增 `validate-core-teaching-snapshot.mjs`：只读取 future core-teaching snapshot 与独立 exclusion manifest，校验固定 `2026-07`～`2026-12` 范围、read-only source metadata、source UUID / 主数据引用闭包、planned → actual 关联，以及 snapshot / aggregate inventory 的 SHA-256 绑定。
+- `v2_readonly_retention_v1` 要求每一个发现的工资明细 / 调整、月结 adjustment / carryover、附件或 legacy payment request omission candidate 精确匹配一条 manifest；缺失、重复、处理方式不符、受影响链不符或 snapshot hash 不符均被拒绝。工具只输出 hash 和计数，不输出业务行。
+- 新增 `prepare-core-teaching-staging-import.mjs`：复用 explicit v3-staging project ref、production ref 拒绝与双重确认，并要求 snapshot / manifest / aggregate 文件全部位于仓库外且权限为 `600` 或更严。它只返回 `prepared_not_applied`，没有数据库客户端、DML、Cash request 或 Cash transaction 路径。
+- 7 项新增合同测试及完整 `pnpm test:migration` 共 31 项通过。没有执行 source SQL、读取新的 production 业务行、连接 staging 数据库或写入 School / Cash。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
