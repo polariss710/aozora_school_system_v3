@@ -168,6 +168,19 @@ when an in-scope actual lesson references it, and is marked as a reference
 closure. Do not run it until source-read authorization is given. Its JSON is
 production data and must be stored outside this repository with mode `600`.
 
+When the source remains live, compare the aggregate inventory immediately
+before and after the export with `assess-core-teaching-aggregate-consistency.mjs`.
+The comparison intentionally ignores only `sourceSnapshot.capturedAt`, because
+it is an execution timestamp rather than business state; the original aggregate
+SHA-256 remains bound inside the source snapshot. A mismatch means the snapshot
+is rejected and must not be prepared for staging.
+
+`create-core-teaching-exclusion-manifest.mjs` writes the required manifest from
+one private source snapshot. It refuses repository paths and requires both the
+source file and destination directory to be private. The manifest contains only
+the source IDs, affected fact keys and prescribed V2-readonly handling; it does
+not create a V3 Cash request or write to either production system.
+
 `prepare-core-teaching-staging-import.mjs` combines that validation with the
 existing staging target guard. It accepts only the explicit staging project,
 the existing double confirmation, and three repository-external private files
@@ -190,6 +203,16 @@ node scripts/migration/prepare-core-teaching-staging-import.mjs \
 This is not a persistent importer. A future importer must separately retain the
 same target boundary, one-transaction / idempotent reconciliation, zero-new-Cash
 request rule and a staging rehearsal before it can be considered.
+
+`plan-core-teaching-migration.mjs` and `apply-core-teaching-plan.mjs` implement
+that staging rehearsal. The importer accepts the same private snapshot,
+manifest and aggregate inventory, demands both staging confirmations and rejects
+the current production refs before connecting. It preserves source UUIDs and
+creates a `core_teaching_migration_batches` row plus per-record audits. Historical
+income and expense facts become `historical_confirmed`; it never creates a Cash
+request or Cash transaction. For the rare V2 one-planned-to-many-actual history,
+the first actual retains the normal operational relation and additional actuals
+use the read-only `legacy_planned_lesson_id` relation.
 
 ## Final delta / freeze cutover gate
 

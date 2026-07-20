@@ -516,6 +516,7 @@ model StudentPlannedLesson {
   subject        Subject              @relation(fields: [subjectId], references: [id], onDelete: Restrict)
   businessEntity BusinessEntity       @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   actualLesson   StudentActualLesson?
+  legacyActualLessons StudentActualLesson[] @relation("LegacyPlannedActual")
 
   @@index([yearMonth])
   @@index([studentId, yearMonth])
@@ -530,6 +531,7 @@ model StudentPlannedLesson {
 model StudentActualLesson {
   id                  String             @id @default(uuid()) @db.Uuid
   plannedLessonId     String?            @unique @map("planned_lesson_id") @db.Uuid
+  legacyPlannedLessonId String?          @map("legacy_planned_lesson_id") @db.Uuid
   studentId           String             @map("student_id") @db.Uuid
   teacherId           String             @map("teacher_id") @db.Uuid
   subjectId           String             @map("subject_id") @db.Uuid
@@ -549,6 +551,7 @@ model StudentActualLesson {
   updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   plannedLesson  StudentPlannedLesson?       @relation(fields: [plannedLessonId], references: [id], onDelete: Restrict)
+  legacyPlannedLesson StudentPlannedLesson? @relation("LegacyPlannedActual", fields: [legacyPlannedLessonId], references: [id], onDelete: Restrict)
   student        Student                     @relation(fields: [studentId], references: [id], onDelete: Restrict)
   teacher        Teacher                     @relation(fields: [teacherId], references: [id], onDelete: Restrict)
   subject        Subject                     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
@@ -562,6 +565,7 @@ model StudentActualLesson {
   @@index([businessEntityId])
   @@index([status])
   @@index([actualDate])
+  @@index([legacyPlannedLessonId])
   @@map("student_actual_lessons")
 }
 

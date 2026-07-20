@@ -33,6 +33,7 @@ const defaultLimit = 100;
 const maxLimit = 500;
 const maxBatchPlannedLessonCount = 500;
 const batchPlannedLessonSourceType = "batch_planned_lesson_generation";
+const historicalImportSourceType = "legacy_v2_import";
 
 const relationSelect = {
   id: true,
@@ -376,6 +377,7 @@ export class LessonsService {
         throw new NotFoundException("Planned lesson not found.");
       }
 
+      this.assertLessonIsNotHistoricalImport(before);
       this.assertFreshPlannedLessonDeleteCandidate(before);
       this.assertExpectedUpdatedAtMatches(before, expectedUpdatedAt);
       await this.assertNoDownstreamPlannedLessonReferences(before, tx);
@@ -425,6 +427,7 @@ export class LessonsService {
 
   async restorePlannedLesson(id: string, actorUserId: string) {
     const before = await this.findPlannedLesson(id);
+    this.assertLessonIsNotHistoricalImport(before);
     await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
 
     if (before.actualLesson) {
@@ -462,6 +465,7 @@ export class LessonsService {
     actorUserId: string,
   ) {
     const plannedBefore = await this.findPlannedLesson(id);
+    this.assertLessonIsNotHistoricalImport(plannedBefore);
 
     if (plannedBefore.actualLesson) {
       throw new BadRequestException("Actual lesson already exists.");
@@ -743,6 +747,8 @@ export class LessonsService {
   }
 
   private assertPlannedLessonEditable(plannedLesson: PlannedLessonSnapshot) {
+    this.assertLessonIsNotHistoricalImport(plannedLesson);
+
     if (plannedLesson.actualLesson) {
       throw new BadRequestException(
         "Planned lesson with actual lesson cannot be edited.",
@@ -769,6 +775,16 @@ export class LessonsService {
     if (plannedLesson.actualLesson) {
       throw new BadRequestException(
         "Planned lesson with actual lesson cannot be deleted.",
+      );
+    }
+  }
+
+  private assertLessonIsNotHistoricalImport(
+    lesson: Pick<PlannedLessonSnapshot | ActualLessonSnapshot, "sourceType">,
+  ) {
+    if (lesson.sourceType === historicalImportSourceType) {
+      throw new BadRequestException(
+        "Historical imported lessons are read-only.",
       );
     }
   }
@@ -923,6 +939,8 @@ export class LessonsService {
   }
 
   private assertActualLessonEditable(actualLesson: ActualLessonSnapshot) {
+    this.assertLessonIsNotHistoricalImport(actualLesson);
+
     if (actualLesson.status !== ActualLessonStatus.completed) {
       throw new BadRequestException("Only completed actual lesson can be edited.");
     }

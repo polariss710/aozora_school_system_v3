@@ -1,7 +1,7 @@
 # V2 → V3 普通教学迁移映射与缺口清单
 
 更新日期：2026-07-20
-状态：源结构与 aggregate-only 范围已核验；普通教学业务行尚未导出、未生成普通教学快照、未写入 staging / prod。快照与 V2 只读 exclusion manifest 的离线合同、哈希绑定、source-side read-only 导出 SQL 及 staging-only 准备门禁已完成；普通教学迁移批次审计 schema 已单独部署到 staging。
+状态：源结构、aggregate-only 范围与一轮受控普通教学业务快照已核验；快照、aggregate inventory 和 exclusion manifest 均仅保存于仓库外 `600` 私有文件。该快照已演练导入 v3-staging 并完成幂等及零 Cash 复核，尚未写入 prod。source-side read-only 导出、原始 aggregate SHA-256 绑定、V2 只读 exclusion manifest、业务一致性夹心核验及 staging-only importer 已通过；普通教学迁移批次审计 schema 已单独部署到 staging。
 
 ## 1. 依据与边界
 
@@ -19,7 +19,7 @@
 | `school_students` | `students` + 审计 | 引用闭包 | V3 现有成对且唯一的 `legacy_table` / `legacy_id` 加审计 snapshot 保留来源身份；联系方式等非运营字段不得静默丢失。 |
 | `school_teachers` | `teachers` + 审计 | 引用闭包 | V3 现有成对且唯一的 `legacy_table` / `legacy_id`；旧付款账户资料和默认币种需先确定 V3 的安全落位，不能写进普通备注。 |
 | `school_subjects` | `subjects` + 审计 | 引用闭包 | V3 现有成对且唯一的 `legacy_table` / `legacy_id`；`name/category/sort_order/status` 可映射，颜色、层级分类等需保留在审计 snapshot 或版本化目标扩展。 |
-| `school_lesson_records` | `student_planned_lessons`、`student_actual_lessons` + 审计 | `year_month >= 2026-07` | 要按 `lesson_type` / `planned_lesson_id` 定义一一拆分；必须保留原 UUID、planned→actual 关系、时长、费用、状态、作废信息及来源行。 |
+| `school_lesson_records` | `student_planned_lessons`、`student_actual_lessons` + 审计 | `year_month >= 2026-07` | 保留原 UUID、planned→actual 关系、时长、费用、状态、作废信息及来源行。现行运营链接仍是一对一；若 V2 同一 planned 关联多条历史 actual，首条保持 `planned_lesson_id`，额外行以只读 `legacy_planned_lesson_id` 保留来源外键与审计。 |
 | `school_student_monthly_settlements` | `student_monthly_settlements` + 审计 | `year_month >= 2026-07` | 金额、结转、锁定状态和 source snapshot 必须按原值落位，不能按当前汇率重算。 |
 | `school_student_settlement_adjustments` | 月结 `adjustment_amount_cny` / `calculation_snapshot` + 单行审计 | 跟随月结 | V3 没有独立 adjustment 表；必须先定义多条来源调整如何无损写入 snapshot 与审计，未定义前不得导入。 |
 | `school_student_settlement_carryovers` | 月结前后结转字段 / `calculation_snapshot` + 单行审计 | 进入范围月及其必要前序引用 | V3 没有独立 carryover 表；必须验证唯一前序链与金额不变，再决定是否需要版本化承载表。 |
@@ -64,12 +64,9 @@ business entities / students / teachers / subjects
 3. 支出附件：不复制文件或附件元数据；符合其他 mapping 条件的支出主记录仍可作为无附件的历史确认记录迁入。
 4. legacy payment request：保留在 V2，不迁入 V3 `cash_requests`；已批准的 Cash ledger 只由独立 Cash ledger 迁移和 UUID 对账处理。
 
-以下项目仍未完成，因此普通教学目前不能形成 persistent importer：
+普通教学受控 snapshot 与 staging importer 已完成初轮演练：它沿用 staging-only / 双确认 / production-ref 拒绝 / 单事务 / 幂等重跑 / 零新 Cash request 的防线。该演练不代替 final delta / freeze 设计，更不构成 production 迁移或切换授权。
 
-1. 新增受控 JSON snapshot 合同；该 snapshot 必须位于仓库外、权限 `600`，并以 SHA-256 固定，且带明示 exclusion manifest。
-2. 普通教学 persistent importer 必须沿用 staging-only / 双确认 / production-ref 拒绝 / 单事务 / 幂等重跑 / 零新 Cash request 的防线；通过 staging 演练后，才能进入 final delta / freeze 设计。
-
-第一项的离线合同与 staging 准备门禁现已完成：它校验 source UUID / 引用闭包、aggregate inventory SHA-256、snapshot SHA-256、逐链 exclusion manifest 和 staging target。对应 source-side SQL 固定为 `REPEATABLE READ + READ ONLY + ROLLBACK`；它把工资 / 月结 / 附件受影响链从 eligible facts 中排除，并单独输出 omission candidates。范围内 actual 需要范围前 planned 来源时，只允许将该 planned 行作为明确的 reference closure 随行导出。尚未导出或读取新的 production 业务行。
+第一项的离线合同与 staging 准备门禁现已完成并在用户授权下执行：它校验 source UUID / 引用闭包、aggregate inventory SHA-256、snapshot SHA-256、逐链 exclusion manifest 和 staging target。对应 source-side SQL 固定为 `REPEATABLE READ + READ ONLY + ROLLBACK`；它把工资 / 月结 / 附件受影响链从 eligible facts 中排除，并单独输出 omission candidates。范围内 actual 需要范围前 planned 来源时，只允许将该 planned 行作为明确的 reference closure 随行导出。导出前后 aggregate 的业务一致性指纹相同（只忽略 `capturedAt`），因此此快照已用于 staging-only importer 演练；幂等重跑与零 Cash request 复核均通过。
 
 ## 5. 本次结构盘点结论
 

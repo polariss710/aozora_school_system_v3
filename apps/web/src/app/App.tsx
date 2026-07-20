@@ -4887,6 +4887,10 @@ function getLessonActionHint(
   planned: StudentPlannedLessonRecord,
   actual?: StudentActualLessonRecord,
 ) {
+  if (isHistoricalImportedLesson(planned)) {
+    return "这是从 V2 导入的历史课时，仅供对账与查看，不能在 Staging 中修改或继续生成业务记录。";
+  }
+
   if (actual) {
     return "已关联实际课时；后续会继续接入编辑、取消和工资联动。";
   }
@@ -6973,7 +6977,8 @@ type LessonActionKey =
   | "cancelPlanned"
   | "markMakeupPending"
   | "restorePlanned"
-  | "deleteFreshPlanned";
+  | "deleteFreshPlanned"
+  | "viewMigrationAudit";
 
 type LessonActualDialogState = { pair: LessonPair };
 
@@ -7191,15 +7196,23 @@ function getLessonActionAvailability(pair: LessonPair) {
   const status = planned?.status;
   const hasActual = Boolean(pair.actualRecord || planned?.actualLesson);
   const isCompleted = status === "actual_created" || status === "makeup_completed";
-  const canActOnPlanned = Boolean(planned) && !hasActual && !isCompleted;
+  const isHistoricalImport = Boolean(planned && isHistoricalImportedLesson(planned));
+  const canActOnPlanned = Boolean(planned) && !isHistoricalImport && !hasActual && !isCompleted;
 
   return {
+    canViewMigrationAudit: [pair.plannedRecord, pair.actualRecord].some(
+      (lesson) => lesson && isHistoricalImportedLesson(lesson),
+    ),
     canGenerateActual: canActOnPlanned && status !== "cancelled",
     canCancel: canActOnPlanned && status !== "cancelled",
     canMarkMakeupPending: canActOnPlanned && status === "scheduled",
     canRestore: canActOnPlanned && (status === "cancelled" || status === "makeup_pending"),
     canDeleteFresh: canActOnPlanned && status === "scheduled",
   };
+}
+
+function isHistoricalImportedLesson(lesson: Pick<StudentPlannedLessonRecord | StudentActualLessonRecord, "sourceType">) {
+  return lesson.sourceType === "legacy_v2_import";
 }
 
 function lessonActionButtonClass(
@@ -7230,7 +7243,12 @@ function LessonActionPanel({
   isSubmitting?: boolean;
 }) {
   const actions = getLessonActionAvailability(pair);
-  const disabledTitle = pair.plannedRecord ? "当前状态不能执行该动作" : "demo 数据没有后端记录";
+  const isHistoricalImport = Boolean(pair.plannedRecord && isHistoricalImportedLesson(pair.plannedRecord));
+  const disabledTitle = isHistoricalImport
+    ? "历史导入课时只读，不能在 Staging 中操作"
+    : pair.plannedRecord
+      ? "当前状态不能执行该动作"
+      : "demo 数据没有后端记录";
   const canCall = Boolean(onLessonAction) && !isSubmitting;
   const plannedStatus = pair.plannedRecord?.status;
   const showGenerateButton = !pair.plannedRecord || plannedStatus !== "cancelled";
@@ -7251,10 +7269,25 @@ function LessonActionPanel({
           <div className="text-xs font-medium text-muted-foreground">实际课时操作</div>
           <div className="mt-0.5 truncate text-sm font-semibold text-foreground">{pair.relation}</div>
         </div>
-        <StatusPill label={pair.plannedRecord ? "dev API" : "demo"} tone={pair.plannedRecord ? "emerald" : "slate"} />
+        <StatusPill
+          label={isHistoricalImport ? "历史导入 · 只读" : pair.plannedRecord ? "API" : "demo"}
+          tone={isHistoricalImport ? "amber" : pair.plannedRecord ? "emerald" : "slate"}
+        />
       </div>
       {!compact && <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{pair.actionHint}</p>}
       <div className={`${compact ? "mt-2" : "mt-3"} flex flex-wrap gap-2`}>
+        {actions.canViewMigrationAudit && (
+          <button
+            type="button"
+            disabled={!canCall}
+            title="查看迁移批次、校验和时间元数据"
+            onClick={() => callAction("viewMigrationAudit")}
+            className={lessonActionButtonClass("neutral", !canCall)}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            查看迁移审计
+          </button>
+        )}
         {showGenerateButton && (
           <button
             type="button"
@@ -7329,13 +7362,13 @@ function LessonActualColumn({
   onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
   isSubmitting?: boolean;
 }) {
-  if (pair.actual) {
-    return <LessonFactCard label="实际课时" lesson={pair.actual} />;
-  }
-
   return (
     <div className="grid h-[178px] grid-rows-[76px_1fr] gap-2">
-      <LessonFactCard label="实际课时" emptyHint={`关联：${pair.relation}`} />
+      {pair.actual ? (
+        <LessonFactCard label="实际课时" lesson={pair.actual} />
+      ) : (
+        <LessonFactCard label="实际课时" emptyHint={`关联：${pair.relation}`} />
+      )}
       <LessonActionPanel pair={pair} compact onLessonAction={onLessonAction} isSubmitting={isSubmitting} />
     </div>
   );
@@ -10502,6 +10535,49 @@ export default function App() {
   };
 
   const handleLessonAction = async (actionKey: LessonActionKey, pair: LessonPair) => {
+    if (actionKey === "viewMigrationAudit") {
+      if (!authSession) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，再查看迁移审计。" });
+        return;
+      }
+
+      const targets = [
+        pair.plannedRecord && isHistoricalImportedLesson(pair.plannedRecord)
+          ? { targetTable: "student_planned_lessons", targetId: pair.plannedRecord.id }
+          : null,
+        pair.actualRecord && isHistoricalImportedLesson(pair.actualRecord)
+          ? { targetTable: "student_actual_lessons", targetId: pair.actualRecord.id }
+          : null,
+      ].filter((target): target is { targetTable: string; targetId: string } => Boolean(target));
+
+      if (targets.length === 0) {
+        setActionNotice({ tone: "amber", text: "未找到这条课时的历史迁移审计。" });
+        return;
+      }
+
+      setMigrationAuditDialog({ title: "课时迁移审计", isLoading: true, records: [] });
+      try {
+        const results = await Promise.all(
+          targets.map((target) =>
+            listMigrationRecordAudits(authSession.accessToken, target.targetTable, target.targetId),
+          ),
+        );
+        setMigrationAuditDialog({
+          title: "课时迁移审计",
+          isLoading: false,
+          records: results.flatMap((result) => result.items),
+        });
+      } catch (error) {
+        setMigrationAuditDialog({
+          title: "课时迁移审计",
+          isLoading: false,
+          records: [],
+          error: formatApiError(error),
+        });
+      }
+      return;
+    }
+
     if (!authSession || !pair.plannedRecord) {
       setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的预定课时。" });
       return;
