@@ -21,7 +21,7 @@ const sourceTableByFactSection = {
   incomes: "school_income_records",
   expenses: "school_expense_records",
 };
-const omissionHandling = {
+export const coreTeachingOmissionHandling = {
   studentSettlementAdjustments: "retain_affected_student_settlement_chain_in_v2_readonly",
   studentSettlementCarryovers: "retain_affected_student_settlement_chain_in_v2_readonly",
   teacherWageLockDetails: "retain_affected_teacher_wage_chain_in_v2_readonly",
@@ -150,8 +150,8 @@ function validateExclusionManifest(manifest, snapshotSha256, candidates) {
   for (const exclusion of exclusions) {
     assertUuid(exclusion.sourceId, "exclusion.sourceId");
     invariant(typeof exclusion.sourceTable === "string" && exclusion.sourceTable.length > 0, "exclusion.sourceTable is required");
-    invariant(Object.hasOwn(omissionHandling, exclusion.dependentFact), `unsupported exclusion dependent fact: ${exclusion.dependentFact}`);
-    invariant(exclusion.handling === omissionHandling[exclusion.dependentFact], `exclusion handling differs from policy: ${exclusion.dependentFact}`);
+    invariant(Object.hasOwn(coreTeachingOmissionHandling, exclusion.dependentFact), `unsupported exclusion dependent fact: ${exclusion.dependentFact}`);
+    invariant(exclusion.handling === coreTeachingOmissionHandling[exclusion.dependentFact], `exclusion handling differs from policy: ${exclusion.dependentFact}`);
     const key = candidateKey(exclusion);
     invariant(candidateByKey.has(key), `exclusion does not match a source omission candidate: ${key}`);
     invariant(!seen.has(key), `duplicate exclusion manifest row: ${key}`);
@@ -204,7 +204,7 @@ export function validateCoreTeachingSnapshot(snapshot, exclusionManifest) {
   for (const candidate of candidates) {
     assertUuid(candidate.sourceId, "omission candidate sourceId");
     invariant(typeof candidate.sourceTable === "string" && candidate.sourceTable.length > 0, "omission candidate sourceTable is required");
-    invariant(Object.hasOwn(omissionHandling, candidate.dependentFact), `unsupported omission candidate: ${candidate.dependentFact}`);
+    invariant(Object.hasOwn(coreTeachingOmissionHandling, candidate.dependentFact), `unsupported omission candidate: ${candidate.dependentFact}`);
     const affectedFactKeys = asArray(candidate.affectedFactKeys, "omission candidate affectedFactKeys");
     invariant(affectedFactKeys.length > 0 && affectedFactKeys.every((value) => typeof value === "string" && value.length > 0), "omission candidate must identify its affected fact chain");
     const key = candidateKey(candidate);

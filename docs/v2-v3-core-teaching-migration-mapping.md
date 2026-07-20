@@ -1,7 +1,7 @@
 # V2 → V3 普通教学迁移映射与缺口清单
 
 更新日期：2026-07-20
-状态：源结构与 aggregate-only 范围已核验；普通教学业务行尚未导出、未生成普通教学快照、未写入 staging / prod。快照与 V2 只读 exclusion manifest 的离线合同、哈希绑定、source-side read-only 导出 SQL 及 staging-only 准备门禁已完成；普通教学迁移批次审计 schema 已单独部署到 staging。
+状态：源结构、aggregate-only 范围与一轮受控普通教学业务快照已核验；快照、aggregate inventory 和 exclusion manifest 均仅保存于仓库外 `600` 私有文件，尚未写入 staging / prod。source-side read-only 导出、原始 aggregate SHA-256 绑定、V2 只读 exclusion manifest、业务一致性夹心核验及 staging-only 准备门禁已通过；普通教学迁移批次审计 schema 已单独部署到 staging。
 
 ## 1. 依据与边界
 
@@ -69,7 +69,7 @@ business entities / students / teachers / subjects
 1. 新增受控 JSON snapshot 合同；该 snapshot 必须位于仓库外、权限 `600`，并以 SHA-256 固定，且带明示 exclusion manifest。
 2. 普通教学 persistent importer 必须沿用 staging-only / 双确认 / production-ref 拒绝 / 单事务 / 幂等重跑 / 零新 Cash request 的防线；通过 staging 演练后，才能进入 final delta / freeze 设计。
 
-第一项的离线合同与 staging 准备门禁现已完成：它校验 source UUID / 引用闭包、aggregate inventory SHA-256、snapshot SHA-256、逐链 exclusion manifest 和 staging target。对应 source-side SQL 固定为 `REPEATABLE READ + READ ONLY + ROLLBACK`；它把工资 / 月结 / 附件受影响链从 eligible facts 中排除，并单独输出 omission candidates。范围内 actual 需要范围前 planned 来源时，只允许将该 planned 行作为明确的 reference closure 随行导出。尚未导出或读取新的 production 业务行。
+第一项的离线合同与 staging 准备门禁现已完成并在用户授权下执行：它校验 source UUID / 引用闭包、aggregate inventory SHA-256、snapshot SHA-256、逐链 exclusion manifest 和 staging target。对应 source-side SQL 固定为 `REPEATABLE READ + READ ONLY + ROLLBACK`；它把工资 / 月结 / 附件受影响链从 eligible facts 中排除，并单独输出 omission candidates。范围内 actual 需要范围前 planned 来源时，只允许将该 planned 行作为明确的 reference closure 随行导出。导出前后 aggregate 的业务一致性指纹相同（只忽略 `capturedAt`），因此此快照可用于 staging-only importer 的后续演练；当前仍未写入 staging。
 
 ## 5. 本次结构盘点结论
 

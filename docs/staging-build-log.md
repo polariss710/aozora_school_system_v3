@@ -360,6 +360,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - 增加“排除链不得同时进入 eligible snapshot”校验；范围前 planned 课时只在被范围内 actual 课时引用时可带入，并标为 reference closure。未标记的范围前或任何范围后的 planned 事实都会被拒绝。
 - 新增 source SQL 静态测试和闭包测试后，完整 `pnpm test:migration` 共 35 项通过。该 SQL 没有在 School V2 production 执行；没有读取新的生产业务行、连接 staging 数据库或写入任一环境。
 
+## 2026-07-20 第三十三轮普通教学受控 source snapshot 与准备验收
+
+- 用户已授权对 School V2 production 读取普通教学业务行；source-side SQL 在 `REPEATABLE READ + READ ONLY` transaction 中执行，结果复制到仓库外 `600` 私有快照后显式 `ROLLBACK`。没有生产 DML、RPC、删除、冻结或 Cash 操作。
+- 因 aggregate-only 合同的 `sourceSnapshot.capturedAt` 每次执行都会变化，新增 `assess-core-teaching-aggregate-consistency.mjs`：它只为夹心核验计算业务一致性指纹并忽略该一个 volatile 字段，原始 aggregate SHA-256 仍不可替换地写入 snapshot。两轮导出前后指纹相同，快照可继续使用。
+- 新增 `create-core-teaching-exclusion-manifest.mjs`，只能从仓库外且权限为 `600` 的快照生成同样私有的 manifest；所有 candidate 必须采用固定 `v2_readonly_retention_v1` handling。当前快照生成的 manifest 为零条 exclusion，但政策与校验仍强制存在。
+- 以快照、manifest 和精确 aggregate inventory 执行 `prepare-core-teaching-staging-import.mjs`，返回 `prepared_not_applied`；该工具没有数据库客户端或写入路径。`pnpm test:migration` 共 39 项通过。普通教学 staging persistent importer 及业务行导入尚未执行。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

@@ -168,6 +168,19 @@ when an in-scope actual lesson references it, and is marked as a reference
 closure. Do not run it until source-read authorization is given. Its JSON is
 production data and must be stored outside this repository with mode `600`.
 
+When the source remains live, compare the aggregate inventory immediately
+before and after the export with `assess-core-teaching-aggregate-consistency.mjs`.
+The comparison intentionally ignores only `sourceSnapshot.capturedAt`, because
+it is an execution timestamp rather than business state; the original aggregate
+SHA-256 remains bound inside the source snapshot. A mismatch means the snapshot
+is rejected and must not be prepared for staging.
+
+`create-core-teaching-exclusion-manifest.mjs` writes the required manifest from
+one private source snapshot. It refuses repository paths and requires both the
+source file and destination directory to be private. The manifest contains only
+the source IDs, affected fact keys and prescribed V2-readonly handling; it does
+not create a V3 Cash request or write to either production system.
+
 `prepare-core-teaching-staging-import.mjs` combines that validation with the
 existing staging target guard. It accepts only the explicit staging project,
 the existing double confirmation, and three repository-external private files
