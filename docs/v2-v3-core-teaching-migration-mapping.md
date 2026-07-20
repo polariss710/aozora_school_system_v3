@@ -15,10 +15,10 @@
 
 | V2 源表 | V3 目标 / 审计去向 | 范围 | 当前结论 |
 | --- | --- | --- | --- |
-| `school_business_entities` | `business_entities` + `migration_record_audits` | 被迁移事实引用 | 需要显式 UUID / code 映射；V3 只保留运营字段，其他源字段必须保存在不可变审计 snapshot。 |
+| `school_business_entities` | `business_entities` + `migration_record_audits` | 被迁移事实引用 | V3 现有成对且唯一的 `legacy_table` / `legacy_id`；UUID / code 仍须显式映射，其他源字段必须保存在不可变审计 snapshot。 |
 | `school_students` | `students` + 审计 | 引用闭包 | 可用 `legacy_table` / `legacy_id` 加审计 snapshot 保留来源身份；联系方式等非运营字段不得静默丢失。 |
 | `school_teachers` | `teachers` + 审计 | 引用闭包 | 可用 `legacy_table` / `legacy_id`；旧付款账户资料和默认币种需先确定 V3 的安全落位，不能写进普通备注。 |
-| `school_subjects` | `subjects` + 审计 | 引用闭包 | `name/category/sort_order/status` 可映射；颜色、层级分类等需保留在审计 snapshot 或版本化目标扩展。 |
+| `school_subjects` | `subjects` + 审计 | 引用闭包 | V3 现有成对且唯一的 `legacy_table` / `legacy_id`；`name/category/sort_order/status` 可映射，颜色、层级分类等需保留在审计 snapshot 或版本化目标扩展。 |
 | `school_lesson_records` | `student_planned_lessons`、`student_actual_lessons` + 审计 | `year_month >= 2026-07` | 要按 `lesson_type` / `planned_lesson_id` 定义一一拆分；必须保留原 UUID、planned→actual 关系、时长、费用、状态、作废信息及来源行。 |
 | `school_student_monthly_settlements` | `student_monthly_settlements` + 审计 | `year_month >= 2026-07` | 金额、结转、锁定状态和 source snapshot 必须按原值落位，不能按当前汇率重算。 |
 | `school_student_settlement_adjustments` | 月结 `adjustment_amount_cny` / `calculation_snapshot` + 单行审计 | 跟随月结 | V3 没有独立 adjustment 表；必须先定义多条来源调整如何无损写入 snapshot 与审计，未定义前不得导入。 |
@@ -54,6 +54,7 @@ business entities / students / teachers / subjects
 已完成的基础前置：
 
 - 已创建版本化 `core_teaching_migration_batches`，并为 `migration_record_audits` 增加受外键约束的 `core_teaching_batch_id`。两种 batch 不能同时归属；staging 验收确认表、字段、约束及浏览器角色零 grant 均正常。
+- `business_entities` 与 `subjects` 已补齐成对且唯一的 legacy source identity。该结构只保存未来受控 mapping 的来源表 / ID，不读取、写入或推断 production 数据。
 - 已完成 aggregate-only 范围盘点、引用闭包与关键孤儿核验；它不等同 source snapshot。
 
 以下项目仍未完成，因此普通教学目前不能形成 snapshot 或 persistent importer：
