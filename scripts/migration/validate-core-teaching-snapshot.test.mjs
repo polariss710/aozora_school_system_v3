@@ -14,6 +14,7 @@ const ids = {
   bill: "88888888-8888-4888-8888-888888888888",
   income: "99999999-9999-4999-8999-999999999999",
   expense: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  excludedExpense: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   wageLock: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 };
 
@@ -61,7 +62,7 @@ function snapshot() {
       sourceTable: "school_teacher_wage_locks",
       sourceId: ids.wageLock,
       dependentFact: "teacherWageLockDetails",
-      affectedFactKeys: [`school_teacher_wage_locks:${ids.wageLock}`, `school_expense_records:${ids.expense}`],
+      affectedFactKeys: [`school_teacher_wage_locks:${ids.wageLock}`, `school_expense_records:${ids.excludedExpense}`],
     }],
   };
 }
@@ -107,4 +108,26 @@ test("rejects an actual lesson that bypasses the planned-lesson closure", () => 
   source.facts.actualLessons[0].plannedLessonId = ids.wageLock;
   const manifest = manifestFor(source);
   assert.throws(() => validateCoreTeachingSnapshot(source, manifest), /references missing planned lesson/);
+});
+
+test("rejects an eligible fact that is also declared V2-readonly", () => {
+  const source = snapshot();
+  source.omissionCandidates[0].affectedFactKeys = [`school_expense_records:${ids.expense}`];
+  const manifest = manifestFor(source);
+  assert.throws(() => validateCoreTeachingSnapshot(source, manifest), /excluded fact appears in eligible snapshot/);
+});
+
+test("permits only an explicitly marked pre-scope planned lesson needed by an in-scope actual lesson", () => {
+  const source = snapshot();
+  source.facts.plannedLessons[0].yearMonth = "2026-06";
+  source.facts.plannedLessons[0].isReferenceClosure = true;
+  const manifest = manifestFor(source);
+  assert.equal(validateCoreTeachingSnapshot(source, manifest).eligibleSummary.plannedLessons, 1);
+});
+
+test("rejects an unmarked pre-scope planned lesson", () => {
+  const source = snapshot();
+  source.facts.plannedLessons[0].yearMonth = "2026-06";
+  const manifest = manifestFor(source);
+  assert.throws(() => validateCoreTeachingSnapshot(source, manifest), /outside the migration scope/);
 });

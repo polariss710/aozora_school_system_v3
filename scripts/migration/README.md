@@ -158,6 +158,16 @@ or legacy payment-request dependency must match one and only one recorded
 V2-readonly exclusion chain. It never outputs business rows; it returns only
 the snapshot hash and aggregate counts.
 
+`export-v2-core-teaching-snapshot.sql` is the corresponding source-side
+contract, but it has not been run. It is a `REPEATABLE READ, READ ONLY`
+transaction that returns one JSON snapshot and rolls back. It accepts explicit
+psql variables for the source key / filename plus the SHA-256 of this query and
+the exact aggregate inventory. It exports only eligible facts and emits the
+V2-readonly candidates separately; a pre-scope planned lesson is included only
+when an in-scope actual lesson references it, and is marked as a reference
+closure. Do not run it until source-read authorization is given. Its JSON is
+production data and must be stored outside this repository with mode `600`.
+
 `prepare-core-teaching-staging-import.mjs` combines that validation with the
 existing staging target guard. It accepts only the explicit staging project,
 the existing double confirmation, and three repository-external private files

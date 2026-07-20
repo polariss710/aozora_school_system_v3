@@ -13,6 +13,14 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 
 const referenceSections = ["businessEntities", "students", "teachers", "subjects"];
 const factSections = ["plannedLessons", "actualLessons", "studentSettlements", "tuitionBills", "incomes", "expenses"];
+const sourceTableByFactSection = {
+  plannedLessons: "school_lesson_records",
+  actualLessons: "school_lesson_records",
+  studentSettlements: "school_student_monthly_settlements",
+  tuitionBills: "school_student_tuition_bills",
+  incomes: "school_income_records",
+  expenses: "school_expense_records",
+};
 const omissionHandling = {
   studentSettlementAdjustments: "retain_affected_student_settlement_chain_in_v2_readonly",
   studentSettlementCarryovers: "retain_affected_student_settlement_chain_in_v2_readonly",
@@ -41,6 +49,14 @@ function assertSha256(value, label) {
 
 function assertScopedMonth(value, label) {
   invariant(typeof value === "string" && value >= scopeStart && value <= scopeEnd, `${label} must be between ${scopeStart} and ${scopeEnd}`);
+}
+
+function assertScopedMonthOrClosure(value, isReferenceClosure, label) {
+  if (value >= scopeStart && value <= scopeEnd) {
+    invariant(isReferenceClosure !== true, `${label} must not be marked as a reference closure inside the migration scope`);
+    return;
+  }
+  invariant(value < scopeStart && isReferenceClosure === true, `${label} outside the migration scope must be a pre-scope reference closure`);
 }
 
 function canonicalize(value) {
@@ -75,7 +91,8 @@ function assertReference(row, label, index) {
 
 function assertFactReferences(facts, references) {
   for (const row of facts.plannedLessons) {
-    assertScopedMonth(row.yearMonth, `planned lesson ${row.id}.yearMonth`);
+    invariant(typeof row.yearMonth === "string", `planned lesson ${row.id}.yearMonth is required`);
+    assertScopedMonthOrClosure(row.yearMonth, row.isReferenceClosure, `planned lesson ${row.id}.yearMonth`);
     assertReference({ id: row.businessEntityId, legacyTable: "school_business_entities", legacyId: row.businessEntityId }, "business entity", references.businessEntities);
     assertReference({ id: row.studentId, legacyTable: "school_students", legacyId: row.studentId }, "student", references.students);
     assertReference({ id: row.teacherId, legacyTable: "school_teachers", legacyId: row.teacherId }, "teacher", references.teachers);
@@ -144,6 +161,17 @@ function validateExclusionManifest(manifest, snapshotSha256, candidates) {
   }
 }
 
+function assertExcludedChainsAreAbsentFromEligibleFacts(facts, candidates) {
+  const eligibleSourceFacts = new Set(
+    factSections.flatMap((section) => facts[section].map((row) => `${sourceTableByFactSection[section]}:${row.id}`)),
+  );
+  for (const candidate of candidates) {
+    for (const affectedFactKey of candidate.affectedFactKeys) {
+      invariant(!eligibleSourceFacts.has(affectedFactKey), `V2-readonly excluded fact appears in eligible snapshot: ${affectedFactKey}`);
+    }
+  }
+}
+
 export function validateCoreTeachingSnapshot(snapshot, exclusionManifest) {
   invariant(snapshot?.contractVersion === snapshotContractVersion, `snapshot contract must be ${snapshotContractVersion}`);
   invariant(snapshot.sourceSnapshot?.sourceSystem === "school_v2", "snapshot source system must be school_v2");
@@ -183,6 +211,8 @@ export function validateCoreTeachingSnapshot(snapshot, exclusionManifest) {
     invariant(!candidateKeys.has(key), `duplicate omission candidate: ${key}`);
     candidateKeys.add(key);
   }
+
+  assertExcludedChainsAreAbsentFromEligibleFacts(facts, candidates);
 
   const snapshotSha256 = canonicalJsonSha256(snapshot);
   validateExclusionManifest(exclusionManifest, snapshotSha256, candidates);
