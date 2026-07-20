@@ -6,13 +6,32 @@ import { pathToFileURL } from "node:url";
 const contractVersion = "aozora-v2-core-teaching-aggregate-inventory-v2";
 const scopeStart = "2026-07";
 const scopeEnd = "2026-12";
-const requiredZeroCounts = [
-  "studentSettlementAdjustments",
-  "studentSettlementCarryovers",
-  "teacherWageLockDetails",
-  "teacherWageDetailAdjustments",
-  "expenseAttachments",
-  "paymentRequestsAtOrAfterScope",
+const omissionPolicy = "v2_readonly_retention_v1";
+const v2ReadOnlyOmissions = [
+  {
+    key: "studentSettlementAdjustments",
+    handling: "retain_affected_student_settlement_chain_in_v2_readonly",
+  },
+  {
+    key: "studentSettlementCarryovers",
+    handling: "retain_affected_student_settlement_chain_in_v2_readonly",
+  },
+  {
+    key: "teacherWageLockDetails",
+    handling: "retain_affected_teacher_wage_chain_in_v2_readonly",
+  },
+  {
+    key: "teacherWageDetailAdjustments",
+    handling: "retain_affected_teacher_wage_chain_in_v2_readonly",
+  },
+  {
+    key: "expenseAttachments",
+    handling: "omit_attachment_only_keep_eligible_expense_history",
+  },
+  {
+    key: "paymentRequestsAtOrAfterScope",
+    handling: "retain_legacy_payment_request_in_v2_readonly_no_v3_cash_request",
+  },
 ];
 const requiredZeroIntegrityChecks = [
   "wage_detail_missing_lesson",
@@ -51,9 +70,16 @@ export function assessCoreTeachingAggregateReadiness(inventory) {
   const dependentCounts = inventory.dependentCounts ?? {};
   const integrityChecks = inventory.integrityChecks ?? {};
 
-  for (const key of requiredZeroCounts) {
-    const count = asNonNegativeInteger(dependentCounts[key], `dependentCounts.${key}`);
-    if (count !== 0) blockers.push(`${key}=${count}`);
+  const v2ReadOnlyExclusions = [];
+  for (const omission of v2ReadOnlyOmissions) {
+    const count = asNonNegativeInteger(dependentCounts[omission.key], `dependentCounts.${omission.key}`);
+    if (count !== 0) {
+      v2ReadOnlyExclusions.push({
+        dependentFact: omission.key,
+        count,
+        handling: omission.handling,
+      });
+    }
   }
   for (const key of requiredZeroIntegrityChecks) {
     const count = asNonNegativeInteger(integrityChecks[key], `integrityChecks.${key}`);
@@ -86,14 +112,16 @@ export function assessCoreTeachingAggregateReadiness(inventory) {
   );
 
   return {
-    contractVersion: "aozora-v3-core-teaching-aggregate-readiness-v1",
+    contractVersion: "aozora-v3-core-teaching-aggregate-readiness-v2",
+    omissionPolicy,
     sourceCapturedAt: inventory.sourceSnapshot.capturedAt,
     scope: { yearMonthFrom: scopeStart, yearMonthTo: scopeEnd },
     aggregateGatePassed: blockers.length === 0,
     blockers,
+    v2ReadOnlyExclusions,
     futureFactsExcluded,
     nextStep: blockers.length === 0
-      ? "A restricted source snapshot may be prepared; its row-level schema and importer remain separately gated."
+      ? "A restricted source snapshot may be prepared only for eligible facts; every listed dependent fact must remain in V2 read-only under the recorded omission policy."
       : "Do not export or import a core-teaching snapshot until every blocker is resolved.",
   };
 }

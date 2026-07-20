@@ -57,14 +57,17 @@ business entities / students / teachers / subjects
 - `business_entities`、`students`、`teachers` 与 `subjects` 已补齐成对且唯一的 legacy source identity。该结构只保存未来受控 mapping 的来源表 / ID，不读取、写入或推断 production 数据。
 - 已完成 aggregate-only 范围盘点、引用闭包与关键孤儿核验；它不等同 source snapshot。
 
-以下项目仍未完成，因此普通教学目前不能形成 snapshot 或 persistent importer：
+用户已确认以下四类历史细节不进入 V3。它们保持在 V2 只读历史系统，普通教学导入器必须把受影响的链明确列入 exclusion manifest，而不是静默丢弃或补造替代事实：
 
-1. 决定并实施 V2 多维工资规则、工资明细 CNY / 费用 / 汇率、逐条工资调整的无损目标模型。
-2. 决定学生月结 adjustment / carryover 的逐条历史承载方式，并证明目标月结快照可回放来源值。
-3. 建立附件对象的加密复制、哈希、权限、删除回滚和 source → target path 映射；或由业务明确批准保留 V2 只读附件且在审计中记录该例外。
-4. 为 legacy payment request 定义只读审计承载和 Cash transaction / request 身份对账，明确不创建 V3 `cash_requests`。
-5. 新增受控 JSON snapshot 合同；该 snapshot 必须位于仓库外、权限 `600`，并以 SHA-256 固定。
-6. 普通教学 persistent importer 必须沿用 staging-only / 双确认 / production-ref 拒绝 / 单事务 / 幂等重跑 / 零新 Cash request 的防线；通过 staging 演练后，才能进入 final delta / freeze 设计。
+1. 多维工资规则、工资明细 CNY / 汇率 / 交通场地费及逐条工资调整：若某历史工资链依赖这些细节，则整条受影响工资快照 / 明细 / 对应历史工资支出留在 V2。
+2. 学生月结 adjustment / carryover：若某历史月结依赖这些细节，则受影响月结及其下游历史账单 / 收入链留在 V2。
+3. 支出附件：不复制文件或附件元数据；符合其他 mapping 条件的支出主记录仍可作为无附件的历史确认记录迁入。
+4. legacy payment request：保留在 V2，不迁入 V3 `cash_requests`；已批准的 Cash ledger 只由独立 Cash ledger 迁移和 UUID 对账处理。
+
+以下项目仍未完成，因此普通教学目前不能形成 persistent importer：
+
+1. 新增受控 JSON snapshot 合同；该 snapshot 必须位于仓库外、权限 `600`，并以 SHA-256 固定，且带明示 exclusion manifest。
+2. 普通教学 persistent importer 必须沿用 staging-only / 双确认 / production-ref 拒绝 / 单事务 / 幂等重跑 / 零新 Cash request 的防线；通过 staging 演练后，才能进入 final delta / freeze 设计。
 
 ## 5. 本次结构盘点结论
 
@@ -82,7 +85,7 @@ business entities / students / teachers / subjects
 
 这是一份当前 cutoff 的范围基线，不是 source snapshot，更不是上线导入授权。production 继续写入时，未来 final delta / freeze 必须重新生成相同合同的结果。
 
-本仓库还提供 `assess-core-teaching-aggregate-readiness.mjs`，只消费上述 aggregate JSON。它将工资明细 / 调整、结转、附件、payment request、引用孤儿与 actual→planned 状态组合设为硬门禁；任一不满足即拒绝准备受限快照。通过仅表示当前窗口可进入“行级 snapshot 合同设计”，不表示已授权 persistent importer、Cash 创建或 production cutover。
+本仓库还提供 `assess-core-teaching-aggregate-readiness.mjs`，只消费上述 aggregate JSON。它以 `v2_readonly_retention_v1` 明示工资明细 / 调整、结转、附件和 payment request 的非零排除计数；这些事实必须按本节政策保留在 V2 或不复制附件，不能混入 snapshot。引用孤儿与 actual→planned 状态组合仍是硬门禁；任一不满足即拒绝准备受限快照。通过仅表示当前窗口可进入“行级 snapshot 合同设计”，不表示已授权 persistent importer、Cash 创建或 production cutover。
 
 ## 7. 课时与远期异常结论
 

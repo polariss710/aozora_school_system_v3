@@ -45,17 +45,27 @@ function inventory(overrides = {}) {
 
 test("permits a restricted snapshot only after all aggregate gates pass", () => {
   const result = assessCoreTeachingAggregateReadiness(inventory());
+  assert.equal(result.contractVersion, "aozora-v3-core-teaching-aggregate-readiness-v2");
   assert.equal(result.aggregateGatePassed, true);
+  assert.equal(result.omissionPolicy, "v2_readonly_retention_v1");
   assert.deepEqual(result.blockers, []);
   assert.deepEqual(result.futureFactsExcluded, { incomeRecords: 3, expenseRecords: 0, lessonRecords: 0 });
 });
 
-test("rejects dependencies that require a dedicated historical model", () => {
+test("records the approved V2-readonly omission policy instead of importing unsupported dependent facts", () => {
   const source = inventory();
   source.dependentCounts.teacherWageDetailAdjustments = 1;
   const result = assessCoreTeachingAggregateReadiness(source);
-  assert.equal(result.aggregateGatePassed, false);
-  assert.deepEqual(result.blockers, ["teacherWageDetailAdjustments=1"]);
+  assert.equal(result.aggregateGatePassed, true);
+  assert.equal(result.omissionPolicy, "v2_readonly_retention_v1");
+  assert.deepEqual(result.blockers, []);
+  assert.deepEqual(result.v2ReadOnlyExclusions, [
+    {
+      dependentFact: "teacherWageDetailAdjustments",
+      count: 1,
+      handling: "retain_affected_teacher_wage_chain_in_v2_readonly",
+    },
+  ]);
 });
 
 test("rejects an actual lesson without a supported planned source", () => {

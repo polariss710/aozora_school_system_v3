@@ -132,12 +132,16 @@ return business rows. Run its static
 contract test through `pnpm test:migration` before any source execution.
 
 `assess-core-teaching-aggregate-readiness.mjs` consumes only that aggregate JSON
-and applies the restricted-snapshot gate: all currently unsupported dependent
-facts and integrity findings must be zero, and every actual lesson must have a
-supported planned source. It reports the excluded future-fact counts without
-exporting identifiers or business rows. A passing result permits preparation of
-a restricted source-snapshot contract only; it does not authorize an importer,
-Cash creation, or a production cutover.
+and applies the restricted-snapshot gate. The approved
+`v2_readonly_retention_v1` policy lists non-zero wage-detail / adjustment,
+student-settlement adjustment / carryover, attachment and legacy payment-request
+counts as explicit V2-readonly exclusions; they must not be exported, recreated
+or silently omitted. Integrity findings must still be zero, and every actual
+lesson must have a supported planned source. It reports the exclusion and
+future-fact counts without exporting identifiers or business rows. A passing
+result permits preparation of a restricted source-snapshot contract for eligible
+facts only; it does not authorize an importer, Cash creation, or a production
+cutover.
 
 ## Final delta / freeze cutover gate
 

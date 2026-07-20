@@ -340,6 +340,12 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - migration 仅应用到 `v3-staging`；只读复核确认两个 index、两个 check constraint 与 Prisma history 存在，staging migration 数为 25。没有业务行、Cash request / transaction 或 production 连接写入。
 - `prisma format` / `validate`、API build 与 24 项迁移合同测试通过。
 
+## 2026-07-20 第三十轮普通教学 V2 只读历史例外政策
+
+- 用户确认不保留四类复杂旧记录的 V3 副本：多维工资明细 / 调整、学生月结 adjustment / carryover、支出附件与 legacy payment request。受影响工资或月结下游链整体保留在 V2 只读；附件不复制但其他可完整映射的支出主记录仍可作为无附件历史事实；legacy payment request 不创建或复用 V3 `cash_requests`。
+- `assess-core-teaching-aggregate-readiness.mjs` 升级至 readiness contract v2，输出 `v2_readonly_retention_v1` 与按 dependent fact 汇总的 exclusion。此类计数不再作为模型缺口 blocker；关键引用孤儿和异常 actual → planned 状态仍会阻止 snapshot 准备。
+- 普通教学 mapping、staging checklist、prod boundary/runbook 同步要求未来受控 snapshot 携带逐链 exclusion manifest。尚未读取新的 production 业务行、建立普通教学 snapshot 或执行 staging 导入；现行 School / Cash production 未连接、未写入或修改。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。
