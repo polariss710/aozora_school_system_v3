@@ -333,6 +333,13 @@ Dev 真实 E2E 身份沿用 `docs/current-status.md` 的已验收记录：
 - migration 仅应用到 `v3-staging`；只读结构复核确认四个字段、两个索引与两个 check constraint 均存在，Prisma history 为 24 个已完成 migrations。没有导入业务行、没有 Cash request / transaction 写入，也没有连接或修改现行 production。
 - `prisma format` / `validate`、API build 与 24 项迁移合同测试通过。
 
+## 2026-07-20 第二十九轮普通教学来源身份约束补齐
+
+- staging 聚合预检确认 `students` / `teachers` 都没有半成对的 legacy source identity，随后新增 `20260720130000_constrain_reference_legacy_identity` 的配对 check constraint 与复合唯一索引。
+- 现在 `business_entities`、`students`、`teachers` 与 `subjects` 均以相同规则保存未来受控 mapping 的来源表 / ID；该规则禁止只有来源表或只有来源 ID 的不完整映射，也禁止同一来源身份映射到两条主数据。
+- migration 仅应用到 `v3-staging`；只读复核确认两个 index、两个 check constraint 与 Prisma history 存在，staging migration 数为 25。没有业务行、Cash request / transaction 或 production 连接写入。
+- `prisma format` / `validate`、API build 与 24 项迁移合同测试通过。
+
 ## 环境防串线
 
 - 非 dev API 启动必须提供 `SCHOOL_ENVIRONMENT_PROJECT_REF`，Cash URL、runtime DB URL 和 direct DB URL 必须包含同一 project ref。

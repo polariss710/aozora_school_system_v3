@@ -439,6 +439,7 @@ model Student {
   monthlySettlements    StudentMonthlySettlement[]
   incomeRecords         IncomeRecord[]
 
+  @@unique([legacyTable, legacyId])
   @@index([status])
   @@index([primaryBusinessEntityId])
   @@map("students")
@@ -462,6 +463,7 @@ model Teacher {
   wageSnapshots  TeacherWageSnapshot[]
   expenseRecords ExpenseRecord[]
 
+  @@unique([legacyTable, legacyId])
   @@index([status])
   @@map("teachers")
 }
