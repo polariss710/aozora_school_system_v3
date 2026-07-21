@@ -4013,6 +4013,11 @@ function Dashboard({
   const [weekAnchorDate, setWeekAnchorDate] = useState(getCurrentWeekMondayInput);
   const [studentId, setStudentId] = useState("");
   const [businessEntityId, setBusinessEntityId] = useState("");
+  const [appliedScope, setAppliedScope] = useState(() => ({
+    weekAnchorDate: getCurrentWeekMondayInput(),
+    studentId: "",
+    businessEntityId: "",
+  }));
   const [weeklySummary, setWeeklySummary] = useState<
     | { status: "loading"; value?: WeeklyOperationsSummary; message?: string }
     | { status: "ready"; value: WeeklyOperationsSummary; message?: string }
@@ -4028,9 +4033,9 @@ function Dashboard({
     let isMounted = true;
     setWeeklySummary((current) => ({ status: "loading", value: current.value }));
     void getWeeklyOperationsSummary(authSession.accessToken, {
-      weekAnchorDate,
-      ...(studentId ? { studentId } : {}),
-      ...(businessEntityId ? { businessEntityId } : {}),
+      weekAnchorDate: appliedScope.weekAnchorDate,
+      ...(appliedScope.studentId ? { studentId: appliedScope.studentId } : {}),
+      ...(appliedScope.businessEntityId ? { businessEntityId: appliedScope.businessEntityId } : {}),
     })
       .then((value) => {
         if (isMounted) setWeeklySummary({ status: "ready", value });
@@ -4047,12 +4052,12 @@ function Dashboard({
     return () => {
       isMounted = false;
     };
-  }, [authSession, businessEntityId, studentId, weekAnchorDate]);
+  }, [appliedScope, authSession]);
 
   const summary = weeklySummary.value;
   const currentWeekLabel = summary
     ? `${summary.weekAnchorDate} ～ ${summary.weekEndDate}`
-    : `${weekAnchorDate} 当周`;
+    : `${appliedScope.weekAnchorDate} 当周`;
   const metricValue = (value: number | string | undefined) =>
     weeklySummary.status === "error" ? "-" : value === undefined ? "读取中" : String(value);
   const flows = [
@@ -4114,9 +4119,11 @@ function Dashboard({
           icon={CalendarDays}
           variant="secondary"
           onClick={() => {
-            setWeekAnchorDate(getCurrentWeekMondayInput());
+            const currentWeek = getCurrentWeekMondayInput();
+            setWeekAnchorDate(currentWeek);
             setStudentId("");
             setBusinessEntityId("");
+            setAppliedScope({ weekAnchorDate: currentWeek, studentId: "", businessEntityId: "" });
           }}
         >
           回到本周
@@ -4148,6 +4155,13 @@ function Dashboard({
               {businessEntities.filter((entity) => entity.status === "active").map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
             </select>
           </label>
+          <ActionButton
+            icon={Search}
+            variant="primary"
+            onClick={() => setAppliedScope({ weekAnchorDate, studentId, businessEntityId })}
+          >
+            查询
+          </ActionButton>
           <p className="pb-1 text-xs text-muted-foreground">{weeklySummary.status === "error" ? weeklySummary.message : `当前统计周：${currentWeekLabel}`}</p>
         </div>
       </section>
