@@ -1941,10 +1941,24 @@ export class LessonsService {
   ): Prisma.StudentPlannedLessonWhereInput {
     const status = this.normalizePlannedStatus(query.status);
     const keyword = this.normalizeOptionalString(query.keyword);
+    const plannedDateFrom = this.normalizeOptionalDate(query.plannedDateFrom, "plannedDateFrom");
+    const plannedDateTo = this.normalizeOptionalDate(query.plannedDateTo, "plannedDateTo");
+
+    if (plannedDateFrom && plannedDateTo && plannedDateFrom > plannedDateTo) {
+      throw new BadRequestException("plannedDateFrom must be on or before plannedDateTo.");
+    }
 
     return {
       ...this.buildSharedWhere(query),
       ...(status ? { status } : {}),
+      ...(plannedDateFrom || plannedDateTo
+        ? {
+            plannedDate: {
+              ...(plannedDateFrom ? { gte: plannedDateFrom } : {}),
+              ...(plannedDateTo ? { lte: plannedDateTo } : {}),
+            },
+          }
+        : {}),
       ...(keyword
         ? {
             OR: [
@@ -2063,6 +2077,14 @@ export class LessonsService {
     }
 
     return date;
+  }
+
+  private normalizeOptionalDate(value: unknown, field: string) {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+
+    return this.normalizeDate(value, field);
   }
 
   private assertMonday(date: Date) {

@@ -6,6 +6,8 @@ export type ListLessonsQuery = {
   businessEntityId?: unknown;
   status?: unknown;
   keyword?: unknown;
+  plannedDateFrom?: unknown;
+  plannedDateTo?: unknown;
   limit?: unknown;
 };
 

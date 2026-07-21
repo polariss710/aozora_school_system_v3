@@ -147,4 +147,19 @@ describe("LessonsService planned schedule date", () => {
     expect(() => service.normalizeCreatePlannedInput({ ...createBody, plannedDate: "2026-08-03" }))
       .toThrow("plannedDate must belong to weekAnchorDate.");
   });
+
+  it("scopes planned lesson queries to an inclusive planned-date range", () => {
+    const service = buildService({}) as never as {
+      buildPlannedWhere: (query: unknown) => unknown;
+    };
+
+    expect(service.buildPlannedWhere({ plannedDateFrom: "2026-07-20", plannedDateTo: "2026-07-26" })).toMatchObject({
+      plannedDate: {
+        gte: new Date("2026-07-20T00:00:00.000Z"),
+        lte: new Date("2026-07-26T00:00:00.000Z"),
+      },
+    });
+    expect(() => service.buildPlannedWhere({ plannedDateFrom: "2026-07-26", plannedDateTo: "2026-07-20" }))
+      .toThrow("plannedDateFrom must be on or before plannedDateTo.");
+  });
 });

@@ -7891,23 +7891,65 @@ function downloadWeeklyScheduleImage(weekAnchorDate: string, lessons: StudentPla
 }
 
 function WeeklySchedulePage({
-  plannedLessons,
+  accessToken,
+  reloadKey,
   onEditPlannedLesson,
 }: {
-  plannedLessons: StudentPlannedLessonRecord[];
+  accessToken: string | null;
+  reloadKey: number;
   onEditPlannedLesson: (lesson: StudentPlannedLessonRecord) => void;
 }) {
   const initialScope = () => ({ weekAnchorDate: getCurrentWeekMondayInput() });
   const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialScope()));
+  const [scheduleLessons, setScheduleLessons] = useState<{
+    status: "idle" | "loading" | "ready" | "error";
+    items: StudentPlannedLessonRecord[];
+    message?: string;
+  }>({ status: "idle", items: [] });
   const { draft: draftScope, applied: appliedScope } = queryFilters;
   const dates = getWeekDateInputs(appliedScope.weekAnchorDate);
+
+  useEffect(() => {
+    if (!accessToken || !isMondayDateInput(appliedScope.weekAnchorDate)) {
+      setScheduleLessons({ status: "idle", items: [] });
+      return;
+    }
+
+    let isMounted = true;
+    const weekEndDate = getWeekSundayInput(appliedScope.weekAnchorDate);
+
+    setScheduleLessons((current) => ({ status: "loading", items: current.items }));
+    void listPlannedLessons(accessToken, {
+      plannedDateFrom: appliedScope.weekAnchorDate,
+      plannedDateTo: weekEndDate,
+    })
+      .then((response) => {
+        if (isMounted) {
+          setScheduleLessons({ status: "ready", items: response.items });
+        }
+      })
+      .catch((error) => {
+        if (isMounted) {
+          setScheduleLessons({
+            status: "error",
+            items: [],
+            message: error instanceof Error ? error.message : "周课表读取失败。",
+          });
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [accessToken, appliedScope.weekAnchorDate, reloadKey]);
+
   const visibleLessons = useMemo(
     () => plannedLessonsForScheduleWeek(
-      plannedLessons,
+      scheduleLessons.items,
       appliedScope.weekAnchorDate,
       getWeekSundayInput(appliedScope.weekAnchorDate),
     ),
-    [appliedScope.weekAnchorDate, plannedLessons],
+    [appliedScope.weekAnchorDate, scheduleLessons.items],
   );
 
   return (
@@ -7931,9 +7973,11 @@ function WeeklySchedulePage({
           </label>
           <ActionButton icon={Search} onClick={() => setQueryFilters((current) => applyQueryFilterDraft(current))}>查询</ActionButton>
           <ActionButton icon={CalendarDays} variant="quiet" onClick={() => setQueryFilters(resetAndApplyQueryFilters(initialScope()))}>回到本周</ActionButton>
-          <p className="pb-1 text-xs text-muted-foreground">当前显示 {visibleLessons.length} 节正式预定课时</p>
+          <p className="pb-1 text-xs text-muted-foreground">{scheduleLessons.status === "loading" ? "正在读取本周正式预定课时…" : `当前显示 ${visibleLessons.length} 节正式预定课时`}</p>
         </div>
       </section>
+
+      {scheduleLessons.status === "error" && <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{scheduleLessons.message}</div>}
 
       {!isMondayDateInput(appliedScope.weekAnchorDate) ? (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">排课周必须选择周一后再查询。</div>
@@ -12027,7 +12071,8 @@ export default function App() {
           />
         ) : activeKey === "weekly-schedule" ? (
           <WeeklySchedulePage
-            plannedLessons={studentChainApi.plannedLessons.items}
+            accessToken={authSession?.accessToken ?? null}
+            reloadKey={studentChainReloadKey}
             onEditPlannedLesson={openPlannedLessonEdit}
           />
         ) : activeKey === "external-lessons" && activePage ? (
