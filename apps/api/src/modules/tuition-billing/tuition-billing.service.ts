@@ -97,6 +97,7 @@ const tuitionPreviewPlannedLessonSelect = {
   subjectId: true,
   businessEntityId: true,
   weekAnchorDate: true,
+  plannedDate: true,
   lessonNo: true,
   durationHours: true,
   plannedFeeJpy: true,
@@ -192,11 +193,12 @@ export class TuitionBillingService {
     );
     const plannedLessons = await this.prisma.studentPlannedLesson.findMany({
       where: { id: { in: plannedLessonIds } },
-      orderBy: [{ weekAnchorDate: "asc" }, { lessonNo: "asc" }],
+      orderBy: [{ plannedDate: "asc" }, { lessonNo: "asc" }],
       select: {
         id: true,
         yearMonth: true,
         weekAnchorDate: true,
+        plannedDate: true,
         lessonNo: true,
         plannedStartTime: true,
         plannedEndTime: true,
@@ -531,6 +533,7 @@ export class TuitionBillingService {
         subjectId: lesson.subjectId,
         businessEntityId: lesson.businessEntityId,
         weekAnchorDate: this.formatDate(lesson.weekAnchorDate),
+        plannedDate: this.formatDate(lesson.plannedDate),
         lessonNo: lesson.lessonNo,
         durationHours: lesson.durationHours.toString(),
         plannedFeeJpy: lesson.plannedFeeJpy,
@@ -687,6 +690,7 @@ export class TuitionBillingService {
       plannedLessons: context.plannedLessons.map((lesson) => ({
         id: lesson.id,
         weekAnchorDate: this.formatDate(lesson.weekAnchorDate),
+        plannedDate: this.formatDate(lesson.plannedDate),
         weekLabel: this.formatWeekLabel(lesson.weekAnchorDate),
         lessonNo: lesson.lessonNo,
         durationHours: lesson.durationHours.toNumber(),
@@ -746,6 +750,7 @@ export class TuitionBillingService {
           id: true;
           yearMonth: true;
           weekAnchorDate: true;
+          plannedDate: true;
           lessonNo: true;
           plannedStartTime: true;
           plannedEndTime: true;
@@ -779,6 +784,7 @@ export class TuitionBillingService {
         plannedLessonId: lesson.id,
         yearMonth: lesson.yearMonth,
         weekAnchorDate: this.formatDate(lesson.weekAnchorDate),
+        plannedDate: this.formatDate(lesson.plannedDate),
         weekLabel: this.formatWeekLabel(lesson.weekAnchorDate),
         lessonNo: lesson.lessonNo,
         plannedStartTime: lesson.plannedStartTime,
@@ -840,6 +846,7 @@ export class TuitionBillingService {
       subjectId: string;
       businessEntityId: string;
       weekAnchorDate: Date;
+      plannedDate: Date;
       lessonNo: number | null;
       durationHours: Prisma.Decimal;
       plannedFeeJpy: number;
@@ -867,6 +874,7 @@ export class TuitionBillingService {
             snapshotLesson.subjectId === lesson.subjectId &&
             snapshotLesson.businessEntityId === lesson.businessEntityId &&
             snapshotLesson.weekAnchorDate === this.formatDate(lesson.weekAnchorDate) &&
+            snapshotLesson.plannedDate === this.formatDate(lesson.plannedDate) &&
             snapshotLesson.lessonNo === lesson.lessonNo &&
             snapshotLesson.durationHours === lesson.durationHours.toString() &&
             snapshotLesson.plannedFeeJpy === lesson.plannedFeeJpy &&

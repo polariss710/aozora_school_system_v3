@@ -97,7 +97,7 @@ async function createPlan(tx, plan) {
   for (const row of plan.target.students) await tx.student.create({ data: withTemporalFields(row, ["createdAt", "updatedAt"]) });
   for (const row of plan.target.teachers) await tx.teacher.create({ data: withTemporalFields(row, ["createdAt", "updatedAt"]) });
   for (const row of plan.target.subjects) await tx.subject.create({ data: withTemporalFields(row, ["createdAt", "updatedAt"]) });
-  for (const row of plan.target.plannedLessons) await tx.studentPlannedLesson.create({ data: withTemporalFields(row, ["weekAnchorDate", "createdAt", "updatedAt"]) });
+  for (const row of plan.target.plannedLessons) await tx.studentPlannedLesson.create({ data: withTemporalFields(row, ["weekAnchorDate", "plannedDate", "createdAt", "updatedAt"]) });
   for (const row of plan.target.actualLessons) await tx.studentActualLesson.create({ data: withTemporalFields(row, ["actualDate", "createdAt", "updatedAt"]) });
   for (const row of plan.target.incomes) await tx.incomeRecord.create({ data: withTemporalFields(row, ["createdAt", "updatedAt"]) });
   for (const row of plan.target.tuitionBills) await tx.studentTuitionBill.create({ data: withTemporalFields(row, ["generatedAt", "createdAt", "updatedAt"]) });

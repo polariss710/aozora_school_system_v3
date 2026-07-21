@@ -40,6 +40,15 @@ function optionalDate(value) {
   return value === null || value === undefined ? null : value;
 }
 
+function mondayAnchorForDate(value, label) {
+  const dateValue = required(value, label);
+  invariant(/^\d{4}-\d{2}-\d{2}$/.test(dateValue), `${label} must be YYYY-MM-DD`);
+  const date = new Date(`${dateValue}T00:00:00.000Z`);
+  invariant(!Number.isNaN(date.getTime()), `${label} must be a valid date`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
 function recordStatus(active) {
   return active === false ? "inactive" : "active";
 }
@@ -189,9 +198,10 @@ export function buildCoreTeachingMigrationPlan(snapshot, exclusionManifest) {
     }),
     plannedLessons: snapshot.facts.plannedLessons.map((row) => {
       const raw = sourceRow(row, "planned lesson");
+      const plannedDate = required(raw.lesson_date, "planned lesson date");
       return {
         id: row.id, studentId: row.studentId, teacherId: row.teacherId, subjectId: row.subjectId, businessEntityId: row.businessEntityId,
-        yearMonth: row.yearMonth, weekAnchorDate: required(raw.lesson_date, "planned lesson date"), lessonNo: raw.lesson_count ?? null,
+        yearMonth: row.yearMonth, weekAnchorDate: mondayAnchorForDate(plannedDate, "planned lesson date"), plannedDate, lessonNo: raw.lesson_count ?? null,
         plannedStartTime: raw.start_time ?? null, plannedEndTime: raw.end_time ?? null, durationHours: decimal(raw.duration_hours, "planned lesson duration"),
         plannedFeeJpy: integer(raw.lesson_fee ?? 0, "planned lesson fee"), content: raw.lesson_content ?? null, memo: raw.note ?? null,
         status: plannedStatus(raw, actualByPlannedId), sourceType: "legacy_v2_import", sourceId: row.id,

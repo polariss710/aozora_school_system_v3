@@ -115,3 +115,36 @@ describe("LessonsService historical import boundary", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 });
+
+describe("LessonsService planned schedule date", () => {
+  const createBody = {
+    studentId: "student-1",
+    teacherId: "teacher-1",
+    subjectId: "subject-1",
+    businessEntityId: "entity-1",
+    weekAnchorDate: "2026-07-27",
+    plannedDate: "2026-08-01",
+    durationHours: "1",
+    plannedFeeJpy: 6000,
+  };
+
+  it("keeps the business month on the Monday anchor while storing the planned date", () => {
+    const service = buildService({}) as never as {
+      normalizeCreatePlannedInput: (body: unknown) => { yearMonth: string; plannedDate: Date };
+    };
+
+    const result = service.normalizeCreatePlannedInput(createBody);
+
+    expect(result.yearMonth).toBe("2026-07");
+    expect(result.plannedDate.toISOString().slice(0, 10)).toBe("2026-08-01");
+  });
+
+  it("rejects a planned date outside its Monday-anchored week", () => {
+    const service = buildService({}) as never as {
+      normalizeCreatePlannedInput: (body: unknown) => unknown;
+    };
+
+    expect(() => service.normalizeCreatePlannedInput({ ...createBody, plannedDate: "2026-08-03" }))
+      .toThrow("plannedDate must belong to weekAnchorDate.");
+  });
+});

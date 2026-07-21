@@ -44,6 +44,8 @@ test("builds a UUID-preserving historical plan with no Cash facts", () => {
   assert.equal(plan.target.businessEntities[0].code, "V2-SYN");
   assert.equal(plan.target.plannedLessons[0].id, ids.planned);
   assert.equal(plan.target.plannedLessons[0].status, "actual_created");
+  assert.equal(plan.target.plannedLessons[0].plannedDate, "2026-07-01");
+  assert.equal(plan.target.plannedLessons[0].weekAnchorDate, "2026-06-29");
   assert.equal(plan.target.actualLessons[0].id, ids.actual);
   assert.equal(plan.target.incomes[0].recordStatus, "historical_confirmed");
   assert.equal(plan.target.expenses[0].recordStatus, "historical_confirmed");

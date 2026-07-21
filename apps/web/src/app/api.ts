@@ -527,6 +527,7 @@ export interface StudentPlannedLessonRecord {
   businessEntityId: string;
   yearMonth: string;
   weekAnchorDate: string;
+  plannedDate: string;
   lessonNo: number | null;
   plannedStartTime: string | null;
   plannedEndTime: string | null;
@@ -555,6 +556,7 @@ export interface CreatePlannedLessonInput {
   teacherId: string;
   subjectId: string;
   weekAnchorDate: string;
+  plannedDate: string;
   lessonNo?: number | null;
   plannedStartTime?: string | null;
   plannedEndTime?: string | null;
@@ -1283,6 +1285,18 @@ export function listPlannedLessons(accessToken: string, query: Record<string, st
 export function createPlannedLesson(accessToken: string, input: CreatePlannedLessonInput) {
   return requestJson<{ plannedLesson: StudentPlannedLessonRecord }>("/lessons/planned", {
     method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function updatePlannedLesson(
+  accessToken: string,
+  plannedLessonId: string,
+  input: CreatePlannedLessonInput,
+) {
+  return requestJson<{ plannedLesson: StudentPlannedLessonRecord }>(`/lessons/planned/${plannedLessonId}`, {
+    method: "PATCH",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),
   });

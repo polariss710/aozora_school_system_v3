@@ -113,6 +113,7 @@ import {
   updateTeacher,
   updateTeacherWageAdjustments,
   updateTeacherWageRule,
+  updatePlannedLesson,
   voidExpenseRecord,
   voidIncomeRecord,
   voidReimbursement,
@@ -450,7 +451,9 @@ type TeacherDialogState =
   | { mode: "edit"; row: DataRow };
 
 type FinanceDialogState = { kind: "income" | "expense" };
-type PlannedLessonDialogState = { defaultStudentId?: string };
+type PlannedLessonDialogState =
+  | { mode: "create"; defaultStudentId?: string }
+  | { mode: "edit"; plannedLesson: StudentPlannedLessonRecord };
 type TuitionBillDialogState = {
   mode: "create" | "regenerate";
   yearMonth: string;
@@ -676,6 +679,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { label: "学生管理", key: "students" },
       { label: "课时管理", key: "lesson-management" },
+      { label: "周课表", key: "weekly-schedule" },
       { label: "学费账单", key: "tuition-bills" },
       { label: "月度结算", key: "student-settlements" },
     ],
@@ -3935,6 +3939,7 @@ function formatApiError(error: unknown) {
 
     const lessonErrorTranslations = [
       ["weekAnchorDate must be a Monday.", "周起始日期必须选择周一。"],
+      ["plannedDate must belong to weekAnchorDate.", "预定日期必须在所选排课周内。"],
       ["Active teacher is required.", "该老师已归档或停用，请选择有效老师。"],
       ["Active subject is required.", "该科目已归档或停用，请选择有效科目。"],
       ["Student settlement is locked for this month.", "该学生当前月份已经锁定结算，不能新增预定课时。"],
@@ -4993,7 +4998,7 @@ function mapPlannedLessonToCard(record: StudentPlannedLessonRecord): LessonCardD
   const lessonNo = record.lessonNo === null ? "未编号" : `第${record.lessonNo}回`;
 
   return {
-    date: formatApiDate(record.weekAnchorDate),
+    date: formatApiDate(record.plannedDate),
     dateSub: `${lessonNo} · ${formatTimeRange(record.plannedStartTime, record.plannedEndTime)}`,
     student: record.student.name,
     teacher: record.teacher.name,
@@ -7238,6 +7243,20 @@ const lessonManagementPage: PageConfig = {
   rows: [],
 };
 
+const weeklySchedulePage: PageConfig = {
+  key: "weekly-schedule",
+  group: "学生链路",
+  title: "周课表",
+  description: "只读展示正式预定课时；修改日期或时间请进入对应预定课时编辑。",
+  primaryAction: undefined,
+  secondaryAction: undefined,
+  icon: CalendarDays,
+  metrics: [],
+  filters: [],
+  columns: [],
+  rows: [],
+};
+
 const lessonPairs: LessonPair[] = [
   {
     id: "pair-1",
@@ -7794,6 +7813,163 @@ function isMondayDateInput(value: string) {
   return !Number.isNaN(date.getTime()) && date.getUTCDay() === 1;
 }
 
+function getWeekSundayInput(weekAnchorDate: string) {
+  const date = new Date(`${weekAnchorDate}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return weekAnchorDate;
+  date.setUTCDate(date.getUTCDate() + 6);
+  return date.toISOString().slice(0, 10);
+}
+
+function isDateWithinWeek(plannedDate: string, weekAnchorDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(plannedDate) || !isMondayDateInput(weekAnchorDate)) {
+    return false;
+  }
+
+  return plannedDate >= weekAnchorDate && plannedDate <= getWeekSundayInput(weekAnchorDate);
+}
+
+function getWeekDateInputs(weekAnchorDate: string) {
+  if (!isMondayDateInput(weekAnchorDate)) return [];
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(`${weekAnchorDate}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + index);
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function escapeSvgText(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&apos;",
+  })[character] ?? character);
+}
+
+function downloadWeeklyScheduleImage(weekAnchorDate: string, lessons: StudentPlannedLessonRecord[]) {
+  const dates = getWeekDateInputs(weekAnchorDate);
+  const weekdayLabels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  const grouped = new Map(dates.map((date) => [date, lessons.filter((lesson) => lesson.plannedDate === date)]));
+  const columnWidth = 220;
+  const headerHeight = 104;
+  const cardHeight = 82;
+  const height = headerHeight + Math.max(2, ...[...grouped.values()].map((items) => items.length)) * cardHeight + 40;
+  const width = columnWidth * 7;
+  const columns = dates.map((date, index) => {
+    const cards = (grouped.get(date) ?? []).map((lesson, cardIndex) => {
+      const y = headerHeight + 12 + cardIndex * cardHeight;
+      const time = formatTimeRange(lesson.plannedStartTime, lesson.plannedEndTime);
+      return `<g><rect x="${index * columnWidth + 10}" y="${y}" width="${columnWidth - 20}" height="${cardHeight - 10}" rx="8" fill="#EDF6FD" stroke="#B8DDF5"/><text x="${index * columnWidth + 20}" y="${y + 21}" font-size="14" font-weight="700" fill="#0B5C93">${escapeSvgText(time)}</text><text x="${index * columnWidth + 20}" y="${y + 42}" font-size="13" fill="#172033">${escapeSvgText(lesson.student.name)} · ${escapeSvgText(lesson.subject.name)}</text><text x="${index * columnWidth + 20}" y="${y + 61}" font-size="12" fill="#526176">${escapeSvgText(lesson.teacher.name)} · ${escapeSvgText(formatDurationHours(lesson.durationHours))}</text></g>`;
+    }).join("");
+    return `<g><rect x="${index * columnWidth}" y="0" width="${columnWidth}" height="${height}" fill="${index % 2 === 0 ? "#FFFFFF" : "#F8FAFC"}" stroke="#D8E0EA"/><text x="${index * columnWidth + 14}" y="30" font-size="16" font-weight="700" fill="#172033">${weekdayLabels[index]}</text><text x="${index * columnWidth + 14}" y="54" font-size="13" fill="#526176">${escapeSvgText(formatApiDate(date))}</text>${cards}</g>`;
+  }).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#F4F7FB"/><text x="18" y="84" font-size="18" font-weight="700" fill="#172033">青空进学塾 · ${escapeSvgText(weekAnchorDate)} 当周正式预定课时</text>${columns}</svg>`;
+  const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+  const image = new Image();
+  image.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width * 2;
+    canvas.height = height * 2;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.scale(2, 2);
+    context.drawImage(image, 0, 0);
+    canvas.toBlob((blob) => {
+      URL.revokeObjectURL(svgUrl);
+      if (!blob) return;
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `aozora-weekly-schedule-${weekAnchorDate}.png`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }, "image/png");
+  };
+  image.onerror = () => URL.revokeObjectURL(svgUrl);
+  image.src = svgUrl;
+}
+
+function WeeklySchedulePage({
+  plannedLessons,
+  onEditPlannedLesson,
+}: {
+  plannedLessons: StudentPlannedLessonRecord[];
+  onEditPlannedLesson: (lesson: StudentPlannedLessonRecord) => void;
+}) {
+  const initialScope = () => ({ weekAnchorDate: getCurrentWeekMondayInput() });
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialScope()));
+  const { draft: draftScope, applied: appliedScope } = queryFilters;
+  const dates = getWeekDateInputs(appliedScope.weekAnchorDate);
+  const visibleLessons = useMemo(
+    () => plannedLessons
+      .filter((lesson) => lesson.weekAnchorDate === appliedScope.weekAnchorDate)
+      .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate) || (left.plannedStartTime ?? "").localeCompare(right.plannedStartTime ?? "") || (left.lessonNo ?? 0) - (right.lessonNo ?? 0)),
+    [appliedScope.weekAnchorDate, plannedLessons],
+  );
+
+  return (
+    <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-[#1687D9]">学生链路</p>
+          <h1 className="mt-1 text-lg font-semibold text-foreground">周课表</h1>
+          <p className="mt-1 text-xs text-muted-foreground">只读展示正式预定课时；点击课程可编辑对应预定日期和时间。</p>
+        </div>
+        <ActionButton icon={Download} variant="secondary" disabled={visibleLessons.length === 0} onClick={() => downloadWeeklyScheduleImage(appliedScope.weekAnchorDate, visibleLessons)}>
+          导出 PNG
+        </ActionButton>
+      </div>
+
+      <section className="rounded-lg border border-border bg-white p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+            排课周（周一）
+            <input type="date" value={draftScope.weekAnchorDate} onChange={(event) => setQueryFilters((current) => updateQueryFilterDraft(current, { weekAnchorDate: event.target.value }))} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+          </label>
+          <ActionButton icon={Search} onClick={() => setQueryFilters((current) => applyQueryFilterDraft(current))}>查询</ActionButton>
+          <ActionButton icon={CalendarDays} variant="quiet" onClick={() => setQueryFilters(resetAndApplyQueryFilters(initialScope()))}>回到本周</ActionButton>
+          <p className="pb-1 text-xs text-muted-foreground">当前显示 {visibleLessons.length} 节正式预定课时</p>
+        </div>
+      </section>
+
+      {!isMondayDateInput(appliedScope.weekAnchorDate) ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">排课周必须选择周一后再查询。</div>
+      ) : (
+        <section className="overflow-x-auto rounded-lg border border-border bg-white">
+          <div className="grid min-w-[980px] grid-cols-7 divide-x divide-border">
+            {dates.map((date, index) => {
+              const dayLessons = visibleLessons.filter((lesson) => lesson.plannedDate === date);
+              return (
+                <div key={date} className="min-h-[360px] bg-white p-3 even:bg-slate-50/50">
+                  <div className="border-b border-border pb-2">
+                    <div className="text-sm font-semibold text-foreground">{["周一", "周二", "周三", "周四", "周五", "周六", "周日"][index]}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{formatApiDate(date)}</div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {dayLessons.map((lesson) => {
+                      const status = getPlannedLessonStatusView(lesson.status);
+                      const editable = lesson.status === "scheduled";
+                      return (
+                        <button key={lesson.id} type="button" disabled={!editable} onClick={() => onEditPlannedLesson(lesson)} className="block w-full rounded-md border border-sky-200 bg-sky-50 p-2.5 text-left transition hover:border-[#1687D9] hover:bg-sky-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-slate-100 disabled:opacity-75" title={editable ? "编辑对应预定课时" : "该预定课时已进入后续状态，只读展示"}>
+                          <div className="flex items-center justify-between gap-2 text-xs font-semibold text-[#0B5C93]"><span>{formatTimeRange(lesson.plannedStartTime, lesson.plannedEndTime)}</span><span>{formatDurationHours(lesson.durationHours)}</span></div>
+                          <div className="mt-1 truncate text-sm font-medium text-foreground">{lesson.student.name}</div>
+                          <div className="mt-0.5 truncate text-xs text-muted-foreground">{lesson.subject.name} · {lesson.teacher.name}</div>
+                          <div className="mt-1.5 text-[11px] text-muted-foreground">{status.label} · {editable ? "点击编辑预定" : "只读"}</div>
+                        </button>
+                      );
+                    })}
+                    {dayLessons.length === 0 && <div className="rounded-md border border-dashed border-border px-2 py-3 text-center text-xs text-muted-foreground">无预定课时</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+    </main>
+  );
+}
+
 function PlannedLessonCreateModal({
   state,
   students,
@@ -7819,17 +7995,19 @@ function PlannedLessonCreateModal({
   const activeTeachers = teachers.filter((teacher) => teacher.status === "active");
   const activeSubjects = subjects.filter((subject) => subject.status === "active");
   const operationalEntity = getOperationalBusinessEntity(businessEntities);
-  const [studentId, setStudentId] = useState(state.defaultStudentId ?? activeStudents[0]?.id ?? "");
-  const [teacherId, setTeacherId] = useState(activeTeachers[0]?.id ?? "");
-  const [subjectId, setSubjectId] = useState(activeSubjects[0]?.id ?? "");
-  const [weekAnchorDate, setWeekAnchorDate] = useState(getCurrentWeekMondayInput);
-  const [lessonNo, setLessonNo] = useState("1");
-  const [plannedStartTime, setPlannedStartTime] = useState("10:00");
-  const [plannedEndTime, setPlannedEndTime] = useState("11:00");
-  const [durationHours, setDurationHours] = useState("1");
-  const [plannedFeeJpy, setPlannedFeeJpy] = useState("");
-  const [content, setContent] = useState("");
-  const [memo, setMemo] = useState("");
+  const existing = state.mode === "edit" ? state.plannedLesson : null;
+  const [studentId, setStudentId] = useState(existing?.studentId ?? (state.mode === "create" ? state.defaultStudentId : undefined) ?? activeStudents[0]?.id ?? "");
+  const [teacherId, setTeacherId] = useState(existing?.teacherId ?? activeTeachers[0]?.id ?? "");
+  const [subjectId, setSubjectId] = useState(existing?.subjectId ?? activeSubjects[0]?.id ?? "");
+  const [weekAnchorDate, setWeekAnchorDate] = useState(existing?.weekAnchorDate ?? getCurrentWeekMondayInput);
+  const [plannedDate, setPlannedDate] = useState(existing?.plannedDate ?? getCurrentWeekMondayInput);
+  const [lessonNo, setLessonNo] = useState(existing?.lessonNo === null || existing?.lessonNo === undefined ? "" : String(existing.lessonNo));
+  const [plannedStartTime, setPlannedStartTime] = useState(normalizeTimeInputValue(existing?.plannedStartTime ?? null) || "10:00");
+  const [plannedEndTime, setPlannedEndTime] = useState(normalizeTimeInputValue(existing?.plannedEndTime ?? null) || "11:00");
+  const [durationHours, setDurationHours] = useState(existing ? String(parseApiAmount(existing.durationHours) ?? "") : "1");
+  const [plannedFeeJpy, setPlannedFeeJpy] = useState(existing ? String(parseApiAmount(existing.plannedFeeJpy) ?? "") : "");
+  const [content, setContent] = useState(existing?.content ?? "");
+  const [memo, setMemo] = useState(existing?.memo ?? "");
   const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -7847,6 +8025,7 @@ function PlannedLessonCreateModal({
   const canSubmit =
     Boolean(studentId && teacherId && subjectId && operationalEntity) &&
     isMondayDateInput(weekAnchorDate) &&
+    isDateWithinWeek(plannedDate, weekAnchorDate) &&
     Number.isFinite(durationNumber) &&
     durationNumber > 0 &&
     durationNumber <= 24 &&
@@ -7862,6 +8041,10 @@ function PlannedLessonCreateModal({
 
     if (!isMondayDateInput(weekAnchorDate)) {
       setValidationError("周起始日期必须选择周一。");
+      return;
+    }
+    if (!isDateWithinWeek(plannedDate, weekAnchorDate)) {
+      setValidationError("预定日期必须在所选周一开始的当周内。");
       return;
     }
     if (!timePairComplete) {
@@ -7882,6 +8065,7 @@ function PlannedLessonCreateModal({
       teacherId,
       subjectId,
       weekAnchorDate,
+      plannedDate,
       lessonNo: lessonNoNumber,
       plannedStartTime: normalizeOptionalFormValue(plannedStartTime),
       plannedEndTime: normalizeOptionalFormValue(plannedEndTime),
@@ -7894,15 +8078,15 @@ function PlannedLessonCreateModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭新增预定课时弹窗" />
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭预定课时弹窗" />
       <form
         onSubmit={submit}
         className="relative z-10 flex max-h-[94vh] w-[min(760px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl"
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
           <div>
-            <h2 className="text-base font-semibold text-foreground">新增预定课时</h2>
-            <p className="mt-1 text-xs text-muted-foreground">正式预定课时会进入学费账单；业务月份由周起始日期确定。</p>
+            <h2 className="text-base font-semibold text-foreground">{existing ? "编辑预定课时" : "新增预定课时"}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">正式预定课时会进入学费账单；业务月份仍由周一锚点确定。</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
             <X className="h-4 w-4" />
@@ -7934,10 +8118,14 @@ function PlannedLessonCreateModal({
             </label>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">周起始日期（周一）</span>
-              <input required type="date" value={weekAnchorDate} onChange={(event) => setWeekAnchorDate(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+              <input required type="date" value={weekAnchorDate} onChange={(event) => { setWeekAnchorDate(event.target.value); setPlannedDate(event.target.value); }} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">预定日期</span>
+              <input required type="date" min={weekAnchorDate} max={getWeekSundayInput(weekAnchorDate)} value={plannedDate} onChange={(event) => setPlannedDate(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
             </label>
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">课时序号</span>
@@ -7987,7 +8175,7 @@ function PlannedLessonCreateModal({
           <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
           <button type="submit" disabled={isSubmitting || !studentId || !teacherId || !subjectId || !operationalEntity} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">
             {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CalendarDays className="h-3.5 w-3.5" />}
-            {isSubmitting ? "保存中" : "保存预定课时"}
+            {isSubmitting ? "保存中" : existing ? "保存预定课时修改" : "保存预定课时"}
           </button>
         </div>
       </form>
@@ -8021,7 +8209,7 @@ function LessonActualFormModal({
   const isMakeup = planned?.status === "makeup_pending" || planned?.status === "cancelled";
   const [teacherId, setTeacherId] = useState(planned?.teacherId ?? "");
   const [subjectId, setSubjectId] = useState(planned?.subjectId ?? "");
-  const [actualDate, setActualDate] = useState(planned ? formatApiDate(planned.weekAnchorDate) : "");
+  const [actualDate, setActualDate] = useState(planned ? formatApiDate(planned.plannedDate) : "");
   const [startTime, setStartTime] = useState(normalizeTimeInputValue(planned?.plannedStartTime ?? null));
   const [endTime, setEndTime] = useState(normalizeTimeInputValue(planned?.plannedEndTime ?? null));
   const [durationHours, setDurationHours] = useState(defaultDuration === null ? "" : String(defaultDuration));
@@ -8092,7 +8280,7 @@ function LessonActualFormModal({
               <div className="text-muted-foreground">预定时间</div>
               <div className="truncate font-medium text-foreground">
                 {planned
-                  ? `${formatApiDate(planned.weekAnchorDate)} ${formatTimeRange(planned.plannedStartTime, planned.plannedEndTime)}`
+                  ? `${formatApiDate(planned.plannedDate)} ${formatTimeRange(planned.plannedStartTime, planned.plannedEndTime)}`
                   : "-"}
               </div>
             </div>
@@ -10048,7 +10236,11 @@ export default function App() {
   const [showCashModal, setShowCashModal] = useState(false);
   const [showSettlementBatchModal, setShowSettlementBatchModal] = useState(false);
 
-  const baseActivePage = activeKey === "lesson-management" ? lessonManagementPage : pages[activeKey];
+  const baseActivePage = activeKey === "lesson-management"
+    ? lessonManagementPage
+    : activeKey === "weekly-schedule"
+      ? weeklySchedulePage
+      : pages[activeKey];
   const activePage = useMemo(() => {
     if (activeKey === "students" && baseActivePage) {
       return buildStudentsPage(baseActivePage, studentApi);
@@ -10064,6 +10256,10 @@ export default function App() {
 
     if (activeKey === "lesson-management" && baseActivePage) {
       return buildLessonManagementPage(baseActivePage, studentChainApi);
+    }
+
+    if (activeKey === "weekly-schedule") {
+      return weeklySchedulePage;
     }
 
     if (activeKey === "tuition-bills" && baseActivePage) {
@@ -10719,7 +10915,12 @@ export default function App() {
 
   const openPlannedLessonCreate = () => {
     setPlannedLessonMutationError(null);
-    setPlannedLessonDialog({});
+    setPlannedLessonDialog({ mode: "create" });
+  };
+
+  const openPlannedLessonEdit = (plannedLesson: StudentPlannedLessonRecord) => {
+    setPlannedLessonMutationError(null);
+    setPlannedLessonDialog({ mode: "edit", plannedLesson });
   };
 
   const submitPlannedLessonForm = async (input: CreatePlannedLessonInput) => {
@@ -10732,10 +10933,17 @@ export default function App() {
     setPlannedLessonMutationError(null);
 
     try {
-      await createPlannedLesson(authSession.accessToken, input);
+      if (plannedLessonDialog?.mode === "edit") {
+        await updatePlannedLesson(authSession.accessToken, plannedLessonDialog.plannedLesson.id, input);
+      } else {
+        await createPlannedLesson(authSession.accessToken, input);
+      }
       setPlannedLessonDialog(null);
       setStudentChainReloadKey((current) => current + 1);
-      setActionNotice({ tone: "emerald", text: "预定课时已创建，并已刷新课时管理列表。" });
+      setActionNotice({
+        tone: "emerald",
+        text: plannedLessonDialog?.mode === "edit" ? "预定课时已修改，并已刷新课时管理列表。" : "预定课时已创建，并已刷新课时管理列表。",
+      });
     } catch (error) {
       setPlannedLessonMutationError(formatApiError(error));
     } finally {
@@ -11813,6 +12021,11 @@ export default function App() {
             onPrimary={openPlannedLessonCreate}
             onLessonAction={handleLessonAction}
             lessonActionSubmittingId={lessonActionSubmittingId}
+          />
+        ) : activeKey === "weekly-schedule" ? (
+          <WeeklySchedulePage
+            plannedLessons={studentChainApi.plannedLessons.items}
+            onEditPlannedLesson={openPlannedLessonEdit}
           />
         ) : activeKey === "external-lessons" && activePage ? (
           <ExternalWorkLessonsPage page={activePage} pairs={activeExternalWorkPairs} onOpenDetail={setDetailRow} />

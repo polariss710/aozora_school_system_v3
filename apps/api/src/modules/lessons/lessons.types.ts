@@ -15,6 +15,7 @@ export type PlannedLessonWriteBody = {
   subjectId?: unknown;
   businessEntityId?: unknown;
   weekAnchorDate?: unknown;
+  plannedDate?: unknown;
   lessonNo?: unknown;
   plannedStartTime?: unknown;
   plannedEndTime?: unknown;
@@ -93,6 +94,7 @@ export type NormalizedPlannedLessonInput = {
   businessEntityId: string;
   yearMonth: string;
   weekAnchorDate: Date;
+  plannedDate: Date;
   lessonNo: number | null;
   plannedStartTime: string | null;
   plannedEndTime: string | null;
