@@ -4924,6 +4924,10 @@ function getLessonRelationLabel(
     return "待补课";
   }
 
+  if (planned.status === "makeup_completed") {
+    return "补课完成";
+  }
+
   if (planned.status === "cancelled") {
     return "已取消";
   }
@@ -4949,6 +4953,10 @@ function getLessonActionHint(
 
   if (planned.status === "makeup_pending" || planned.status === "cancelled") {
     return "待补余额可登记补课完成；学生费用仍归属原预定课时，老师工资按补课实际结算。";
+  }
+
+  if (planned.status === "makeup_completed") {
+    return "待补余额已用尽，补课实际已独立登记；学生费用仍归属原预定课时。";
   }
 
   return "可以从预定课时生成实际课时、取消预定，或先标记为待补课。";
