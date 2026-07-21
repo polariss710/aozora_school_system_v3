@@ -318,9 +318,10 @@ async function seedAdminUser() {
   const passwordHash = await passwordService.hashPassword(password);
   const user = await prisma.user.upsert({
     where: { email },
+    // Deployment seed runs are repeatable.  An existing administrator's password
+    // is managed explicitly and must never be overwritten by a redeploy.
     update: {
       displayName,
-      passwordHash,
       status: UserStatus.active,
     },
     create: {
