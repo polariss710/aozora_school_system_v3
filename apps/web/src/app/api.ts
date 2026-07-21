@@ -627,6 +627,25 @@ export interface StudentMakeupBalanceRecord {
   businessEntity: RelatedBusinessEntityRecord;
 }
 
+export interface WeeklyOperationsSummary {
+  weekAnchorDate: string;
+  weekEndDate: string;
+  scope: {
+    studentId?: string;
+    businessEntityId?: string;
+  };
+  formalPlanned: {
+    plannedCount: number;
+    registeredCount: number;
+    pendingRegistrationCount: number;
+    cancelledCount: number;
+  };
+  makeupBalance: {
+    openSourceCount: number;
+    remainingHours: ApiAmountValue;
+  };
+}
+
 export interface TuitionBillRecord {
   id: string;
   studentId: string;
@@ -1279,6 +1298,19 @@ export function listActualLessons(accessToken: string, query: Record<string, str
 export function listMakeupBalances(accessToken: string, query: Record<string, string> = {}) {
   const search = new URLSearchParams({ limit: "500", ...query });
   return requestJson<ListResponse<StudentMakeupBalanceRecord>>(`/lessons/makeup-balances?${search.toString()}`, {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function getWeeklyOperationsSummary(
+  accessToken: string,
+  query: { weekAnchorDate: string; studentId?: string; businessEntityId?: string },
+) {
+  const search = new URLSearchParams({ weekAnchorDate: query.weekAnchorDate });
+  if (query.studentId) search.set("studentId", query.studentId);
+  if (query.businessEntityId) search.set("businessEntityId", query.businessEntityId);
+
+  return requestJson<WeeklyOperationsSummary>(`/operations/weekly-summary?${search.toString()}`, {
     headers: authorizedHeaders(accessToken),
   });
 }
