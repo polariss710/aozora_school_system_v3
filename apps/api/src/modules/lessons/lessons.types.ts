@@ -52,6 +52,7 @@ export type BatchPlannedLessonsBody = {
 
 export type ActualLessonWriteBody = {
   teacherId?: unknown;
+  subjectId?: unknown;
   actualDate?: unknown;
   startTime?: unknown;
   endTime?: unknown;
