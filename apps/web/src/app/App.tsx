@@ -120,7 +120,7 @@ import {
   voidTuitionBill,
   withdrawCashRequest,
 } from "./api";
-import { plannedLessonsForScheduleWeek } from "./weekly-schedule";
+import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "./weekly-schedule";
 import type {
   ApiHealthSnapshot,
   AccountRecord,
@@ -7851,7 +7851,7 @@ function escapeSvgText(value: string) {
 function downloadWeeklyScheduleImage(weekAnchorDate: string, lessons: StudentPlannedLessonRecord[]) {
   const dates = getWeekDateInputs(weekAnchorDate);
   const weekdayLabels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-  const grouped = new Map(dates.map((date) => [date, lessons.filter((lesson) => lesson.plannedDate === date)]));
+  const grouped = new Map(dates.map((date) => [date, lessons.filter((lesson) => plannedLessonScheduleDate(lesson.plannedDate) === date)]));
   const columnWidth = 220;
   const headerHeight = 104;
   const cardHeight = 82;
@@ -7985,7 +7985,7 @@ function WeeklySchedulePage({
         <section className="overflow-x-auto rounded-lg border border-border bg-white">
           <div className="grid min-w-[980px] grid-cols-7 divide-x divide-border">
             {dates.map((date, index) => {
-              const dayLessons = visibleLessons.filter((lesson) => lesson.plannedDate === date);
+              const dayLessons = visibleLessons.filter((lesson) => plannedLessonScheduleDate(lesson.plannedDate) === date);
               return (
                 <div key={date} className="min-h-[360px] bg-white p-3 even:bg-slate-50/50">
                   <div className="border-b border-border pb-2">

@@ -7,7 +7,7 @@ import {
   resetAndApplyQueryFilters,
   updateQueryFilterDraft,
 } from "../../apps/web/src/app/query-filter-state.js";
-import { plannedLessonsForScheduleWeek } from "../../apps/web/src/app/weekly-schedule.ts";
+import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "../../apps/web/src/app/weekly-schedule.ts";
 
 const initialScope = {
   weekAnchorDate: "2026-07-20",
@@ -53,5 +53,15 @@ test("weekly schedule follows the formal planned date, not the settlement week a
   assert.deepEqual(
     plannedLessonsForScheduleWeek(lessons, "2026-07-20", "2026-07-26").map((lesson) => lesson.id),
     ["monday-anchor", "sunday-anchor"],
+  );
+});
+
+test("weekly schedule normalizes API date timestamps before grouping them by day", () => {
+  const lesson = { id: "timestamped", plannedDate: "2026-07-20T00:00:00.000Z", plannedStartTime: "10:00", lessonNo: 1 };
+
+  assert.equal(plannedLessonScheduleDate(lesson.plannedDate), "2026-07-20");
+  assert.deepEqual(
+    plannedLessonsForScheduleWeek([lesson], "2026-07-20", "2026-07-26").map((record) => record.id),
+    ["timestamped"],
   );
 });
