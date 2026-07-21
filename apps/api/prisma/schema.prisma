@@ -506,6 +506,7 @@ model StudentPlannedLesson {
   businessEntityId String              @map("business_entity_id") @db.Uuid
   yearMonth        String              @map("year_month") @db.VarChar(7)
   weekAnchorDate   DateTime            @map("week_anchor_date") @db.Date
+  plannedDate      DateTime            @map("planned_date") @db.Date
   lessonNo         Int?                @map("lesson_no")
   plannedStartTime String?             @map("planned_start_time") @db.VarChar(5)
   plannedEndTime   String?             @map("planned_end_time") @db.VarChar(5)
@@ -534,6 +535,7 @@ model StudentPlannedLesson {
   @@index([businessEntityId])
   @@index([status])
   @@index([weekAnchorDate])
+  @@index([plannedDate])
   @@map("student_planned_lessons")
 }
 

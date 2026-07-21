@@ -53,6 +53,7 @@ const plannedLessonSelect = {
   businessEntityId: true,
   yearMonth: true,
   weekAnchorDate: true,
+  plannedDate: true,
   lessonNo: true,
   plannedStartTime: true,
   plannedEndTime: true,
@@ -101,6 +102,7 @@ const actualLessonSelect = {
       id: true,
       yearMonth: true,
       weekAnchorDate: true,
+      plannedDate: true,
       lessonNo: true,
       durationHours: true,
       status: true,
@@ -192,6 +194,7 @@ export class LessonsService {
         where,
         orderBy: [
           { weekAnchorDate: "asc" },
+          { plannedDate: "asc" },
           { lessonNo: "asc" },
           { student: { name: "asc" } },
         ],
@@ -1647,6 +1650,7 @@ export class LessonsService {
             businessEntityId: input.businessEntityId,
             yearMonth: this.toYearMonth(weekAnchorDate),
             weekAnchorDate,
+            plannedDate: weekAnchorDate,
             lessonNo,
             plannedStartTime: rule.plannedStartTime,
             plannedEndTime: rule.plannedEndTime,
@@ -1727,6 +1731,8 @@ export class LessonsService {
   ): NormalizedPlannedLessonInput {
     const weekAnchorDate = this.normalizeDate(body.weekAnchorDate, "weekAnchorDate");
     this.assertMonday(weekAnchorDate);
+    const plannedDate = this.normalizeDate(body.plannedDate, "plannedDate");
+    this.assertPlannedDateBelongsToWeek(plannedDate, weekAnchorDate);
 
     return {
       studentId: this.normalizeRequiredString(body.studentId, "studentId"),
@@ -1738,6 +1744,7 @@ export class LessonsService {
       ),
       yearMonth: this.toYearMonth(weekAnchorDate),
       weekAnchorDate,
+      plannedDate,
       lessonNo: this.normalizeOptionalPositiveInteger(body.lessonNo, "lessonNo"),
       plannedStartTime: this.normalizeOptionalTime(body.plannedStartTime),
       plannedEndTime: this.normalizeOptionalTime(body.plannedEndTime),
@@ -1760,6 +1767,11 @@ export class LessonsService {
         ? current.weekAnchorDate
         : this.normalizeDate(body.weekAnchorDate, "weekAnchorDate");
     this.assertMonday(weekAnchorDate);
+    const plannedDate =
+      body.plannedDate === undefined
+        ? current.plannedDate
+        : this.normalizeDate(body.plannedDate, "plannedDate");
+    this.assertPlannedDateBelongsToWeek(plannedDate, weekAnchorDate);
 
     return {
       studentId:
@@ -1783,6 +1795,7 @@ export class LessonsService {
             ),
       yearMonth: this.toYearMonth(weekAnchorDate),
       weekAnchorDate,
+      plannedDate,
       lessonNo:
         body.lessonNo === undefined
           ? current.lessonNo
@@ -2055,6 +2068,15 @@ export class LessonsService {
   private assertMonday(date: Date) {
     if (date.getUTCDay() !== 1) {
       throw new BadRequestException("weekAnchorDate must be a Monday.");
+    }
+  }
+
+  private assertPlannedDateBelongsToWeek(plannedDate: Date, weekAnchorDate: Date) {
+    const weekEndExclusive = new Date(weekAnchorDate);
+    weekEndExclusive.setUTCDate(weekEndExclusive.getUTCDate() + 7);
+
+    if (plannedDate < weekAnchorDate || plannedDate >= weekEndExclusive) {
+      throw new BadRequestException("plannedDate must belong to weekAnchorDate.");
     }
   }
 

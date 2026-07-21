@@ -25,6 +25,7 @@ function buildPlannedLesson(overrides: Record<string, unknown> = {}) {
     subjectId: "subject-1",
     businessEntityId: "entity-1",
     weekAnchorDate: new Date("2026-07-13T00:00:00.000Z"),
+    plannedDate: new Date("2026-07-13T00:00:00.000Z"),
     lessonNo: 1,
     durationHours: new Prisma.Decimal(1),
     plannedFeeJpy: 6000,
@@ -115,6 +116,7 @@ describe("TuitionBillingService preview", () => {
           subjectId: lesson.subjectId,
           businessEntityId: lesson.businessEntityId,
           weekAnchorDate: "2026-07-13",
+          plannedDate: "2026-07-13",
           lessonNo: lesson.lessonNo,
           durationHours: "1",
           plannedFeeJpy: lesson.plannedFeeJpy,
@@ -159,6 +161,17 @@ describe("TuitionBillingService preview", () => {
     expect(changedSourceResult.preview.generationMode).toBe("regenerate");
     expect(changedSourceResult.preview.willCreate).toBe(true);
     expect(changedSourceResult.preview.nextVersion).toBe(2);
+
+    const changedScheduleResult = await buildService(buildPrisma({
+      studentTuitionBill: { findFirst: vi.fn().mockResolvedValue(latest) },
+      studentPlannedLesson: {
+        findMany: vi.fn().mockResolvedValue([
+          buildPlannedLesson({ plannedDate: new Date("2026-07-14T00:00:00.000Z") }),
+        ]),
+      },
+    })).previewTuitionBill({ studentId: "student-1", yearMonth: "2026-07" });
+
+    expect(changedScheduleResult.preview.generationMode).toBe("regenerate");
   });
 
   it("blocks empty bills and bills that already generated an active income", async () => {

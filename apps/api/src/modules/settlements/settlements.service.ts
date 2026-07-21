@@ -126,11 +126,12 @@ export class SettlementsService {
     const [plannedLessons, actualLessons] = await Promise.all([
       this.prisma.studentPlannedLesson.findMany({
         where: { id: { in: plannedLessonIds } },
-        orderBy: [{ weekAnchorDate: "asc" }, { lessonNo: "asc" }],
+        orderBy: [{ plannedDate: "asc" }, { lessonNo: "asc" }],
         select: {
           id: true,
           yearMonth: true,
           weekAnchorDate: true,
+          plannedDate: true,
           lessonNo: true,
           plannedStartTime: true,
           plannedEndTime: true,
@@ -565,6 +566,7 @@ export class SettlementsService {
           id: true;
           yearMonth: true;
           weekAnchorDate: true;
+          plannedDate: true;
           lessonNo: true;
           plannedStartTime: true;
           plannedEndTime: true;
@@ -642,6 +644,7 @@ export class SettlementsService {
             id: plannedLesson.id,
             yearMonth: plannedLesson.yearMonth,
             weekAnchorDate: this.formatDate(plannedLesson.weekAnchorDate),
+            plannedDate: this.formatDate(plannedLesson.plannedDate),
             weekLabel: this.formatWeekLabel(plannedLesson.weekAnchorDate),
             lessonNo: plannedLesson.lessonNo,
             plannedStartTime: plannedLesson.plannedStartTime,
