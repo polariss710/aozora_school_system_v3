@@ -174,6 +174,12 @@ import {
   downloadTeacherAttendanceWorkbook,
   parseTeacherAttendanceWorkbook,
 } from "./attendance-workbook";
+import {
+  applyQueryFilterDraft,
+  createQueryFilterState,
+  resetAndApplyQueryFilters,
+  updateQueryFilterDraft,
+} from "./query-filter-state.js";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
 
@@ -4010,14 +4016,13 @@ function Dashboard({
   students: StudentRecord[];
   businessEntities: BusinessEntityRecord[];
 }) {
-  const [weekAnchorDate, setWeekAnchorDate] = useState(getCurrentWeekMondayInput);
-  const [studentId, setStudentId] = useState("");
-  const [businessEntityId, setBusinessEntityId] = useState("");
-  const [appliedScope, setAppliedScope] = useState(() => ({
+  const initialScope = () => ({
     weekAnchorDate: getCurrentWeekMondayInput(),
     studentId: "",
     businessEntityId: "",
-  }));
+  });
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialScope()));
+  const { draft: filterScope, applied: appliedScope } = queryFilters;
   const [weeklySummary, setWeeklySummary] = useState<
     | { status: "loading"; value?: WeeklyOperationsSummary; message?: string }
     | { status: "ready"; value: WeeklyOperationsSummary; message?: string }
@@ -4119,11 +4124,7 @@ function Dashboard({
           icon={CalendarDays}
           variant="secondary"
           onClick={() => {
-            const currentWeek = getCurrentWeekMondayInput();
-            setWeekAnchorDate(currentWeek);
-            setStudentId("");
-            setBusinessEntityId("");
-            setAppliedScope({ weekAnchorDate: currentWeek, studentId: "", businessEntityId: "" });
+            setQueryFilters(resetAndApplyQueryFilters(initialScope()));
           }}
         >
           回到本周
@@ -4136,21 +4137,21 @@ function Dashboard({
             排课周（周一）
             <input
               type="date"
-              value={weekAnchorDate}
-              onChange={(event) => setWeekAnchorDate(event.target.value)}
+              value={filterScope.weekAnchorDate}
+              onChange={(event) => setQueryFilters((current) => updateQueryFilterDraft(current, { weekAnchorDate: event.target.value }))}
               className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
             />
           </label>
           <label className="grid min-w-[160px] gap-1.5 text-xs font-medium text-muted-foreground">
             学生范围
-            <select value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+            <select value={filterScope.studentId} onChange={(event) => setQueryFilters((current) => updateQueryFilterDraft(current, { studentId: event.target.value }))} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
               <option value="">全部学生</option>
               {students.filter((student) => student.status === "active").map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}
             </select>
           </label>
           <label className="grid min-w-[160px] gap-1.5 text-xs font-medium text-muted-foreground">
             原业务归属
-            <select value={businessEntityId} onChange={(event) => setBusinessEntityId(event.target.value)} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+            <select value={filterScope.businessEntityId} onChange={(event) => setQueryFilters((current) => updateQueryFilterDraft(current, { businessEntityId: event.target.value }))} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
               <option value="">全部业务归属</option>
               {businessEntities.filter((entity) => entity.status === "active").map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
             </select>
@@ -4158,7 +4159,7 @@ function Dashboard({
           <ActionButton
             icon={Search}
             variant="primary"
-            onClick={() => setAppliedScope({ weekAnchorDate, studentId, businessEntityId })}
+            onClick={() => setQueryFilters((current) => applyQueryFilterDraft(current))}
           >
             查询
           </ActionButton>
