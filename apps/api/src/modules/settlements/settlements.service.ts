@@ -409,9 +409,9 @@ export class SettlementsService {
     const unresolvedLessonIds = plannedLessons
       .filter((lesson) => lesson.status === PlannedLessonStatus.scheduled)
       .map((lesson) => lesson.id);
-    const billableLessons = plannedLessons.filter(
-      (lesson) => lesson.status !== PlannedLessonStatus.cancelled,
-    );
+    // Student tuition and monthly receivables are fixed by formal planned lessons.
+    // A cancellation creates a fulfillment / makeup obligation, not an automatic refund.
+    const billableLessons = plannedLessons;
     const cancelledLessons = plannedLessons.filter(
       (lesson) => lesson.status === PlannedLessonStatus.cancelled,
     );
@@ -500,8 +500,8 @@ export class SettlementsService {
         record.cashRequests.map((request) => request.id),
       ),
       calculationPolicy: {
-        studentFeeBase: "planned_lessons_excluding_cancelled",
-        makeupPending: "counts_current_month_student_fee",
+        studentFeeBase: "all_formal_planned_lessons",
+        cancellation: "creates_makeup_balance_without_automatic_refund",
         carryoverFormula:
           "expected_cny - received_cny + adjustment_cny; positive carries to next bill",
         cnyPrecision: 2,
