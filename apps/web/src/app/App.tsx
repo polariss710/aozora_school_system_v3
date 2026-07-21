@@ -120,6 +120,7 @@ import {
   voidTuitionBill,
   withdrawCashRequest,
 } from "./api";
+import { plannedLessonsForScheduleWeek } from "./weekly-schedule";
 import type {
   ApiHealthSnapshot,
   AccountRecord,
@@ -7901,9 +7902,11 @@ function WeeklySchedulePage({
   const { draft: draftScope, applied: appliedScope } = queryFilters;
   const dates = getWeekDateInputs(appliedScope.weekAnchorDate);
   const visibleLessons = useMemo(
-    () => plannedLessons
-      .filter((lesson) => lesson.weekAnchorDate === appliedScope.weekAnchorDate)
-      .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate) || (left.plannedStartTime ?? "").localeCompare(right.plannedStartTime ?? "") || (left.lessonNo ?? 0) - (right.lessonNo ?? 0)),
+    () => plannedLessonsForScheduleWeek(
+      plannedLessons,
+      appliedScope.weekAnchorDate,
+      getWeekSundayInput(appliedScope.weekAnchorDate),
+    ),
     [appliedScope.weekAnchorDate, plannedLessons],
   );
 
