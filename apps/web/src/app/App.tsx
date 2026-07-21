@@ -95,6 +95,7 @@ import {
   getTuitionReceipt,
   issueTuitionReceipt,
   getCurrentUser,
+  getWeeklyOperationsSummary,
   markPlannedLessonMakeupPending,
   previewTuitionBill,
   previewStudentSettlement,
@@ -167,6 +168,7 @@ import type {
   TuitionBillRecord,
   TuitionBillPreview,
   TuitionReceiptPayload,
+  WeeklyOperationsSummary,
 } from "./api";
 import {
   downloadTeacherAttendanceWorkbook,
@@ -3997,7 +3999,62 @@ function formatApiError(error: unknown) {
   return "请求失败";
 }
 
-function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
+function Dashboard({
+  onNavigate,
+  authSession,
+  students,
+  businessEntities,
+}: {
+  onNavigate: (key: string) => void;
+  authSession: AuthSession | null;
+  students: StudentRecord[];
+  businessEntities: BusinessEntityRecord[];
+}) {
+  const [weekAnchorDate, setWeekAnchorDate] = useState(getCurrentWeekMondayInput);
+  const [studentId, setStudentId] = useState("");
+  const [businessEntityId, setBusinessEntityId] = useState("");
+  const [weeklySummary, setWeeklySummary] = useState<
+    | { status: "loading"; value?: WeeklyOperationsSummary; message?: string }
+    | { status: "ready"; value: WeeklyOperationsSummary; message?: string }
+    | { status: "error"; value?: WeeklyOperationsSummary; message: string }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    if (!authSession) {
+      setWeeklySummary({ status: "loading" });
+      return;
+    }
+
+    let isMounted = true;
+    setWeeklySummary((current) => ({ status: "loading", value: current.value }));
+    void getWeeklyOperationsSummary(authSession.accessToken, {
+      weekAnchorDate,
+      ...(studentId ? { studentId } : {}),
+      ...(businessEntityId ? { businessEntityId } : {}),
+    })
+      .then((value) => {
+        if (isMounted) setWeeklySummary({ status: "ready", value });
+      })
+      .catch((error) => {
+        if (isMounted) {
+          setWeeklySummary({
+            status: "error",
+            message: formatApiError(error),
+          });
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession, businessEntityId, studentId, weekAnchorDate]);
+
+  const summary = weeklySummary.value;
+  const currentWeekLabel = summary
+    ? `${summary.weekAnchorDate} ～ ${summary.weekEndDate}`
+    : `${weekAnchorDate} 当周`;
+  const metricValue = (value: number | string | undefined) =>
+    weeklySummary.status === "error" ? "-" : value === undefined ? "读取中" : String(value);
   const flows = [
     {
       title: "学生学费",
@@ -4005,7 +4062,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       tone: "sky" as Tone,
       steps: ["课时管理", "学费账单", "收入记录", "Cash 确认"],
       page: "tuition-bills",
-      status: "7月账单预览中",
+      status: "正式课时计费",
     },
     {
       title: "学生结算",
@@ -4013,7 +4070,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       tone: "cyan" as Tone,
       steps: ["课时管理", "月度结算", "结转冻结", "下月账单"],
       page: "student-settlements",
-      status: "6月待锁定 3 人",
+      status: "预定与履约分离",
     },
     {
       title: "老师工资",
@@ -4021,7 +4078,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       tone: "emerald" as Tone,
       steps: ["实际课时", "工资快照", "勤务表", "支出记录", "Cash"],
       page: "teacher-wages",
-      status: "6月勤务表待回收",
+      status: "按实际课时计薪",
     },
     {
       title: "外部授课",
@@ -4029,17 +4086,17 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       tone: "amber" as Tone,
       steps: ["预定课时", "实际课时", "结算锁定", "生成收入"],
       page: "external-settlements",
-      status: "早稻田塾待生成收入",
+      status: "独立结算链路",
     },
   ];
 
-  const tasks = [
-    ["课时管理", "2026年07月", "12 节待生成实际", "lesson-management", "amber" as Tone],
-    ["学费账单", "2026年07月", "3 人待确认", "tuition-bills", "sky" as Tone],
-    ["学生月度结算", "2026年06月", "2 人待锁定", "student-settlements", "cyan" as Tone],
-    ["老师工资结算", "2026年06月", "4 份快照待确认", "teacher-wages", "emerald" as Tone],
-    ["Cash 入站", "待入账", "2 条资金归集", "cash-inbound", "cyan" as Tone],
-  ];
+  const tasks = summary
+    ? [
+        ["课时管理", currentWeekLabel, `${summary.formalPlanned.pendingRegistrationCount} 节待登记`, "lesson-management", "amber" as Tone],
+        ["已取消预定", currentWeekLabel, `${summary.formalPlanned.cancelledCount} 节保留待补来源`, "lesson-management", "rose" as Tone],
+        ["待补余额", "截至当前", `${summary.makeupBalance.openSourceCount} 个来源 · ${summary.makeupBalance.remainingHours} 小时`, "lesson-management", "cyan" as Tone],
+      ]
+    : [];
 
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
@@ -4051,48 +4108,103 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
             </span>
             <h1 className="text-lg font-semibold text-foreground">V3 工作台</h1>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">按正式运营顺序查看学生、老师、财务和 Cash 的待处理事项</p>
+          <p className="mt-1 text-xs text-muted-foreground">教学运营统计只读正式预定课时；待补余额按原学生与原业务归属累计</p>
         </div>
-        <ActionButton icon={CalendarDays} variant="secondary">
-          回到本月
+        <ActionButton
+          icon={CalendarDays}
+          variant="secondary"
+          onClick={() => {
+            setWeekAnchorDate(getCurrentWeekMondayInput());
+            setStudentId("");
+            setBusinessEntityId("");
+          }}
+        >
+          回到本周
         </ActionButton>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="rounded-lg border border-border bg-white p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+            排课周（周一）
+            <input
+              type="date"
+              value={weekAnchorDate}
+              onChange={(event) => setWeekAnchorDate(event.target.value)}
+              className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+            />
+          </label>
+          <label className="grid min-w-[160px] gap-1.5 text-xs font-medium text-muted-foreground">
+            学生范围
+            <select value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+              <option value="">全部学生</option>
+              {students.filter((student) => student.status === "active").map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}
+            </select>
+          </label>
+          <label className="grid min-w-[160px] gap-1.5 text-xs font-medium text-muted-foreground">
+            原业务归属
+            <select value={businessEntityId} onChange={(event) => setBusinessEntityId(event.target.value)} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+              <option value="">全部业务归属</option>
+              {businessEntities.filter((entity) => entity.status === "active").map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+            </select>
+          </label>
+          <p className="pb-1 text-xs text-muted-foreground">{weeklySummary.status === "error" ? weeklySummary.message : `当前统计周：${currentWeekLabel}`}</p>
+        </div>
+      </section>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           metric={{
-            label: "7月学费预计",
-            value: money.jpy(840000),
-            sub: "含 2 笔 CNY 结转",
+            label: "本周预定",
+            value: metricValue(summary?.formalPlanned.plannedCount),
+            sub: "正式预定课时",
             tone: "sky",
-            icon: ReceiptText,
+            icon: CalendarDays,
           }}
         />
         <MetricCard
           metric={{
-            label: "6月老师工资",
-            value: money.jpy(392000),
-            sub: "4 位老师 · 6 个业务归属",
+            label: "已登记",
+            value: metricValue(summary?.formalPlanned.registeredCount),
+            sub: "该周预定已登记实际",
             tone: "emerald",
-            icon: GraduationCap,
+            icon: ClipboardCheck,
           }}
         />
         <MetricCard
           metric={{
-            label: "待提交 Cash",
-            value: money.cny(18432.4),
-            sub: "收入 3 条 · 支出 2 条",
+            label: "待登记",
+            value: metricValue(summary?.formalPlanned.pendingRegistrationCount),
+            sub: "含待补来源的未履约预定",
             tone: "amber",
-            icon: Banknote,
+            icon: Clock,
           }}
         />
         <MetricCard
           metric={{
-            label: "需要复核",
-            value: "4 件",
-            sub: "跨月补课、结转、Cash 拒绝",
+            label: "取消",
+            value: metricValue(summary?.formalPlanned.cancelledCount),
+            sub: "该周正式预定",
             tone: "rose",
-            icon: ShieldCheck,
+            icon: X,
+          }}
+        />
+        <MetricCard
+          metric={{
+            label: "待补来源",
+            value: metricValue(summary?.makeupBalance.openSourceCount),
+            sub: "截至当前累计，不按本周重置",
+            tone: "cyan",
+            icon: RefreshCw,
+          }}
+        />
+        <MetricCard
+          metric={{
+            label: "待补余额",
+            value: summary ? `${summary.makeupBalance.remainingHours} H` : metricValue(undefined),
+            sub: "按原学生与原业务归属累计",
+            tone: "violet",
+            icon: History,
           }}
         />
       </div>
@@ -4101,7 +4213,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         <div className="rounded-lg border border-border bg-white">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <span className="text-sm font-semibold text-foreground">主业务链路</span>
-            <span className="text-xs text-muted-foreground">V3 demo</span>
+            <span className="text-xs text-muted-foreground">正式运营链路</span>
           </div>
           <div className="grid gap-3 p-4 md:grid-cols-2">
             {flows.map((flow) => {
@@ -4136,10 +4248,12 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
 
         <div className="rounded-lg border border-border bg-white">
           <div className="border-b border-border px-4 py-3">
-            <span className="text-sm font-semibold text-foreground">今日待处理</span>
+            <span className="text-sm font-semibold text-foreground">本周待处理</span>
           </div>
           <div className="divide-y divide-border/70">
-            {tasks.map(([title, month, desc, key, tone]) => (
+            {tasks.length === 0 ? (
+              <div className="px-4 py-6 text-sm text-muted-foreground">正在读取本周教学运营数据。</div>
+            ) : tasks.map(([title, month, desc, key, tone]) => (
               <button
                 key={`${title}-${month}`}
                 onClick={() => onNavigate(key)}
@@ -11670,7 +11784,12 @@ export default function App() {
           onLogout={handleLogout}
         />
         {activeKey === "dashboard" ? (
-          <Dashboard onNavigate={navigate} />
+          <Dashboard
+            onNavigate={navigate}
+            authSession={authSession}
+            students={studentApi.rows.flatMap((row) => row.studentRecord ? [row.studentRecord] : [])}
+            businessEntities={settingsApi.businessEntities}
+          />
         ) : activeKey === "lesson-management" && activePage ? (
           <LessonManagementPage
             page={activePage}
@@ -11720,7 +11839,12 @@ export default function App() {
             }
           />
         ) : (
-          <Dashboard onNavigate={navigate} />
+          <Dashboard
+            onNavigate={navigate}
+            authSession={authSession}
+            students={studentApi.rows.flatMap((row) => row.studentRecord ? [row.studentRecord] : [])}
+            businessEntities={settingsApi.businessEntities}
+          />
         )}
       </div>
 

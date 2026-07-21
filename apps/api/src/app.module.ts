@@ -13,6 +13,7 @@ import { HealthModule } from "./modules/health/health.module";
 import { IncomeModule } from "./modules/income/income.module";
 import { LessonsModule } from "./modules/lessons/lessons.module";
 import { MoneyModule } from "./modules/money/money.module";
+import { OperationsModule } from "./modules/operations/operations.module";
 import { ReimbursementsModule } from "./modules/reimbursements/reimbursements.module";
 import { SettlementsModule } from "./modules/settlements/settlements.module";
 import { SettingsModule } from "./modules/settings/settings.module";
@@ -38,6 +39,7 @@ import { WagesModule } from "./modules/wages/wages.module";
     ExternalWorkplacesModule,
     ExternalWorkModule,
     MoneyModule,
+    OperationsModule,
     AuthModule,
     UserManagementModule,
     UsersModule,
