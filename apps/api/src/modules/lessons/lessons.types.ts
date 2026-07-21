@@ -61,6 +61,25 @@ export type ActualLessonWriteBody = {
   teacherWageEligible?: unknown;
 };
 
+export type CompleteMakeupBalanceBody = {
+  teacherId?: unknown;
+  subjectId?: unknown;
+  actualDate?: unknown;
+  startTime?: unknown;
+  endTime?: unknown;
+  durationHours?: unknown;
+  content?: unknown;
+  memo?: unknown;
+  teacherWageEligible?: unknown;
+};
+
+export type ListMakeupBalancesQuery = {
+  studentId?: unknown;
+  businessEntityId?: unknown;
+  status?: unknown;
+  limit?: unknown;
+};
+
 export type DeleteFreshPlannedLessonBody = {
   expectedUpdatedAt?: unknown;
   confirmDelete?: unknown;
@@ -118,4 +137,8 @@ export type NormalizedActualLessonInput = {
   content: string | null;
   memo: string | null;
   teacherWageEligible: boolean;
+};
+
+export type NormalizedMakeupActualLessonInput = NormalizedActualLessonInput & {
+  subjectId: string;
 };

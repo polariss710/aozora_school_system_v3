@@ -64,4 +64,54 @@ describe("LessonsService historical import boundary", () => {
     ).rejects.toThrow("Historical imported lessons are read-only.");
     expect(create).not.toHaveBeenCalled();
   });
+
+  it("rejects a makeup completion when its planned lesson has no open balance source", async () => {
+    const create = vi.fn();
+    const prisma = {
+      studentPlannedLesson: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "planned-1",
+          sourceType: "manual",
+          status: "makeup_pending",
+          actualLesson: null,
+        }),
+      },
+      studentActualLesson: { create },
+      studentMakeupBalance: { findUnique: vi.fn().mockResolvedValue(null) },
+    };
+
+    await expect(
+      buildService(prisma).generateActualLesson("planned-1", {}, "admin-1"),
+    ).rejects.toThrow("Open makeup balance is required");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a makeup completion that exceeds its remaining balance before any write", async () => {
+    const transaction = vi.fn();
+    const prisma = {
+      studentMakeupBalance: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "balance-1",
+          status: "open",
+          remainingDurationHours: "1.00",
+          sourcePlannedLesson: { sourceType: "manual" },
+        }),
+      },
+      $transaction: transaction,
+    };
+
+    await expect(
+      buildService(prisma).completeMakeupBalance(
+        "balance-1",
+        {
+          teacherId: "teacher-1",
+          subjectId: "subject-1",
+          actualDate: "2026-07-21",
+          durationHours: "1.50",
+        },
+        "admin-1",
+      ),
+    ).rejects.toThrow("Makeup duration exceeds the remaining balance.");
+    expect(transaction).not.toHaveBeenCalled();
+  });
 });

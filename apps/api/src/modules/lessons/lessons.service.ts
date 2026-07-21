@@ -8,6 +8,7 @@ import {
 import {
   ActualLessonStatus,
   AuditRiskLevel,
+  MakeupBalanceStatus,
   PlannedLessonStatus,
   Prisma,
   RecordStatus,
@@ -20,11 +21,14 @@ import { PrismaService } from "../database/prisma.service";
 import {
   ActualLessonWriteBody,
   BatchPlannedLessonsBody,
+  CompleteMakeupBalanceBody,
   DeleteFreshPlannedLessonBody,
+  ListMakeupBalancesQuery,
   ListLessonsQuery,
   NormalizedBatchPlannedLessonRule,
   NormalizedBatchPlannedLessonsInput,
   NormalizedActualLessonInput,
+  NormalizedMakeupActualLessonInput,
   NormalizedPlannedLessonInput,
   PlannedLessonWriteBody,
 } from "./lessons.types";
@@ -98,7 +102,9 @@ const actualLessonSelect = {
       yearMonth: true,
       weekAnchorDate: true,
       lessonNo: true,
+      durationHours: true,
       status: true,
+      sourceType: true,
     },
   },
   student: { select: relationSelect },
@@ -107,12 +113,63 @@ const actualLessonSelect = {
   businessEntity: { select: relationSelect },
 } satisfies Prisma.StudentActualLessonSelect;
 
+const makeupBalanceSelect = {
+  id: true,
+  studentId: true,
+  businessEntityId: true,
+  sourcePlannedLessonId: true,
+  sourceActualLessonId: true,
+  sourceReason: true,
+  sourceDurationHours: true,
+  remainingDurationHours: true,
+  status: true,
+  createdAt: true,
+  exhaustedAt: true,
+  voidedAt: true,
+  memo: true,
+  updatedAt: true,
+  student: { select: relationSelect },
+  businessEntity: { select: relationSelect },
+  sourcePlannedLesson: {
+    select: {
+      id: true,
+      yearMonth: true,
+      weekAnchorDate: true,
+      durationHours: true,
+      status: true,
+      sourceType: true,
+    },
+  },
+  allocations: {
+    where: { voidedAt: null },
+    select: {
+      id: true,
+      actualLessonId: true,
+      allocatedHours: true,
+      actualLesson: {
+        select: {
+          id: true,
+          teacher: { select: relationSelect },
+          subject: { select: relationSelect },
+          actualDate: true,
+          durationHours: true,
+          status: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.StudentMakeupBalanceSelect;
+
 type PlannedLessonSnapshot = Prisma.StudentPlannedLessonGetPayload<{
   select: typeof plannedLessonSelect;
 }>;
 
 type ActualLessonSnapshot = Prisma.StudentActualLessonGetPayload<{
   select: typeof actualLessonSelect;
+}>;
+
+type MakeupBalanceSnapshot = Prisma.StudentMakeupBalanceGetPayload<{
+  select: typeof makeupBalanceSelect;
 }>;
 
 type GeneratedBatchPlannedLessonInput = NormalizedPlannedLessonInput & {
@@ -416,8 +473,9 @@ export class LessonsService {
     this.assertPlannedLessonEditable(before);
     await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
 
-    return this.changePlannedStatus(
+    return this.openMakeupBalanceForPlannedLesson(
       before,
+      "cancelled",
       PlannedLessonStatus.cancelled,
       "student_planned_lesson.cancel",
       actorUserId,
@@ -450,8 +508,9 @@ export class LessonsService {
     this.assertPlannedLessonEditable(before);
     await this.assertStudentSettlementOpen(before.studentId, before.yearMonth);
 
-    return this.changePlannedStatus(
+    return this.openMakeupBalanceForPlannedLesson(
       before,
+      "makeup_pending",
       PlannedLessonStatus.makeup_pending,
       "student_planned_lesson.mark_makeup_pending",
       actorUserId,
@@ -475,12 +534,27 @@ export class LessonsService {
       throw new BadRequestException("Cancelled planned lesson cannot generate actual lesson.");
     }
 
-    if (plannedBefore.status !== PlannedLessonStatus.makeup_pending) {
-      await this.assertStudentSettlementOpen(
-        plannedBefore.studentId,
-        plannedBefore.yearMonth,
+    if (plannedBefore.status === PlannedLessonStatus.makeup_pending) {
+      const balance = await this.prisma.studentMakeupBalance.findUnique({
+        where: { sourcePlannedLessonId: plannedBefore.id },
+        select: { id: true, status: true },
+      });
+      if (!balance || balance.status !== MakeupBalanceStatus.open) {
+        throw new BadRequestException(
+          "Open makeup balance is required before a makeup actual lesson can be entered.",
+        );
+      }
+      return this.completeMakeupBalance(
+        balance.id,
+        { ...body, subjectId: plannedBefore.subjectId },
+        actorUserId,
       );
     }
+
+    await this.assertStudentSettlementOpen(
+      plannedBefore.studentId,
+      plannedBefore.yearMonth,
+    );
 
     const input = this.normalizeActualInputFromPlanned(body, plannedBefore);
     await this.assertActiveTeacher(input.teacherId);
@@ -491,6 +565,10 @@ export class LessonsService {
     );
 
     const result = await this.prisma.$transaction(async (tx) => {
+      const actualDuration = new Prisma.Decimal(input.durationHours);
+      const hasUnfulfilledRemainder = actualDuration.lessThan(
+        new Prisma.Decimal(plannedBefore.durationHours),
+      );
       const actualLesson = await tx.studentActualLesson.create({
         data: {
           plannedLessonId: plannedBefore.id,
@@ -502,7 +580,7 @@ export class LessonsService {
           actualDate: input.actualDate,
           startTime: input.startTime,
           endTime: input.endTime,
-          durationHours: new Prisma.Decimal(input.durationHours),
+          durationHours: actualDuration,
           content: input.content,
           memo: input.memo,
           teacherWageEligible: input.teacherWageEligible,
@@ -513,16 +591,32 @@ export class LessonsService {
         select: actualLessonSelect,
       });
 
-      const nextStatus =
-        plannedBefore.status === PlannedLessonStatus.makeup_pending
-          ? PlannedLessonStatus.makeup_completed
-          : PlannedLessonStatus.actual_created;
+      const nextStatus = hasUnfulfilledRemainder
+        ? PlannedLessonStatus.makeup_pending
+        : PlannedLessonStatus.actual_created;
 
       const plannedLesson = await tx.studentPlannedLesson.update({
         where: { id: plannedBefore.id },
         data: { status: nextStatus },
         select: plannedLessonSelect,
       });
+
+      const makeupBalance = hasUnfulfilledRemainder
+        ? await tx.studentMakeupBalance.create({
+            data: {
+              studentId: plannedBefore.studentId,
+              businessEntityId: plannedBefore.businessEntityId,
+              sourcePlannedLessonId: plannedBefore.id,
+              sourceActualLessonId: actualLesson.id,
+              sourceReason: "partial_completion",
+              sourceDurationHours: new Prisma.Decimal(plannedBefore.durationHours).minus(actualDuration),
+              remainingDurationHours: new Prisma.Decimal(plannedBefore.durationHours).minus(actualDuration),
+              status: MakeupBalanceStatus.open,
+              memo: plannedBefore.memo,
+            },
+            select: makeupBalanceSelect,
+          })
+        : null;
 
       await this.auditService.recordEvent(
         {
@@ -532,12 +626,12 @@ export class LessonsService {
           targetId: actualLesson.id,
           riskLevel: AuditRiskLevel.high,
           beforeSnapshot: plannedBefore,
-          afterSnapshot: { plannedLesson, actualLesson },
+          afterSnapshot: { plannedLesson, actualLesson, makeupBalance },
         },
         tx,
       );
 
-      return { plannedLesson, actualLesson };
+      return { plannedLesson, actualLesson, makeupBalance };
     });
 
     return result;
@@ -564,6 +658,129 @@ export class LessonsService {
     return { items, total, limit };
   }
 
+  async listMakeupBalances(query: ListMakeupBalancesQuery) {
+    const limit = this.normalizeLimit(query.limit);
+    const studentId = this.normalizeOptionalString(query.studentId);
+    const businessEntityId = this.normalizeOptionalString(query.businessEntityId);
+    const status = this.normalizeMakeupBalanceStatus(query.status);
+    const where: Prisma.StudentMakeupBalanceWhereInput = {
+      ...(studentId ? { studentId } : {}),
+      ...(businessEntityId ? { businessEntityId } : {}),
+      ...(status ? { status } : {}),
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.studentMakeupBalance.findMany({
+        where,
+        select: makeupBalanceSelect,
+        orderBy: [{ status: "asc" }, { createdAt: "asc" }],
+        take: limit,
+      }),
+      this.prisma.studentMakeupBalance.count({ where }),
+    ]);
+
+    return { items, total, limit };
+  }
+
+  async completeMakeupBalance(
+    id: string,
+    body: CompleteMakeupBalanceBody,
+    actorUserId: string,
+  ) {
+    const balance = await this.findMakeupBalance(id);
+    if (balance.status !== MakeupBalanceStatus.open) {
+      throw new BadRequestException("Only open makeup balances can be completed.");
+    }
+
+    this.assertLessonIsNotHistoricalImport(balance.sourcePlannedLesson);
+    const input = this.normalizeMakeupActualInput(body, balance);
+    const remaining = new Prisma.Decimal(balance.remainingDurationHours);
+    const allocated = new Prisma.Decimal(input.durationHours);
+    if (allocated.greaterThan(remaining)) {
+      throw new BadRequestException("Makeup duration exceeds the remaining balance.");
+    }
+
+    await this.assertActiveTeacher(input.teacherId);
+    await this.assertActiveSubject(input.subjectId);
+    await this.assertTeacherWageSnapshotOpen(
+      input.teacherId,
+      input.yearMonth,
+      balance.businessEntityId,
+    );
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.studentMakeupBalance.findUnique({
+        where: { id },
+        select: makeupBalanceSelect,
+      });
+      if (!current || current.status !== MakeupBalanceStatus.open) {
+        throw new ConflictException("Makeup balance is no longer open.");
+      }
+
+      const currentRemaining = new Prisma.Decimal(current.remainingDurationHours);
+      if (allocated.greaterThan(currentRemaining)) {
+        throw new ConflictException("Makeup balance has insufficient remaining duration.");
+      }
+
+      const nextRemaining = currentRemaining.minus(allocated);
+      const exhausted = nextRemaining.isZero();
+      const actualLesson = await tx.studentActualLesson.create({
+        data: {
+          studentId: current.studentId,
+          teacherId: input.teacherId,
+          subjectId: input.subjectId,
+          businessEntityId: current.businessEntityId,
+          yearMonth: input.yearMonth,
+          actualDate: input.actualDate,
+          startTime: input.startTime,
+          endTime: input.endTime,
+          durationHours: allocated,
+          content: input.content,
+          memo: input.memo,
+          teacherWageEligible: input.teacherWageEligible,
+          status: ActualLessonStatus.completed,
+          sourceType: "makeup_balance",
+          sourceId: current.id,
+        },
+        select: actualLessonSelect,
+      });
+
+      await tx.studentMakeupBalanceAllocation.create({
+        data: {
+          makeupBalanceId: current.id,
+          actualLessonId: actualLesson.id,
+          allocatedHours: allocated,
+        },
+      });
+
+      const updatedBalance = await tx.studentMakeupBalance.update({
+        where: { id: current.id },
+        data: {
+          remainingDurationHours: nextRemaining,
+          status: exhausted ? MakeupBalanceStatus.exhausted : MakeupBalanceStatus.open,
+          exhaustedAt: exhausted ? new Date() : null,
+        },
+        select: makeupBalanceSelect,
+      });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "student_makeup_balance.complete",
+          targetType: "student_makeup_balance",
+          targetId: current.id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: balance,
+          afterSnapshot: { makeupBalance: updatedBalance, actualLesson },
+        },
+        tx,
+      );
+
+      return { makeupBalance: updatedBalance, actualLesson };
+    });
+
+    return result;
+  }
+
   async getActualLesson(id: string) {
     const actualLesson = await this.findActualLesson(id);
 
@@ -577,6 +794,11 @@ export class LessonsService {
   ) {
     const before = await this.findActualLesson(id);
     this.assertActualLessonEditable(before);
+    if (before.sourceType === "makeup_balance") {
+      throw new BadRequestException(
+        "Makeup actual lessons must be cancelled and re-entered to preserve balance allocations.",
+      );
+    }
     await this.assertActualLessonStudentSettlementOpen(before);
     const input = this.normalizeUpdateActualInput(body, before);
     await this.assertActiveTeacher(input.teacherId);
@@ -632,8 +854,9 @@ export class LessonsService {
     this.assertActualLessonEditable(before);
 
     if (!before.plannedLessonId || !before.plannedLesson) {
-      throw new BadRequestException("Actual lesson has no planned lesson binding.");
+      return this.cancelMakeupActualLesson(before, actorUserId);
     }
+    const sourcePlannedLesson = before.plannedLesson;
 
     await this.assertActualLessonStudentSettlementOpen(before);
     await this.assertTeacherWageSnapshotOpen(
@@ -641,11 +864,6 @@ export class LessonsService {
       before.yearMonth,
       before.businessEntityId,
     );
-
-    const restoredPlannedStatus =
-      before.plannedLesson.status === PlannedLessonStatus.makeup_completed
-        ? PlannedLessonStatus.makeup_pending
-        : PlannedLessonStatus.scheduled;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const actualLesson = await tx.studentActualLesson.update({
@@ -660,9 +878,42 @@ export class LessonsService {
 
       const plannedLesson = await tx.studentPlannedLesson.update({
         where: { id: before.plannedLessonId! },
-        data: { status: restoredPlannedStatus },
+        data: { status: PlannedLessonStatus.makeup_pending },
         select: plannedLessonSelect,
       });
+      const existingBalance = await tx.studentMakeupBalance.findUnique({
+        where: { sourcePlannedLessonId: before.plannedLessonId! },
+        select: makeupBalanceSelect,
+      });
+      const sourceDuration = new Prisma.Decimal(sourcePlannedLesson.durationHours);
+      const makeupBalance = existingBalance
+        ? await tx.studentMakeupBalance.update({
+            where: { id: existingBalance.id },
+            data: {
+              sourceActualLessonId: actualLesson.id,
+              sourceReason: "cancelled_actual",
+              sourceDurationHours: sourceDuration,
+              remainingDurationHours: sourceDuration,
+              status: MakeupBalanceStatus.open,
+              exhaustedAt: null,
+              voidedAt: null,
+            },
+            select: makeupBalanceSelect,
+          })
+        : await tx.studentMakeupBalance.create({
+            data: {
+              studentId: before.studentId,
+              businessEntityId: before.businessEntityId,
+              sourcePlannedLessonId: before.plannedLessonId!,
+              sourceActualLessonId: actualLesson.id,
+              sourceReason: "cancelled_actual",
+              sourceDurationHours: sourceDuration,
+              remainingDurationHours: sourceDuration,
+              status: MakeupBalanceStatus.open,
+              memo: before.memo,
+            },
+            select: makeupBalanceSelect,
+          });
 
       await this.auditService.recordEvent(
         {
@@ -672,12 +923,90 @@ export class LessonsService {
           targetId: id,
           riskLevel: AuditRiskLevel.high,
           beforeSnapshot: before,
-          afterSnapshot: { plannedLesson, actualLesson },
+          afterSnapshot: { plannedLesson, actualLesson, makeupBalance },
         },
         tx,
       );
 
-      return { plannedLesson, actualLesson };
+      return { plannedLesson, actualLesson, makeupBalance };
+    });
+
+    return result;
+  }
+
+  private async cancelMakeupActualLesson(
+    before: ActualLessonSnapshot,
+    actorUserId: string,
+  ) {
+    if (before.sourceType !== "makeup_balance") {
+      throw new BadRequestException("Actual lesson has no planned lesson binding.");
+    }
+
+    await this.assertTeacherWageSnapshotOpen(
+      before.teacherId,
+      before.yearMonth,
+      before.businessEntityId,
+    );
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const allocations = await tx.studentMakeupBalanceAllocation.findMany({
+        where: { actualLessonId: before.id, voidedAt: null },
+        select: { id: true, makeupBalanceId: true, allocatedHours: true },
+      });
+      if (allocations.length === 0) {
+        throw new BadRequestException("Makeup actual lesson has no active allocation.");
+      }
+
+      const actualLesson = await tx.studentActualLesson.update({
+        where: { id: before.id },
+        data: { status: ActualLessonStatus.cancelled },
+        select: actualLessonSelect,
+      });
+      const makeupBalances = [];
+      for (const allocation of allocations) {
+        const balance = await tx.studentMakeupBalance.findUnique({
+          where: { id: allocation.makeupBalanceId },
+          select: { id: true, remainingDurationHours: true, sourceDurationHours: true },
+        });
+        if (!balance) {
+          throw new ConflictException("Makeup balance no longer exists.");
+        }
+        const remaining = new Prisma.Decimal(balance.remainingDurationHours)
+          .plus(new Prisma.Decimal(allocation.allocatedHours));
+        if (remaining.greaterThan(new Prisma.Decimal(balance.sourceDurationHours))) {
+          throw new ConflictException("Makeup balance allocation exceeds its source duration.");
+        }
+        await tx.studentMakeupBalanceAllocation.update({
+          where: { id: allocation.id },
+          data: { voidedAt: new Date() },
+        });
+        makeupBalances.push(
+          await tx.studentMakeupBalance.update({
+            where: { id: balance.id },
+            data: {
+              remainingDurationHours: remaining,
+              status: MakeupBalanceStatus.open,
+              exhaustedAt: null,
+            },
+            select: makeupBalanceSelect,
+          }),
+        );
+      }
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action: "student_actual_lesson.cancel_makeup",
+          targetType: "student_actual_lesson",
+          targetId: before.id,
+          riskLevel: AuditRiskLevel.high,
+          beforeSnapshot: before,
+          afterSnapshot: { actualLesson, makeupBalances },
+        },
+        tx,
+      );
+
+      return { actualLesson, makeupBalances };
     });
 
     return result;
@@ -720,6 +1049,62 @@ export class LessonsService {
     return { plannedLesson };
   }
 
+  private async openMakeupBalanceForPlannedLesson(
+    before: PlannedLessonSnapshot,
+    sourceReason: string,
+    nextStatus: PlannedLessonStatus,
+    action: string,
+    actorUserId: string,
+    riskLevel: AuditRiskLevel,
+  ) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.studentMakeupBalance.findUnique({
+        where: { sourcePlannedLessonId: before.id },
+        select: makeupBalanceSelect,
+      });
+      const makeupBalance =
+        existing ??
+        (await tx.studentMakeupBalance.create({
+          data: {
+            studentId: before.studentId,
+            businessEntityId: before.businessEntityId,
+            sourcePlannedLessonId: before.id,
+            sourceReason,
+            sourceDurationHours: before.durationHours,
+            remainingDurationHours: before.durationHours,
+            status: MakeupBalanceStatus.open,
+            memo: before.memo,
+          },
+          select: makeupBalanceSelect,
+        }));
+      const plannedLesson =
+        before.status === nextStatus
+          ? before
+          : await tx.studentPlannedLesson.update({
+              where: { id: before.id },
+              data: { status: nextStatus },
+              select: plannedLessonSelect,
+            });
+
+      await this.auditService.recordEvent(
+        {
+          actorUserId,
+          action,
+          targetType: "student_planned_lesson",
+          targetId: before.id,
+          riskLevel,
+          beforeSnapshot: before,
+          afterSnapshot: { plannedLesson, makeupBalance },
+        },
+        tx,
+      );
+
+      return { plannedLesson, makeupBalance, idempotent: Boolean(existing) };
+    });
+
+    return result;
+  }
+
   private async findPlannedLesson(id: string): Promise<PlannedLessonSnapshot> {
     const plannedLesson = await this.prisma.studentPlannedLesson.findUnique({
       where: { id },
@@ -744,6 +1129,19 @@ export class LessonsService {
     }
 
     return actualLesson;
+  }
+
+  private async findMakeupBalance(id: string): Promise<MakeupBalanceSnapshot> {
+    const makeupBalance = await this.prisma.studentMakeupBalance.findUnique({
+      where: { id },
+      select: makeupBalanceSelect,
+    });
+
+    if (!makeupBalance) {
+      throw new NotFoundException("Makeup balance not found.");
+    }
+
+    return makeupBalance;
   }
 
   private assertPlannedLessonEditable(plannedLesson: PlannedLessonSnapshot) {
@@ -1011,6 +1409,17 @@ export class LessonsService {
 
     if (!teacher) {
       throw new BadRequestException("Active teacher is required.");
+    }
+  }
+
+  private async assertActiveSubject(subjectId: string) {
+    const subject = await this.prisma.subject.findFirst({
+      where: { id: subjectId, status: RecordStatus.active },
+      select: { id: true },
+    });
+
+    if (!subject) {
+      throw new BadRequestException("Active subject is required.");
     }
   }
 
@@ -1438,6 +1847,29 @@ export class LessonsService {
     };
   }
 
+  private normalizeMakeupActualInput(
+    body: CompleteMakeupBalanceBody,
+    balance: MakeupBalanceSnapshot,
+  ): NormalizedMakeupActualLessonInput {
+    const actualDate = this.normalizeDate(body.actualDate, "actualDate");
+
+    return {
+      teacherId: this.normalizeRequiredString(body.teacherId, "teacherId"),
+      subjectId: this.normalizeRequiredString(body.subjectId, "subjectId"),
+      yearMonth: this.toYearMonth(actualDate),
+      actualDate,
+      startTime: this.normalizeOptionalTime(body.startTime),
+      endTime: this.normalizeOptionalTime(body.endTime),
+      durationHours: this.normalizeHours(body.durationHours, "durationHours"),
+      content: this.normalizeOptionalString(body.content),
+      memo: this.normalizeOptionalString(body.memo) ?? balance.memo,
+      teacherWageEligible:
+        body.teacherWageEligible === undefined
+          ? true
+          : this.normalizeBoolean(body.teacherWageEligible, "teacherWageEligible"),
+    };
+  }
+
   private normalizeUpdateActualInput(
     body: ActualLessonWriteBody,
     current: ActualLessonSnapshot,
@@ -1564,6 +1996,19 @@ export class LessonsService {
       Object.values(ActualLessonStatus).includes(status as ActualLessonStatus)
     ) {
       return status as ActualLessonStatus;
+    }
+
+    return undefined;
+  }
+
+  private normalizeMakeupBalanceStatus(value: unknown) {
+    const status = this.normalizeOptionalString(value);
+
+    if (
+      status &&
+      Object.values(MakeupBalanceStatus).includes(status as MakeupBalanceStatus)
+    ) {
+      return status as MakeupBalanceStatus;
     }
 
     return undefined;

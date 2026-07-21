@@ -18,7 +18,9 @@ import { LessonsService } from "./lessons.service";
 import {
   ActualLessonWriteBody,
   BatchPlannedLessonsBody,
+  CompleteMakeupBalanceBody,
   DeleteFreshPlannedLessonBody,
+  ListMakeupBalancesQuery,
   ListLessonsQuery,
   PlannedLessonWriteBody,
 } from "./lessons.types";
@@ -152,5 +154,21 @@ export class LessonsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.lessonsService.cancelActualLesson(id, user.id);
+  }
+
+  @Get("makeup-balances")
+  @RequirePermissions("lessons.manage")
+  listMakeupBalances(@Query() query: ListMakeupBalancesQuery) {
+    return this.lessonsService.listMakeupBalances(query);
+  }
+
+  @Post("makeup-balances/:id/complete")
+  @RequirePermissions("lessons.manage")
+  completeMakeupBalance(
+    @Param("id") id: string,
+    @Body() body: CompleteMakeupBalanceBody,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.lessonsService.completeMakeupBalance(id, body, user.id);
   }
 }

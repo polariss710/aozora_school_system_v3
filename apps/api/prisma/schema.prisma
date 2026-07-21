@@ -48,6 +48,12 @@ enum ActualLessonStatus {
   cancelled
 }
 
+enum MakeupBalanceStatus {
+  open
+  exhausted
+  voided
+}
+
 enum TuitionBillStatus {
   generated
   income_created
@@ -256,6 +262,7 @@ model BusinessEntity {
   students       Student[]
   plannedLessons StudentPlannedLesson[]
   actualLessons  StudentActualLesson[]
+  makeupBalances StudentMakeupBalance[]
   incomeRecords  IncomeRecord[]
   expenseRecords ExpenseRecord[]
   wageRules      TeacherWageRule[]
@@ -435,6 +442,7 @@ model Student {
   primaryBusinessEntity BusinessEntity?            @relation(fields: [primaryBusinessEntityId], references: [id], onDelete: Restrict)
   plannedLessons        StudentPlannedLesson[]
   actualLessons         StudentActualLesson[]
+  makeupBalances        StudentMakeupBalance[]
   tuitionBills          StudentTuitionBill[]
   monthlySettlements    StudentMonthlySettlement[]
   incomeRecords         IncomeRecord[]
@@ -516,6 +524,7 @@ model StudentPlannedLesson {
   subject        Subject              @relation(fields: [subjectId], references: [id], onDelete: Restrict)
   businessEntity BusinessEntity       @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   actualLesson   StudentActualLesson?
+  makeupBalance  StudentMakeupBalance? @relation("PlannedLessonMakeupBalance")
   legacyActualLessons StudentActualLesson[] @relation("LegacyPlannedActual")
 
   @@index([yearMonth])
@@ -557,6 +566,8 @@ model StudentActualLesson {
   subject        Subject                     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
   businessEntity BusinessEntity              @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
   wageDetails    TeacherWageSnapshotDetail[]
+  sourceMakeupBalance StudentMakeupBalance? @relation("ActualLessonSourceMakeupBalance")
+  makeupBalanceAllocations StudentMakeupBalanceAllocation[]
 
   @@index([yearMonth])
   @@index([studentId, yearMonth])
@@ -567,6 +578,49 @@ model StudentActualLesson {
   @@index([actualDate])
   @@index([legacyPlannedLessonId])
   @@map("student_actual_lessons")
+}
+
+model StudentMakeupBalance {
+  id                    String              @id @default(uuid()) @db.Uuid
+  studentId             String              @map("student_id") @db.Uuid
+  businessEntityId      String              @map("business_entity_id") @db.Uuid
+  sourcePlannedLessonId String              @unique @map("source_planned_lesson_id") @db.Uuid
+  sourceActualLessonId  String?             @unique @map("source_actual_lesson_id") @db.Uuid
+  sourceReason          String              @map("source_reason") @db.VarChar(40)
+  sourceDurationHours   Decimal             @map("source_duration_hours") @db.Decimal(6, 2)
+  remainingDurationHours Decimal            @map("remaining_duration_hours") @db.Decimal(6, 2)
+  status                MakeupBalanceStatus @default(open)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  exhaustedAt           DateTime?           @map("exhausted_at") @db.Timestamptz(6)
+  voidedAt              DateTime?           @map("voided_at") @db.Timestamptz(6)
+  memo                  String?
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student             Student                        @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  businessEntity      BusinessEntity                 @relation(fields: [businessEntityId], references: [id], onDelete: Restrict)
+  sourcePlannedLesson StudentPlannedLesson           @relation("PlannedLessonMakeupBalance", fields: [sourcePlannedLessonId], references: [id], onDelete: Restrict)
+  sourceActualLesson  StudentActualLesson?           @relation("ActualLessonSourceMakeupBalance", fields: [sourceActualLessonId], references: [id], onDelete: Restrict)
+  allocations         StudentMakeupBalanceAllocation[]
+
+  @@index([studentId, businessEntityId, status])
+  @@index([status])
+  @@map("student_makeup_balances")
+}
+
+model StudentMakeupBalanceAllocation {
+  id                String               @id @default(uuid()) @db.Uuid
+  makeupBalanceId   String               @map("makeup_balance_id") @db.Uuid
+  actualLessonId    String               @map("actual_lesson_id") @db.Uuid
+  allocatedHours    Decimal              @map("allocated_hours") @db.Decimal(6, 2)
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  voidedAt          DateTime?            @map("voided_at") @db.Timestamptz(6)
+
+  makeupBalance StudentMakeupBalance @relation(fields: [makeupBalanceId], references: [id], onDelete: Restrict)
+  actualLesson  StudentActualLesson  @relation(fields: [actualLessonId], references: [id], onDelete: Restrict)
+
+  @@unique([makeupBalanceId, actualLessonId])
+  @@index([actualLessonId])
+  @@map("student_makeup_balance_allocations")
 }
 
 model StudentTuitionBill {
