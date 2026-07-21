@@ -760,6 +760,13 @@ export class LessonsService {
         },
         select: makeupBalanceSelect,
       });
+      const sourcePlannedLesson = exhausted
+        ? await tx.studentPlannedLesson.update({
+            where: { id: current.sourcePlannedLessonId },
+            data: { status: PlannedLessonStatus.makeup_completed },
+            select: plannedLessonSelect,
+          })
+        : null;
 
       await this.auditService.recordEvent(
         {
@@ -769,12 +776,16 @@ export class LessonsService {
           targetId: current.id,
           riskLevel: AuditRiskLevel.high,
           beforeSnapshot: balance,
-          afterSnapshot: { makeupBalance: updatedBalance, actualLesson },
+          afterSnapshot: {
+            makeupBalance: updatedBalance,
+            actualLesson,
+            sourcePlannedLesson,
+          },
         },
         tx,
       );
 
-      return { makeupBalance: updatedBalance, actualLesson };
+      return { makeupBalance: updatedBalance, actualLesson, sourcePlannedLesson };
     });
 
     return result;
