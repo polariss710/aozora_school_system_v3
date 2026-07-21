@@ -530,11 +530,10 @@ export class LessonsService {
       throw new BadRequestException("Actual lesson already exists.");
     }
 
-    if (plannedBefore.status === PlannedLessonStatus.cancelled) {
-      throw new BadRequestException("Cancelled planned lesson cannot generate actual lesson.");
-    }
-
-    if (plannedBefore.status === PlannedLessonStatus.makeup_pending) {
+    if (
+      plannedBefore.status === PlannedLessonStatus.makeup_pending ||
+      plannedBefore.status === PlannedLessonStatus.cancelled
+    ) {
       const balance = await this.prisma.studentMakeupBalance.findUnique({
         where: { sourcePlannedLessonId: plannedBefore.id },
         select: { id: true, status: true },
@@ -546,7 +545,7 @@ export class LessonsService {
       }
       return this.completeMakeupBalance(
         balance.id,
-        { ...body, subjectId: plannedBefore.subjectId },
+        { ...body, subjectId: body.subjectId ?? plannedBefore.subjectId },
         actorUserId,
       );
     }

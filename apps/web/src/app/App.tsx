@@ -73,6 +73,7 @@ import {
   listExternalWorkplaces,
   listIncomeRecords,
   listMigrationRecordAudits,
+  listMakeupBalances,
   listActualLessons,
   listPlannedLessons,
   listReimbursementCandidateExpenses,
@@ -145,6 +146,7 @@ import type {
   ReimbursementRecord,
   StudentActualLessonRecord,
   StudentPlannedLessonRecord,
+  StudentMakeupBalanceRecord,
   SubmitCashRequestInput,
   StudentSettlementRecord,
   StudentSettlementInput,
@@ -546,6 +548,7 @@ type StudentChainListState<T> = ApiItemsState<T>;
 interface StudentChainApiState {
   plannedLessons: StudentChainListState<StudentPlannedLessonRecord>;
   actualLessons: StudentChainListState<StudentActualLessonRecord>;
+  makeupBalances: StudentChainListState<StudentMakeupBalanceRecord>;
   tuitionBills: FinanceListState;
   settlements: FinanceListState;
 }
@@ -4705,6 +4708,7 @@ function createEmptyStudentChainApiState(): StudentChainApiState {
   return {
     plannedLessons: createEmptyStudentChainListState<StudentPlannedLessonRecord>(),
     actualLessons: createEmptyStudentChainListState<StudentActualLessonRecord>(),
+    makeupBalances: createEmptyStudentChainListState<StudentMakeupBalanceRecord>(),
     tuitionBills: createEmptyFinanceListState(),
     settlements: createEmptyFinanceListState(),
   };
@@ -4724,10 +4728,11 @@ function createEmptyWorkflowApiState(): WorkflowApiState {
 function buildLessonManagementPage(basePage: PageConfig, studentChainApi: StudentChainApiState): PageConfig {
   const plannedState = studentChainApi.plannedLessons;
   const actualState = studentChainApi.actualLessons;
-  const isReady = plannedState.status === "ready" && actualState.status === "ready";
-  const isError = plannedState.status === "error" || actualState.status === "error";
+  const makeupBalanceState = studentChainApi.makeupBalances;
+  const isReady = plannedState.status === "ready" && actualState.status === "ready" && makeupBalanceState.status === "ready";
+  const isError = plannedState.status === "error" || actualState.status === "error" || makeupBalanceState.status === "error";
 
-  if (plannedState.status === "idle" && actualState.status === "idle") {
+  if (plannedState.status === "idle" && actualState.status === "idle" && makeupBalanceState.status === "idle") {
     return basePage;
   }
 
@@ -4735,7 +4740,7 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
     return {
       ...basePage,
       description: isError
-        ? `真实 API 课时读取失败：${plannedState.message ?? actualState.message ?? "请稍后重试"}`
+        ? `真实 API 课时读取失败：${plannedState.message ?? actualState.message ?? makeupBalanceState.message ?? "请稍后重试"}`
         : "正在读取真实 API 课时列表；第一层只读展示",
       primaryAction: undefined,
       secondaryAction: undefined,
@@ -4749,7 +4754,7 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
         },
         { label: "实际课时", value: "-", sub: "等待接口返回", tone: "slate", icon: ClipboardCheck },
         { label: "待生成实际", value: "-", sub: "第二层接入动作", tone: "slate", icon: Clock },
-        { label: "跨月补课", value: "-", sub: "读取后统计", tone: "slate", icon: RefreshCw },
+        { label: "待补余额", value: "-", sub: "读取后统计", tone: "slate", icon: RefreshCw },
       ],
       rows: [],
     };
@@ -4758,9 +4763,11 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
   const pendingActualCount = plannedState.items.filter(
     (lesson) => !lesson.actualLesson && ["scheduled", "makeup_pending"].includes(lesson.status),
   ).length;
-  const makeupCount = plannedState.items.filter((lesson) =>
-    ["makeup_pending", "makeup_completed"].includes(lesson.status),
-  ).length;
+  const openMakeupBalances = makeupBalanceState.items.filter((balance) => balance.status === "open");
+  const remainingMakeupHours = openMakeupBalances.reduce(
+    (total, balance) => total + (parseApiAmount(balance.remainingDurationHours) ?? 0),
+    0,
+  );
 
   return {
     ...basePage,
@@ -4771,7 +4778,7 @@ function buildLessonManagementPage(basePage: PageConfig, studentChainApi: Studen
       { label: "预定课时", value: `${plannedState.total}`, sub: "来自 API", tone: "sky", icon: CalendarDays },
       { label: "实际课时", value: `${actualState.total}`, sub: "已生成或已完成", tone: "emerald", icon: ClipboardCheck },
       { label: "待生成实际", value: `${pendingActualCount}`, sub: "可继续处理", tone: "amber", icon: Clock },
-      { label: "跨月补课", value: `${makeupCount}`, sub: "待补课 / 补课完成", tone: "cyan", icon: RefreshCw },
+      { label: "待补余额", value: `${remainingMakeupHours}H`, sub: `${openMakeupBalances.length} 个待补来源`, tone: "cyan", icon: RefreshCw },
     ],
     filters: buildLessonManagementFilters(plannedState.items, actualState.items),
     rows: [],
@@ -4940,8 +4947,8 @@ function getLessonActionHint(
     return "取消记录保留用于审计；如误取消，可以恢复为待生成实际。";
   }
 
-  if (planned.status === "makeup_pending") {
-    return "待补课课时可在补课完成后生成实际；学生费用仍归属原预定月份。";
+  if (planned.status === "makeup_pending" || planned.status === "cancelled") {
+    return "待补余额可登记补课完成；学生费用仍归属原预定课时，老师工资按补课实际结算。";
   }
 
   return "可以从预定课时生成实际课时、取消预定，或先标记为待补课。";
@@ -7165,7 +7172,7 @@ const lessonPairs: LessonPair[] = [
   {
     id: "pair-4",
     relation: "已取消",
-    actionHint: "取消课时不计学生本月课时费，也不进入老师工资。",
+    actionHint: "取消课形成待补余额；学生应收不变，补课实际完成后才按实际老师计入工资。",
     planned: {
       date: "7.13周",
       dateSub: "第4回 · 未指定具体时间",
@@ -7175,7 +7182,7 @@ const lessonPairs: LessonPair[] = [
       duration: "2H",
       amount: money.jpy(0),
       businessEntity: "短期课程",
-      content: "家长取消，本节课不计费",
+      content: "家长取消，保留待补余额来源",
       status: "已取消",
       tone: "rose",
     },
@@ -7289,7 +7296,7 @@ function getLessonActionAvailability(pair: LessonPair) {
     canViewMigrationAudit: [pair.plannedRecord, pair.actualRecord].some(
       (lesson) => lesson && isHistoricalImportedLesson(lesson),
     ),
-    canGenerateActual: canActOnPlanned && status !== "cancelled",
+    canGenerateActual: canActOnPlanned,
     canCancel: canActOnPlanned && status !== "cancelled",
     canMarkMakeupPending: canActOnPlanned && status === "scheduled",
     canRestore: canActOnPlanned && (status === "cancelled" || status === "makeup_pending"),
@@ -7337,8 +7344,8 @@ function LessonActionPanel({
       : "demo 数据没有后端记录";
   const canCall = Boolean(onLessonAction) && !isSubmitting;
   const plannedStatus = pair.plannedRecord?.status;
-  const showGenerateButton = !pair.plannedRecord || plannedStatus !== "cancelled";
-  const generateLabel = plannedStatus === "makeup_pending" ? "登记补课完成" : "生成实际";
+  const showGenerateButton = true;
+  const generateLabel = ["makeup_pending", "cancelled"].includes(plannedStatus ?? "") ? "登记补课完成" : "生成实际";
   const restoreLabel = plannedStatus === "makeup_pending" ? "撤销待补课" : "恢复预定";
   const callAction = (actionKey: LessonActionKey) => {
     if (!canCall) {
@@ -7463,12 +7470,14 @@ function LessonActualColumn({
 function LessonManagementPage({
   page,
   pairs,
+  makeupBalances,
   onPrimary,
   onLessonAction,
   lessonActionSubmittingId,
 }: {
   page: PageConfig;
   pairs: LessonPair[];
+  makeupBalances: StudentMakeupBalanceRecord[];
   onPrimary?: () => void;
   onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
   lessonActionSubmittingId?: string | null;
@@ -7508,6 +7517,29 @@ function LessonManagementPage({
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
+
+      <section className="overflow-hidden rounded-lg border border-cyan-100 bg-cyan-50/40">
+        <div className="flex items-center justify-between gap-3 border-b border-cyan-100 px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">待补课余额</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">按原学生与原业务归属累计；补课实际可更换老师和科目，不改变学生应收。</p>
+          </div>
+          <span className="text-xs font-medium text-cyan-800">{makeupBalances.filter((balance) => balance.status === "open").length} 个开放来源</span>
+        </div>
+        {makeupBalances.filter((balance) => balance.status === "open").length > 0 ? (
+          <div className="grid divide-y divide-cyan-100 bg-white">
+            {makeupBalances.filter((balance) => balance.status === "open").map((balance) => (
+              <div key={balance.id} className="grid gap-2 px-4 py-3 text-xs md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
+                <span className="truncate font-medium text-foreground">{balance.student.name}</span>
+                <span className="truncate text-muted-foreground">{balance.businessEntity.name} · {balance.sourceReason === "partial_completion" ? "部分完成剩余" : "取消 / 待补来源"}</span>
+                <span className="font-mono font-semibold text-cyan-800">剩余 {formatDurationHours(balance.remainingDurationHours)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white px-4 py-5 text-xs text-muted-foreground">当前没有待补余额来源。</div>
+        )}
+      </section>
 
       <section className="rounded-lg border border-border bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -7832,12 +7864,16 @@ function normalizeTimeInputValue(value: string | null) {
 
 function LessonActualFormModal({
   state,
+  teachers,
+  subjects,
   isSubmitting,
   error,
   onClose,
   onSubmit,
 }: {
   state: LessonActualDialogState;
+  teachers: TeacherRecord[];
+  subjects: SubjectRecord[];
   isSubmitting: boolean;
   error: string | null;
   onClose: () => void;
@@ -7845,7 +7881,9 @@ function LessonActualFormModal({
 }) {
   const planned = state.pair.plannedRecord;
   const defaultDuration = planned ? parseApiAmount(planned.durationHours) : null;
-  const isMakeup = planned?.status === "makeup_pending";
+  const isMakeup = planned?.status === "makeup_pending" || planned?.status === "cancelled";
+  const [teacherId, setTeacherId] = useState(planned?.teacherId ?? "");
+  const [subjectId, setSubjectId] = useState(planned?.subjectId ?? "");
   const [actualDate, setActualDate] = useState(planned ? formatApiDate(planned.weekAnchorDate) : "");
   const [startTime, setStartTime] = useState(normalizeTimeInputValue(planned?.plannedStartTime ?? null));
   const [endTime, setEndTime] = useState(normalizeTimeInputValue(planned?.plannedEndTime ?? null));
@@ -7873,7 +7911,8 @@ function LessonActualFormModal({
 
     onSubmit({
       actualDate,
-      teacherId: planned?.teacherId ?? null,
+      teacherId: teacherId || null,
+      subjectId: isMakeup ? subjectId || null : null,
       startTime: normalizeOptionalFormValue(startTime),
       endTime: normalizeOptionalFormValue(endTime),
       durationHours: durationNumber,
@@ -7977,7 +8016,34 @@ function LessonActualFormModal({
 
           {isMakeup && (
             <div className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
-              当前为{modeLabel}。学生费用仍归属原业务月，老师工资按实际日期所在月份归属。
+              当前为{modeLabel}。可更换实际老师与科目；学生费用仍归属原业务月，老师工资按实际日期所在月份归属。
+            </div>
+          )}
+
+          {isMakeup && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">实际老师</span>
+                <select
+                  required
+                  value={teacherId}
+                  onChange={(event) => setTeacherId(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                >
+                  {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">实际科目</span>
+                <select
+                  required
+                  value={subjectId}
+                  onChange={(event) => setSubjectId(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                >
+                  {subjects.filter((subject) => subject.status === "active").map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+                </select>
+              </label>
             </div>
           )}
 
@@ -10178,6 +10244,11 @@ export default function App() {
         items: current.actualLessons.items,
         total: current.actualLessons.total,
       },
+      makeupBalances: {
+        status: "loading",
+        items: current.makeupBalances.items,
+        total: current.makeupBalances.total,
+      },
       tuitionBills: {
         status: "loading",
         rows: current.tuitionBills.rows,
@@ -10193,10 +10264,11 @@ export default function App() {
     void Promise.all([
       listPlannedLessons(authSession.accessToken),
       listActualLessons(authSession.accessToken),
+      listMakeupBalances(authSession.accessToken),
       listTuitionBills(authSession.accessToken),
       listStudentSettlements(authSession.accessToken),
     ])
-      .then(([plannedLessons, actualLessons, tuitionBills, settlements]) => {
+      .then(([plannedLessons, actualLessons, makeupBalances, tuitionBills, settlements]) => {
         if (!isMounted) {
           return;
         }
@@ -10211,6 +10283,11 @@ export default function App() {
             status: "ready",
             items: actualLessons.items,
             total: actualLessons.total,
+          },
+          makeupBalances: {
+            status: "ready",
+            items: makeupBalances.items,
+            total: makeupBalances.total,
           },
           tuitionBills: {
             status: "ready",
@@ -10233,6 +10310,7 @@ export default function App() {
         setStudentChainApi({
           plannedLessons: { status: "error", items: [], total: 0, message },
           actualLessons: { status: "error", items: [], total: 0, message },
+          makeupBalances: { status: "error", items: [], total: 0, message },
           tuitionBills: { status: "error", rows: [], total: 0, message },
           settlements: { status: "error", rows: [], total: 0, message },
         });
@@ -11589,6 +11667,7 @@ export default function App() {
           <LessonManagementPage
             page={activePage}
             pairs={activeLessonPairs}
+            makeupBalances={studentChainApi.makeupBalances.items}
             onPrimary={openPlannedLessonCreate}
             onLessonAction={handleLessonAction}
             lessonActionSubmittingId={lessonActionSubmittingId}
@@ -11781,6 +11860,8 @@ export default function App() {
       {lessonActualDialog && (
         <LessonActualFormModal
           state={lessonActualDialog}
+          teachers={teacherApi.rows.flatMap((row) => row.teacherRecord ? [row.teacherRecord] : [])}
+          subjects={settingsApi.subjects}
           isSubmitting={isLessonActualSubmitting}
           error={lessonActualError}
           onClose={() => {

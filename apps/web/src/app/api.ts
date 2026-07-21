@@ -600,12 +600,31 @@ export interface StudentActualLessonRecord {
 export interface GenerateActualLessonInput {
   actualDate: string;
   teacherId?: string | null;
+  subjectId?: string | null;
   startTime?: string | null;
   endTime?: string | null;
   durationHours?: number | null;
   content?: string | null;
   memo?: string | null;
   teacherWageEligible?: boolean;
+}
+
+export interface StudentMakeupBalanceRecord {
+  id: string;
+  studentId: string;
+  businessEntityId: string;
+  sourcePlannedLessonId: string;
+  sourceActualLessonId: string | null;
+  sourceReason: string;
+  sourceDurationHours: ApiAmountValue;
+  remainingDurationHours: ApiAmountValue;
+  status: "open" | "exhausted" | "voided";
+  createdAt: string;
+  exhaustedAt: string | null;
+  voidedAt: string | null;
+  memo: string | null;
+  student: RelatedStudentRecord;
+  businessEntity: RelatedBusinessEntityRecord;
 }
 
 export interface TuitionBillRecord {
@@ -1253,6 +1272,13 @@ export function createPlannedLesson(accessToken: string, input: CreatePlannedLes
 export function listActualLessons(accessToken: string, query: Record<string, string> = {}) {
   const search = new URLSearchParams({ limit: "500", ...query });
   return requestJson<ListResponse<StudentActualLessonRecord>>(`/lessons/actual?${search.toString()}`, {
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function listMakeupBalances(accessToken: string, query: Record<string, string> = {}) {
+  const search = new URLSearchParams({ limit: "500", ...query });
+  return requestJson<ListResponse<StudentMakeupBalanceRecord>>(`/lessons/makeup-balances?${search.toString()}`, {
     headers: authorizedHeaders(accessToken),
   });
 }
