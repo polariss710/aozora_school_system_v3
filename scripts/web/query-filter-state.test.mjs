@@ -46,6 +46,7 @@ test("normal reset restores editable controls but preserves applied scope", () =
 
   assert.deepEqual(reset.draft, initialScope);
   assert.equal(reset.applied.studentId, "student-1");
+  assert.equal(reset.draft.studentId, "");
 });
 
 test("explicit date navigation may reset and apply its documented default scope", () => {

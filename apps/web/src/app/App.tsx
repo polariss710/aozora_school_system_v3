@@ -1099,7 +1099,7 @@ function FilterPanel({
           <FilterSelect
             key={filter.label}
             filter={filter}
-            value={values?.[filter.label]}
+            value={values?.[filter.label] ?? ""}
             onChange={(value) => {
               clearResetNotice();
               onFilterChange(filter.label, value);
@@ -1113,7 +1113,7 @@ function FilterPanel({
             <input
               className="h-9 w-full rounded-md border border-border bg-white py-1.5 pl-8 pr-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-ring"
               placeholder="搜索姓名、对象或备注"
-              value={keyword}
+              value={keyword ?? ""}
               onChange={(event) => {
                 clearResetNotice();
                 onKeywordChange(event.target.value);
