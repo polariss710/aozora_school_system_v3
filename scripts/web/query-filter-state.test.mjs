@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   applyQueryFilterDraft,
+  applyDefaultQueryFilters,
   createQueryFilterState,
-  resetAndApplyQueryFilters,
+  resetQueryFilterDraft,
   updateQueryFilterDraft,
 } from "../../apps/web/src/app/query-filter-state.js";
+import { buildAppliedFilterSearch } from "../../apps/web/src/app/filter-query-url.js";
 import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "../../apps/web/src/app/weekly-schedule.ts";
 
 const initialScope = {
@@ -36,11 +38,37 @@ test("only an explicit query applies the edited filter scope", () => {
   assert.equal(applied.applied.businessEntityId, "entity-1");
 });
 
-test("explicit reset resets and applies the default scope together", () => {
-  const reset = resetAndApplyQueryFilters(initialScope);
+test("normal reset restores editable controls but preserves applied scope", () => {
+  const applied = applyQueryFilterDraft(updateQueryFilterDraft(createQueryFilterState(initialScope), {
+    studentId: "student-1",
+  }));
+  const reset = resetQueryFilterDraft(applied, initialScope);
+
+  assert.deepEqual(reset.draft, initialScope);
+  assert.equal(reset.applied.studentId, "student-1");
+});
+
+test("explicit date navigation may reset and apply its documented default scope", () => {
+  const reset = applyDefaultQueryFilters(initialScope);
 
   assert.deepEqual(reset.draft, initialScope);
   assert.deepEqual(reset.applied, initialScope);
+});
+
+test("only an applied query scope is serialized into the URL", () => {
+  const search = buildAppliedFilterSearch("?other=keep&filter-page=old&filter.学生=旧值&filter-keyword=old", "lesson-management", {
+    月份: "2026-07",
+    学生: "青空太郎",
+    状态: "",
+  }, "待登记");
+  const params = new URLSearchParams(search);
+
+  assert.equal(params.get("other"), "keep");
+  assert.equal(params.get("filter-page"), "lesson-management");
+  assert.equal(params.get("filter.月份"), "2026-07");
+  assert.equal(params.get("filter.学生"), "青空太郎");
+  assert.equal(params.get("filter.状态"), null);
+  assert.equal(params.get("filter-keyword"), "待登记");
 });
 
 test("weekly schedule follows the formal planned date, not the settlement week anchor", () => {

@@ -24,6 +24,15 @@ export function applyQueryFilterDraft(state) {
   };
 }
 
-export function resetAndApplyQueryFilters(initialScope) {
+/** A normal Reset action only changes controls, never the applied result scope. */
+export function resetQueryFilterDraft(state, initialScope) {
+  return {
+    ...state,
+    draft: { ...initialScope },
+  };
+}
+
+/** Use only for a separately named, documented navigation action such as 回到本周. */
+export function applyDefaultQueryFilters(initialScope) {
   return createQueryFilterState(initialScope);
 }

@@ -177,11 +177,13 @@ import {
   parseTeacherAttendanceWorkbook,
 } from "./attendance-workbook";
 import {
+  applyDefaultQueryFilters,
   applyQueryFilterDraft,
   createQueryFilterState,
-  resetAndApplyQueryFilters,
+  resetQueryFilterDraft,
   updateQueryFilterDraft,
 } from "./query-filter-state.js";
+import { clearAppliedFilterQueryUrl, replaceAppliedFilterQueryUrl } from "./filter-query-url.js";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
 
@@ -1081,6 +1083,15 @@ function FilterPanel({
   onQuery?: () => void;
   onReset?: () => void;
 }) {
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
+  const isInteractive = Boolean(onFilterChange && onKeywordChange && onQuery && onReset);
+
+  if (!isInteractive) {
+    return null;
+  }
+
+  const clearResetNotice = () => setResetNotice(null);
+
   return (
     <section className="rounded-lg border border-border bg-white px-5 py-4">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
@@ -1089,7 +1100,10 @@ function FilterPanel({
             key={filter.label}
             filter={filter}
             value={values?.[filter.label]}
-            onChange={onFilterChange ? (value) => onFilterChange(filter.label, value) : undefined}
+            onChange={(value) => {
+              clearResetNotice();
+              onFilterChange(filter.label, value);
+            }}
           />
         ))}
         <label className="flex flex-col gap-1">
@@ -1100,19 +1114,32 @@ function FilterPanel({
               className="h-9 w-full rounded-md border border-border bg-white py-1.5 pl-8 pr-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-ring"
               placeholder="搜索姓名、对象或备注"
               value={keyword}
-              onChange={onKeywordChange ? (event) => onKeywordChange(event.target.value) : undefined}
-              onKeyDown={onQuery ? (event) => {
-                if (event.key === "Enter") onQuery();
-              } : undefined}
+              onChange={(event) => {
+                clearResetNotice();
+                onKeywordChange(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  clearResetNotice();
+                  onQuery();
+                }
+              }}
             />
           </span>
         </label>
       </div>
       <div className="mt-3 flex items-center gap-2 border-t border-border/70 pt-3">
-        <ActionButton icon={Search} onClick={onQuery}>查询</ActionButton>
-        <ActionButton icon={RotateCcw} variant="quiet" onClick={onReset}>
+        <ActionButton icon={Search} onClick={() => {
+          clearResetNotice();
+          onQuery();
+        }}>查询</ActionButton>
+        <ActionButton icon={RotateCcw} variant="quiet" onClick={() => {
+          onReset();
+          setResetNotice("已重置筛选条件；点击查询后刷新结果。");
+        }}>
           重置
         </ActionButton>
+        {resetNotice && <p className="text-xs text-muted-foreground" role="status">{resetNotice}</p>}
       </div>
     </section>
   );
@@ -4130,7 +4157,7 @@ function Dashboard({
           icon={CalendarDays}
           variant="secondary"
           onClick={() => {
-            setQueryFilters(resetAndApplyQueryFilters(initialScope()));
+            setQueryFilters(applyDefaultQueryFilters(initialScope()));
           }}
         >
           回到本周
@@ -4311,32 +4338,28 @@ function BusinessPage({
   onOpenDetail: (row: DataRow) => void;
   onPrimary?: () => void;
 }) {
-  const [draftFilterValues, setDraftFilterValues] = useState<Record<string, string>>({});
-  const [appliedFilterValues, setAppliedFilterValues] = useState<Record<string, string>>({});
-  const [draftKeyword, setDraftKeyword] = useState("");
-  const [appliedKeyword, setAppliedKeyword] = useState("");
+  const initialFilterScope = () => ({ values: {} as Record<string, string>, keyword: "" });
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialFilterScope()));
   const supportsLocalFilters = [
     "tuition-bills",
     "student-settlements",
     "income-records",
     "expense-records",
   ].includes(page.key);
+  const { draft: draftFilters, applied: appliedFilters } = queryFilters;
 
   useEffect(() => {
-    setDraftFilterValues({});
-    setAppliedFilterValues({});
-    setDraftKeyword("");
-    setAppliedKeyword("");
+    setQueryFilters(createQueryFilterState(initialFilterScope()));
   }, [page.key]);
 
   const visibleRows = useMemo(() => {
     if (!supportsLocalFilters) return page.rows;
 
-    const selectedMonth = appliedFilterValues[commonFilters.month.label];
-    const selectedStudent = appliedFilterValues[commonFilters.student.label];
-    const selectedSource = appliedFilterValues[page.key === "income-records" ? "收入来源" : "支出分类"];
-    const selectedStatus = appliedFilterValues[commonFilters.status.label];
-    const normalizedKeyword = appliedKeyword.trim().toLocaleLowerCase();
+    const selectedMonth = appliedFilters.values[commonFilters.month.label];
+    const selectedStudent = appliedFilters.values[commonFilters.student.label];
+    const selectedSource = appliedFilters.values[page.key === "income-records" ? "收入来源" : "支出分类"];
+    const selectedStatus = appliedFilters.values[commonFilters.status.label];
+    const normalizedKeyword = appliedFilters.keyword.trim().toLocaleLowerCase();
 
     return page.rows.filter((row) => {
       const tuitionBill = row.tuitionBillRecord;
@@ -4362,17 +4385,20 @@ function BusinessPage({
         finance?.yearMonth,
       ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
     });
-  }, [appliedFilterValues, appliedKeyword, page.key, page.rows, supportsLocalFilters]);
+  }, [appliedFilters, page.key, page.rows, supportsLocalFilters]);
   const visiblePage = useMemo(
     () => supportsLocalFilters ? { ...page, rows: visibleRows } : page,
     [page, supportsLocalFilters, visibleRows],
   );
 
   const resetFilters = () => {
-    setDraftFilterValues({});
-    setAppliedFilterValues({});
-    setDraftKeyword("");
-    setAppliedKeyword("");
+    setQueryFilters((current) => resetQueryFilterDraft(current, initialFilterScope()));
+  };
+
+  const applyFilters = () => {
+    const next = applyQueryFilterDraft(queryFilters);
+    setQueryFilters(next);
+    replaceAppliedFilterQueryUrl(page.key, next.applied.values, next.applied.keyword);
   };
 
   return (
@@ -4380,16 +4406,15 @@ function BusinessPage({
       <PageHeader page={page} onPrimary={onPrimary} />
       <FilterPanel
         filters={page.filters}
-        values={supportsLocalFilters ? draftFilterValues : undefined}
-        keyword={supportsLocalFilters ? draftKeyword : undefined}
+        values={supportsLocalFilters ? draftFilters.values : undefined}
+        keyword={supportsLocalFilters ? draftFilters.keyword : undefined}
         onFilterChange={supportsLocalFilters ? (label, value) => {
-          setDraftFilterValues((current) => ({ ...current, [label]: value }));
+          setQueryFilters((current) => updateQueryFilterDraft(current, {
+            values: { ...current.draft.values, [label]: value },
+          }));
         } : undefined}
-        onKeywordChange={supportsLocalFilters ? setDraftKeyword : undefined}
-        onQuery={supportsLocalFilters ? () => {
-          setAppliedFilterValues(draftFilterValues);
-          setAppliedKeyword(draftKeyword);
-        } : undefined}
+        onKeywordChange={supportsLocalFilters ? (keyword) => setQueryFilters((current) => updateQueryFilterDraft(current, { keyword })) : undefined}
+        onQuery={supportsLocalFilters ? applyFilters : undefined}
         onReset={supportsLocalFilters ? resetFilters : undefined}
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -7639,19 +7664,20 @@ function LessonManagementPage({
   onLessonAction?: (actionKey: LessonActionKey, pair: LessonPair) => void;
   lessonActionSubmittingId?: string | null;
 }) {
-  const [draftFilterValues, setDraftFilterValues] = useState<Record<string, string>>({});
-  const [appliedFilterValues, setAppliedFilterValues] = useState<Record<string, string>>({});
-  const [draftKeyword, setDraftKeyword] = useState("");
-  const [appliedKeyword, setAppliedKeyword] = useState("");
+  const initialFilterScope = () => ({ values: {} as Record<string, string>, keyword: "" });
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialFilterScope()));
+  const { draft: draftFilters, applied: appliedFilters } = queryFilters;
   const visiblePairs = useMemo(
-    () => filterLessonPairs(pairs, appliedFilterValues, appliedKeyword),
-    [pairs, appliedFilterValues, appliedKeyword],
+    () => filterLessonPairs(pairs, appliedFilters.values, appliedFilters.keyword),
+    [pairs, appliedFilters],
   );
   const resetFilters = () => {
-    setDraftFilterValues({});
-    setAppliedFilterValues({});
-    setDraftKeyword("");
-    setAppliedKeyword("");
+    setQueryFilters((current) => resetQueryFilterDraft(current, initialFilterScope()));
+  };
+  const applyFilters = () => {
+    const next = applyQueryFilterDraft(queryFilters);
+    setQueryFilters(next);
+    replaceAppliedFilterQueryUrl(page.key, next.applied.values, next.applied.keyword);
   };
 
   return (
@@ -7659,14 +7685,13 @@ function LessonManagementPage({
       <PageHeader page={page} onPrimary={onPrimary} />
       <FilterPanel
         filters={page.filters}
-        values={draftFilterValues}
-        keyword={draftKeyword}
-        onFilterChange={(label, value) => setDraftFilterValues((current) => ({ ...current, [label]: value }))}
-        onKeywordChange={setDraftKeyword}
-        onQuery={() => {
-          setAppliedFilterValues(draftFilterValues);
-          setAppliedKeyword(draftKeyword);
-        }}
+        values={draftFilters.values}
+        keyword={draftFilters.keyword}
+        onFilterChange={(label, value) => setQueryFilters((current) => updateQueryFilterDraft(current, {
+          values: { ...current.draft.values, [label]: value },
+        }))}
+        onKeywordChange={(keyword) => setQueryFilters((current) => updateQueryFilterDraft(current, { keyword }))}
+        onQuery={applyFilters}
         onReset={resetFilters}
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -7972,7 +7997,7 @@ function WeeklySchedulePage({
             <input type="date" value={draftScope.weekAnchorDate} onChange={(event) => setQueryFilters((current) => updateQueryFilterDraft(current, { weekAnchorDate: event.target.value }))} className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
           </label>
           <ActionButton icon={Search} onClick={() => setQueryFilters((current) => applyQueryFilterDraft(current))}>查询</ActionButton>
-          <ActionButton icon={CalendarDays} variant="quiet" onClick={() => setQueryFilters(resetAndApplyQueryFilters(initialScope()))}>回到本周</ActionButton>
+          <ActionButton icon={CalendarDays} variant="quiet" onClick={() => setQueryFilters(applyDefaultQueryFilters(initialScope()))}>回到本周</ActionButton>
           <p className="pb-1 text-xs text-muted-foreground">{scheduleLessons.status === "loading" ? "正在读取本周正式预定课时…" : `当前显示 ${visibleLessons.length} 节正式预定课时`}</p>
         </div>
       </section>
@@ -11996,6 +12021,7 @@ export default function App() {
   };
 
   const navigate = (key: string) => {
+    clearAppliedFilterQueryUrl();
     setActiveKey(key);
     setDetailRow(null);
     setShowCashModal(false);
