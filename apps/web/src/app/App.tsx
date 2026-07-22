@@ -1097,7 +1097,7 @@ function FilterPanel({
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         {filters.map((filter) => (
           <FilterSelect
-            key={filter.label}
+            key={`${filter.label}:${values?.[filter.label] ?? ""}`}
             filter={filter}
             value={values?.[filter.label] ?? ""}
             onChange={(value) => {
