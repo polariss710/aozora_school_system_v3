@@ -183,9 +183,21 @@ import {
   resetQueryFilterDraft,
   updateQueryFilterDraft,
 } from "./query-filter-state.js";
-import { clearAppliedFilterQueryUrl, replaceAppliedFilterQueryUrl } from "./filter-query-url.js";
+import {
+  clearAppliedFilterQueryUrl,
+  readAppliedFilterQuery,
+  replaceAppliedFilterQueryUrl,
+} from "./filter-query-url.js";
 
 type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
+
+const appliedFilterPageKeys = [
+  "lesson-management",
+  "tuition-bills",
+  "student-settlements",
+  "income-records",
+  "expense-records",
+];
 
 interface Metric {
   label: string;
@@ -4339,17 +4351,22 @@ function BusinessPage({
   onPrimary?: () => void;
 }) {
   const initialFilterScope = () => ({ values: {} as Record<string, string>, keyword: "" });
-  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialFilterScope()));
   const supportsLocalFilters = [
     "tuition-bills",
     "student-settlements",
     "income-records",
     "expense-records",
   ].includes(page.key);
+  const queryScopeFromUrl = () => readAppliedFilterQuery(
+    window.location.search,
+    supportsLocalFilters ? [page.key] : [],
+    page.filters.map((filter) => filter.label),
+  )?.scope ?? initialFilterScope();
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(queryScopeFromUrl()));
   const { draft: draftFilters, applied: appliedFilters } = queryFilters;
 
   useEffect(() => {
-    setQueryFilters(createQueryFilterState(initialFilterScope()));
+    setQueryFilters(createQueryFilterState(queryScopeFromUrl()));
   }, [page.key]);
 
   const visibleRows = useMemo(() => {
@@ -7665,7 +7682,12 @@ function LessonManagementPage({
   lessonActionSubmittingId?: string | null;
 }) {
   const initialFilterScope = () => ({ values: {} as Record<string, string>, keyword: "" });
-  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(initialFilterScope()));
+  const queryScopeFromUrl = () => readAppliedFilterQuery(
+    window.location.search,
+    [page.key],
+    page.filters.map((filter) => filter.label),
+  )?.scope ?? initialFilterScope();
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(queryScopeFromUrl()));
   const { draft: draftFilters, applied: appliedFilters } = queryFilters;
   const visiblePairs = useMemo(
     () => filterLessonPairs(pairs, appliedFilters.values, appliedFilters.keyword),
@@ -10302,7 +10324,9 @@ export default function App() {
   const [migrationAuditDialog, setMigrationAuditDialog] = useState<MigrationAuditDialogState | null>(null);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingCategory>("businessEntities");
   const [actionNotice, setActionNotice] = useState<{ tone: "emerald" | "rose" | "amber"; text: string } | null>(null);
-  const [activeKey, setActiveKey] = useState("dashboard");
+  const [activeKey, setActiveKey] = useState(() => (
+    readAppliedFilterQuery(window.location.search, appliedFilterPageKeys, [])?.pageKey ?? "dashboard"
+  ));
   const [selectedByPage, setSelectedByPage] = useState<Record<string, Set<string>>>({});
   const [detailRow, setDetailRow] = useState<DataRow | null>(null);
   const [showCashModal, setShowCashModal] = useState(false);

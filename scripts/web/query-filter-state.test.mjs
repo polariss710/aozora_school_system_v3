@@ -8,7 +8,7 @@ import {
   resetQueryFilterDraft,
   updateQueryFilterDraft,
 } from "../../apps/web/src/app/query-filter-state.js";
-import { buildAppliedFilterSearch } from "../../apps/web/src/app/filter-query-url.js";
+import { buildAppliedFilterSearch, readAppliedFilterQuery } from "../../apps/web/src/app/filter-query-url.js";
 import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "../../apps/web/src/app/weekly-schedule.ts";
 
 const initialScope = {
@@ -70,6 +70,23 @@ test("only an applied query scope is serialized into the URL", () => {
   assert.equal(params.get("filter.学生"), "青空太郎");
   assert.equal(params.get("filter.状态"), null);
   assert.equal(params.get("filter-keyword"), "待登记");
+});
+
+test("only a supported page and its declared filter fields are restored from the URL", () => {
+  const restored = readAppliedFilterQuery(
+    "?filter-page=lesson-management&filter.月份=2026-07&filter.学生=青空太郎&filter.隐藏字段=ignore&filter-keyword=%E5%BE%85%E7%99%BB%E8%AE%B0",
+    ["lesson-management", "income-records"],
+    ["月份", "学生"],
+  );
+
+  assert.deepEqual(restored, {
+    pageKey: "lesson-management",
+    scope: {
+      values: { 月份: "2026-07", 学生: "青空太郎" },
+      keyword: "待登记",
+    },
+  });
+  assert.equal(readAppliedFilterQuery("?filter-page=unknown&filter.月份=2026-07", ["lesson-management"], ["月份"]), null);
 });
 
 test("weekly schedule follows the formal planned date, not the settlement week anchor", () => {

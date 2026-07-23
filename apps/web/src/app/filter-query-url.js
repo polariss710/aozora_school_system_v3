@@ -22,6 +22,32 @@ export function buildAppliedFilterSearch(search, pageKey, filterValues = {}, key
   return params.toString();
 }
 
+/**
+ * Restores only a known page's submitted scope. URL values are never trusted
+ * as arbitrary page state: fields not declared by that page are ignored.
+ */
+export function readAppliedFilterQuery(search, supportedPageKeys, allowedFilterLabels) {
+  const params = new URLSearchParams(search);
+  const pageKey = params.get(FILTER_PAGE_PARAM);
+  if (!pageKey || !supportedPageKeys.includes(pageKey)) {
+    return null;
+  }
+
+  const values = {};
+  for (const label of allowedFilterLabels) {
+    const value = params.get(`${FILTER_VALUE_PREFIX}${label}`);
+    if (value) values[label] = value;
+  }
+
+  return {
+    pageKey,
+    scope: {
+      values,
+      keyword: params.get(FILTER_KEYWORD_PARAM) ?? "",
+    },
+  };
+}
+
 export function replaceAppliedFilterQueryUrl(pageKey, filterValues = {}, keyword = "") {
   const url = new URL(window.location.href);
   url.search = buildAppliedFilterSearch(url.search, pageKey, filterValues, keyword);
