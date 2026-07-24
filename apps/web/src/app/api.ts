@@ -470,6 +470,30 @@ export interface AccountTransactionRecord {
   expenseRecord: { id: string; sourceType: string; title: string; recordStatus: string; cashStatus: string } | null;
 }
 
+export interface ManualAccountTransactionInput {
+  accountId: string;
+  direction: "in" | "out";
+  transactionDate: string;
+  title: string;
+  currency: "JPY" | "CNY";
+  amountJpy?: number | null;
+  amountCny?: number | null;
+  sourceType: "manual_account_transaction";
+  idempotencyKey?: string | null;
+  memo?: string | null;
+}
+
+export interface AccountTransferInput {
+  fromAccountId: string;
+  toAccountId: string;
+  transferDate: string;
+  currency: "JPY" | "CNY";
+  amountJpy?: number | null;
+  amountCny?: number | null;
+  idempotencyKey?: string | null;
+  memo?: string | null;
+}
+
 export interface ReimbursementRecord {
   id: string;
   expenseRecordId: string;
@@ -1982,6 +2006,38 @@ export function voidReimbursement(accessToken: string, reimbursementId: string, 
 export function listAccountTransactions(accessToken: string) {
   return requestJson<ListResponse<AccountTransactionRecord>>("/accounts/transactions?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function createManualAccountTransaction(accessToken: string, input: ManualAccountTransactionInput) {
+  return requestJson<{ accountTransaction: AccountTransactionRecord }>("/accounts/transactions/manual", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function createAccountTransfer(accessToken: string, input: AccountTransferInput) {
+  return requestJson<{ accountTransfer: { id: string }; idempotent: boolean }>("/accounts/transfers", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function reverseAccountTransaction(accessToken: string, id: string, memo?: string | null) {
+  return requestJson<{ accountTransaction: AccountTransactionRecord }>(`/accounts/transactions/${id}/reverse`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ memo }),
+  });
+}
+
+export function voidAccountTransfer(accessToken: string, id: string, memo?: string | null) {
+  return requestJson<{ accountTransfer: { id: string } }>(`/accounts/transfers/${id}/void`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ memo }),
   });
 }
 

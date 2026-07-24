@@ -56,8 +56,10 @@ import {
   createTeacherWageRule,
   createReimbursementFromExpense,
   createExpenseFromTeacherWage,
+  createAccountTransfer,
   createManualExpense,
   createManualIncome,
+  createManualAccountTransaction,
   createStudent,
   createTeacher,
   createAccount,
@@ -126,6 +128,7 @@ import {
   restoreStudent,
   restoreSubject,
   restoreTeacher,
+  reverseAccountTransaction,
   submitExpenseCashRequest,
   submitIncomeCashRequest,
   updateStudent,
@@ -139,6 +142,7 @@ import {
   updatePlannedLesson,
   updateExternalWorkLesson,
   voidExpenseRecord,
+  voidAccountTransfer,
   voidIncomeRecord,
   voidReimbursement,
   voidTuitionBill,
@@ -148,6 +152,7 @@ import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "./week
 import type {
   ApiHealthSnapshot,
   AccountRecord,
+  AccountTransferInput,
   AccountWriteInput,
   AccountTransactionRecord,
   AuditEventRecord,
@@ -173,6 +178,7 @@ import type {
   IncomeRecord,
   LockStudentSettlementInput,
   ManualExpenseInput,
+  ManualAccountTransactionInput,
   ManualIncomeInput,
   MigrationRecordAuditRecord,
   ReimbursementCandidateExpenseRecord,
@@ -307,6 +313,7 @@ interface DataRow {
   teacherRecord?: TeacherRecord;
   businessEntityRecord?: BusinessEntityRecord;
   accountRecord?: AccountRecord;
+  accountTransactionRecord?: AccountTransactionRecord;
   subjectRecord?: SubjectRecord;
   externalWorkplaceRecord?: ExternalWorkplaceRecord;
   externalWorkSettlementRecord?: ExternalWorkSettlementRecord;
@@ -352,6 +359,8 @@ type DrawerActionKey =
   | "settings.edit"
   | "settings.archive"
   | "settings.restore"
+  | "accountLedger.reverse"
+  | "accountLedger.voidTransfer"
   | "cash.submit"
   | "cash.withdraw"
   | "cashInbound.reject"
@@ -1092,9 +1101,11 @@ function TopBar({
 function PageHeader({
   page,
   onPrimary,
+  onSecondary,
 }: {
   page: PageConfig;
   onPrimary?: () => void;
+  onSecondary?: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-3">
@@ -1109,7 +1120,7 @@ function PageHeader({
       </div>
       <div className="flex items-center gap-2">
         {page.secondaryAction && (
-          <ActionButton icon={Download} variant="quiet">
+          <ActionButton icon={page.key === "account-ledger" ? ArrowUpDown : Download} variant="quiet" onClick={onSecondary}>
             {page.secondaryAction}
           </ActionButton>
         )}
@@ -1443,6 +1454,24 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         },
       ]
     : [];
+
+  if (row.accountTransactionRecord) {
+    const transaction = row.accountTransactionRecord;
+    const canReverse = transaction.status === "active" && ["manual_account_transaction", "account_correction"].includes(transaction.sourceType);
+    const canVoidTransfer = transaction.status === "active" && transaction.sourceType === "account_transfer" && Boolean(transaction.sourceId);
+    const actions: DrawerAction[] = [];
+
+    if (canReverse) {
+      actions.push({ label: "冲销手工流水", icon: RotateCcw, variant: "warning", key: "accountLedger.reverse" });
+    }
+
+    if (canVoidTransfer) {
+      actions.push({ label: "作废整笔内部调拨", icon: RotateCcw, variant: "warning", key: "accountLedger.voidTransfer" });
+    }
+
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
+    return [{ title: "账户流水操作", actions }];
+  }
 
   if (row.readOnlyActions) {
     return migrationAuditActionGroup;
@@ -3438,6 +3467,137 @@ function SettingsFormModal({
   );
 }
 
+function AccountLedgerFormModal({
+  state,
+  accounts,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: AccountLedgerDialogState;
+  accounts: AccountRecord[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: AccountLedgerFormInput) => void;
+}) {
+  const activeAccounts = accounts.filter((account) => account.status === "active");
+  const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? "");
+  const selectedAccount = activeAccounts.find((account) => account.id === accountId) ?? activeAccounts[0];
+  const [direction, setDirection] = useState<"in" | "out">("in");
+  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const [fromAccountId, setFromAccountId] = useState(activeAccounts[0]?.id ?? "");
+  const fromAccount = activeAccounts.find((account) => account.id === fromAccountId) ?? activeAccounts[0];
+  const compatibleTargetAccounts = activeAccounts.filter((account) => account.id !== fromAccount?.id && account.currency === fromAccount?.currency);
+  const [toAccountId, setToAccountId] = useState(compatibleTargetAccounts[0]?.id ?? "");
+  const selectedTarget = compatibleTargetAccounts.find((account) => account.id === toAccountId) ?? compatibleTargetAccounts[0];
+  const parsedAmount = Number(amount);
+  const titleText = state.mode === "manual" ? "新增手工账户流水" : "新增内部账户调拨";
+  const currency = state.mode === "manual" ? selectedAccount?.currency : fromAccount?.currency;
+  const canSubmit = state.mode === "manual"
+    ? Boolean(selectedAccount && transactionDate && title.trim() && Number.isFinite(parsedAmount) && parsedAmount > 0)
+    : Boolean(fromAccount && selectedTarget && transactionDate && Number.isFinite(parsedAmount) && parsedAmount > 0);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit || !currency) {
+      return;
+    }
+
+    const amountFields = currency === "JPY"
+      ? { amountJpy: parsedAmount, amountCny: null }
+      : { amountJpy: null, amountCny: parsedAmount };
+    const idempotencyKey = crypto.randomUUID();
+
+    if (state.mode === "manual" && selectedAccount) {
+      onSubmit({
+        mode: "manual",
+        input: {
+          accountId: selectedAccount.id,
+          direction,
+          transactionDate,
+          title: title.trim(),
+          currency,
+          ...amountFields,
+          sourceType: "manual_account_transaction",
+          idempotencyKey,
+          memo: normalizeOptionalFormValue(memo),
+        },
+      });
+      return;
+    }
+
+    if (state.mode === "transfer" && fromAccount && selectedTarget) {
+      onSubmit({
+        mode: "transfer",
+        input: {
+          fromAccountId: fromAccount.id,
+          toAccountId: selectedTarget.id,
+          transferDate: transactionDate,
+          currency,
+          ...amountFields,
+          idempotencyKey,
+          memo: normalizeOptionalFormValue(memo),
+        },
+      });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex w-[min(620px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{titleText}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">账户流水不能删除；保存后只可由符合条件的专门动作冲销或作废。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          {activeAccounts.length === 0 ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">没有可用的 active School 账户。请先在基础设置恢复或创建账户。</div>
+          ) : state.mode === "manual" ? (
+            <>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">账户</span><select value={selectedAccount?.id ?? ""} onChange={(event) => setAccountId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">{activeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label>
+                <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">方向</span><select value={direction} onChange={(event) => setDirection(event.target.value as "in" | "out")} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"><option value="in">入金</option><option value="out">出金</option></select></label>
+              </div>
+              <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">标题</span><input required value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="例如：期初余额更正" /></label>
+            </>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">转出账户</span><select value={fromAccount?.id ?? ""} onChange={(event) => { const nextFrom = activeAccounts.find((account) => account.id === event.target.value); setFromAccountId(event.target.value); setToAccountId(activeAccounts.find((account) => account.id !== nextFrom?.id && account.currency === nextFrom?.currency)?.id ?? ""); }} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">{activeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label>
+              <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">转入账户</span><select value={selectedTarget?.id ?? ""} onChange={(event) => setToAccountId(event.target.value)} disabled={compatibleTargetAccounts.length === 0} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15 disabled:bg-muted">{compatibleTargetAccounts.length === 0 ? <option>没有同币种的其他账户</option> : compatibleTargetAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label>
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">日期</span><input required type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">金额（{currency ?? "-"}）</span><input required inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder={currency === "CNY" ? "0.00" : "0"} /></label>
+          </div>
+
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注 / 原因</span><textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[84px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="建议说明资金来源或更正原因" /></label>
+          <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-800">{state.mode === "manual" ? "此动作只创建独立手工账户流水，不会创建或改变收入、支出、Cash 请求。" : "后端会原子创建同币种的一条出金和一条入金；作废时两条流水将一起冲销。"}</div>
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="submit" disabled={isSubmitting || !canSubmit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{isSubmitting ? "保存中" : "确认保存"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function FinanceRecordFormModal({
   state,
   businessEntities,
@@ -4679,6 +4839,7 @@ function BusinessPage({
   onToggleAll,
   onOpenDetail,
   onPrimary,
+  onSecondary,
 }: {
   page: PageConfig;
   selected: Set<string>;
@@ -4686,6 +4847,7 @@ function BusinessPage({
   onToggleAll: () => void;
   onOpenDetail: (row: DataRow) => void;
   onPrimary?: () => void;
+  onSecondary?: () => void;
 }) {
   const initialFilterScope = () => ({ values: {} as Record<string, string>, keyword: "" });
   const supportsLocalFilters = [
@@ -4772,7 +4934,7 @@ function BusinessPage({
 
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-28">
-      <PageHeader page={page} onPrimary={onPrimary} />
+      <PageHeader page={page} onPrimary={onPrimary} onSecondary={onSecondary} />
       <FilterPanel
         filters={page.filters}
         values={supportsLocalFilters ? draftFilters.values : undefined}
@@ -6818,8 +6980,9 @@ function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceL
 
   return {
     ...basePage,
-    description: "真实 API 账户流水列表；新增流水、收入/支出入账和冲销动作后续接入",
-    primaryAction: undefined,
+    description: "真实 API 账户流水列表；可新增独立手工流水、同币种内部调拨，并受限冲销/作废",
+    primaryAction: "新增手工流水",
+    secondaryAction: "新增内部调拨",
     batchAction: undefined,
     selectable: false,
     metrics: [
@@ -7175,7 +7338,7 @@ function mapAccountTransactionToRow(record: AccountTransactionRecord): DataRow {
     subtitle: `${record.account.name} / ${sourceLabel}`,
     status: status.label,
     tone: status.tone,
-    readOnlyActions: true,
+    accountTransactionRecord: record,
     cells: {
       account: record.account.name,
       date: formatApiDate(record.transactionDate),
@@ -7657,6 +7820,11 @@ type ExternalWorkSettlementDialogState = {
 };
 
 type SettingsDialogState = { mode: "create"; category: SettingCategory } | { mode: "edit"; category: SettingCategory; row: DataRow };
+
+type AccountLedgerDialogState = { mode: "manual" } | { mode: "transfer" };
+type AccountLedgerFormInput =
+  | { mode: "manual"; input: ManualAccountTransactionInput }
+  | { mode: "transfer"; input: AccountTransferInput };
 
 const lessonManagementPage: PageConfig = {
   key: "lesson-management",
@@ -10982,6 +11150,9 @@ export default function App() {
   const [financeDialog, setFinanceDialog] = useState<FinanceDialogState | null>(null);
   const [isFinanceSubmitting, setIsFinanceSubmitting] = useState(false);
   const [financeMutationError, setFinanceMutationError] = useState<string | null>(null);
+  const [accountLedgerDialog, setAccountLedgerDialog] = useState<AccountLedgerDialogState | null>(null);
+  const [isAccountLedgerSubmitting, setIsAccountLedgerSubmitting] = useState(false);
+  const [accountLedgerMutationError, setAccountLedgerMutationError] = useState<string | null>(null);
   const [tuitionReceiptDialog, setTuitionReceiptDialog] = useState<TuitionReceiptDialogState | null>(null);
   const [isTuitionReceiptIssuing, setIsTuitionReceiptIssuing] = useState(false);
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
@@ -12261,6 +12432,38 @@ export default function App() {
     }
   };
 
+  const openAccountLedgerDialog = (mode: AccountLedgerDialogState["mode"]) => {
+    setAccountLedgerMutationError(null);
+    setAccountLedgerDialog({ mode });
+  };
+
+  const submitAccountLedgerForm = async (form: AccountLedgerFormInput) => {
+    if (!authSession) {
+      setAccountLedgerMutationError("请先使用真实 API 登录后再保存。");
+      return;
+    }
+
+    setIsAccountLedgerSubmitting(true);
+    setAccountLedgerMutationError(null);
+
+    try {
+      if (form.mode === "manual") {
+        await createManualAccountTransaction(authSession.accessToken, form.input);
+      } else {
+        await createAccountTransfer(authSession.accessToken, form.input);
+      }
+
+      setAccountLedgerDialog(null);
+      setFinanceReloadKey((current) => current + 1);
+      setWorkflowReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: form.mode === "manual" ? "手工账户流水已创建。" : "内部账户调拨已创建。" });
+    } catch (error) {
+      setAccountLedgerMutationError(formatApiError(error));
+    } finally {
+      setIsAccountLedgerSubmitting(false);
+    }
+  };
+
   const handleDrawerAction = async (actionKey: DrawerActionKey, row: DataRow) => {
     if (actionKey === "migrationAudit.view") {
       if (!authSession || !row.migrationAuditTarget) {
@@ -12283,6 +12486,44 @@ export default function App() {
           records: [],
           error: formatApiError(error),
         });
+      }
+      return;
+    }
+
+    if (actionKey === "accountLedger.reverse" || actionKey === "accountLedger.voidTransfer") {
+      const transaction = row.accountTransactionRecord;
+      if (!authSession || !transaction) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 Staging API 的账户流水。" });
+        return;
+      }
+
+      const isTransfer = actionKey === "accountLedger.voidTransfer";
+      const operation = isTransfer ? "作废整笔内部调拨" : "冲销手工流水";
+      const memo = window.prompt(
+        `确认${operation}「${row.title}」？${isTransfer ? "\n\n两侧账户流水将一起标记为已冲销，原记录仍会保留。" : "\n\n原流水会保留并标记为已冲销。"}\n\n请输入原因（可留空）：`,
+        "",
+      );
+      if (memo === null) {
+        return;
+      }
+
+      try {
+        if (isTransfer) {
+          if (!transaction.sourceId) {
+            setActionNotice({ tone: "amber", text: "该调拨流水缺少调拨身份，不能作废。" });
+            return;
+          }
+          await voidAccountTransfer(authSession.accessToken, transaction.sourceId, normalizeOptionalFormValue(memo));
+        } else {
+          await reverseAccountTransaction(authSession.accessToken, transaction.id, normalizeOptionalFormValue(memo));
+        }
+
+        setDetailRow(null);
+        setFinanceReloadKey((current) => current + 1);
+        setWorkflowReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: `${operation}已完成，审计记录已保留。` });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
       return;
     }
@@ -13144,10 +13385,13 @@ export default function App() {
                       ? () => openFinanceCreate("income")
                     : activeKey === "expense-records"
                       ? () => openFinanceCreate("expense")
+                    : activeKey === "account-ledger"
+                      ? () => openAccountLedgerDialog("manual")
                     : activeKey === "reimbursements"
                       ? openReimbursementCreate
                   : undefined
             }
+            onSecondary={activeKey === "account-ledger" ? () => openAccountLedgerDialog("transfer") : undefined}
           />
         ) : (
           <Dashboard
@@ -13196,6 +13440,16 @@ export default function App() {
           error={settingsMutationError}
           onClose={() => setSettingsDialog(null)}
           onSubmit={submitSettingsForm}
+        />
+      )}
+      {accountLedgerDialog && (
+        <AccountLedgerFormModal
+          state={accountLedgerDialog}
+          accounts={settingsApi.rows.flatMap((row) => row.accountRecord ? [row.accountRecord] : [])}
+          isSubmitting={isAccountLedgerSubmitting}
+          error={accountLedgerMutationError}
+          onClose={() => setAccountLedgerDialog(null)}
+          onSubmit={submitAccountLedgerForm}
         />
       )}
       {plannedLessonDialog && (
