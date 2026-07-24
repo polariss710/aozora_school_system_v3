@@ -235,6 +235,8 @@ const appliedFilterPageKeys = [
   "lesson-management",
   "external-lessons",
   "external-settlements",
+  "cash-requests",
+  "account-ledger",
   "tuition-bills",
   "student-settlements",
   "income-records",
@@ -4914,6 +4916,19 @@ function getFilteredBusinessMetrics(page: PageConfig, rows: DataRow[]): Metric[]
     ];
   }
 
+  if (page.key === "account-ledger") {
+    const inCount = rows.filter((row) => row.cells.direction === "入金").length;
+    const outCount = rows.filter((row) => row.cells.direction === "出金").length;
+    const reversedCount = rows.filter((row) => row.status === "已冲销").length;
+
+    return [
+      { label: "流水总数", value: `${rows.length} 条`, sub: resultSub, tone: "sky", icon: History },
+      { label: "入金", value: `${inCount} 条`, sub: "账户增加", tone: "emerald", icon: WalletCards },
+      { label: "出金", value: `${outCount} 条`, sub: "账户减少", tone: "amber", icon: Banknote },
+      { label: "已冲销", value: `${reversedCount} 条`, sub: "反向保留记录", tone: "slate", icon: RotateCcw },
+    ];
+  }
+
   if (page.key === "income-records" || page.key === "expense-records") {
     const cashTodoCount = rows.filter((row) =>
       ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
@@ -4962,6 +4977,7 @@ function BusinessPage({
     "student-settlements",
     "external-settlements",
     "cash-requests",
+    "account-ledger",
     "income-records",
     "expense-records",
   ].includes(page.key);
@@ -4987,6 +5003,7 @@ function BusinessPage({
     const selectedSource = appliedFilters.values[page.key === "income-records" ? "收入来源" : "支出分类"];
     const selectedWorkplace = appliedFilters.values["授课机构"];
     const selectedDirection = appliedFilters.values["方向"];
+    const selectedAccount = appliedFilters.values["账户"];
     const selectedStatus = appliedFilters.values[commonFilters.status.label];
     const normalizedKeyword = appliedFilters.keyword.trim().toLocaleLowerCase();
 
@@ -5001,6 +5018,7 @@ function BusinessPage({
       if (selectedSource && finance?.sourceLabel !== selectedSource) return false;
       if (selectedWorkplace && externalSettlement?.workplace.name !== selectedWorkplace) return false;
       if (selectedDirection && row.cells.direction !== selectedDirection) return false;
+      if (selectedAccount && row.cells.account !== selectedAccount) return false;
       if (selectedStatus && row.status !== selectedStatus) return false;
       if (!normalizedKeyword) return true;
 
@@ -5017,6 +5035,8 @@ function BusinessPage({
         externalSettlement?.yearMonth,
         externalSettlement?.memo,
         row.cells.direction,
+        row.cells.account,
+        row.cells.date,
         row.cells.cashAccount,
         finance?.sourceLabel,
         finance?.sourceType,
@@ -7128,6 +7148,23 @@ function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceL
   const inCount = accountLedgerApi.rows.filter((row) => String(row.cells.direction) === "入金").length;
   const outCount = accountLedgerApi.rows.filter((row) => String(row.cells.direction) === "出金").length;
   const reversedCount = accountLedgerApi.rows.filter((row) => row.status === "已冲销").length;
+  const filters: Filter[] = [
+    {
+      label: "账户",
+      options: [...new Set(accountLedgerApi.rows.map((row) => String(row.cells.account ?? "")).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+    {
+      label: "方向",
+      options: [...new Set(accountLedgerApi.rows.map((row) => String(row.cells.direction ?? "")).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+    {
+      label: "状态",
+      options: [...new Set(accountLedgerApi.rows.map((row) => row.status))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+  ];
 
   return {
     ...basePage,
@@ -7136,6 +7173,7 @@ function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceL
     secondaryAction: "新增内部调拨",
     batchAction: undefined,
     selectable: false,
+    filters,
     metrics: [
       { label: "流水总数", value: `${accountLedgerApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: History },
       { label: "入金", value: `${inCount} 条`, sub: "账户增加", tone: "emerald", icon: WalletCards },
@@ -11013,7 +11051,11 @@ const pages: Record<string, PageConfig> = {
       { label: "包垫付账户", value: money.jpy(-12000), sub: "待报销", tone: "amber", icon: WalletCards },
       { label: "本月流水", value: "12 条", sub: "不可删除，只能冲销", tone: "sky", icon: History },
     ],
-    filters: [commonFilters.month, { label: "账户", options: ["公司法人账户", "吴垫付账户", "包垫付账户"] }, commonFilters.status],
+    filters: [
+      { label: "账户", options: [] },
+      { label: "方向", options: [] },
+      { label: "状态", options: [] },
+    ],
     columns: [
       { key: "account", label: "账户" },
       { key: "date", label: "日期" },

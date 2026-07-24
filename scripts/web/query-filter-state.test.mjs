@@ -89,6 +89,22 @@ test("only a supported page and its declared filter fields are restored from the
   assert.equal(readAppliedFilterQuery("?filter-page=unknown&filter.月份=2026-07", ["lesson-management"], ["月份"]), null);
 });
 
+test("Cash request query URLs restore only the declared direction and status filters", () => {
+  const restored = readAppliedFilterQuery(
+    "?filter-page=cash-requests&filter.%E6%96%B9%E5%90%91=%E6%94%AF%E5%87%BA&filter.%E7%8A%B6%E6%80%81=Cash%20%E5%BE%85%E7%A1%AE%E8%AE%A4&filter.%E8%B4%A6%E6%88%B7=ignore&filter-keyword=%E5%B7%A5%E8%B5%84",
+    ["cash-requests", "account-ledger"],
+    ["方向", "状态"],
+  );
+
+  assert.deepEqual(restored, {
+    pageKey: "cash-requests",
+    scope: {
+      values: { 方向: "支出", 状态: "Cash 待确认" },
+      keyword: "工资",
+    },
+  });
+});
+
 test("weekly schedule follows the formal planned date, not the settlement week anchor", () => {
   const lessons = [
     { id: "sunday-anchor", plannedDate: "2026-07-20", weekAnchorDate: "2026-07-19", plannedStartTime: "10:00", lessonNo: 2 },
