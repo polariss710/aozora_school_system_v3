@@ -237,6 +237,8 @@ const appliedFilterPageKeys = [
   "external-settlements",
   "cash-requests",
   "account-ledger",
+  "cash-inbound",
+  "reimbursements",
   "tuition-bills",
   "student-settlements",
   "income-records",
@@ -4929,6 +4931,35 @@ function getFilteredBusinessMetrics(page: PageConfig, rows: DataRow[]): Metric[]
     ];
   }
 
+  if (page.key === "cash-inbound") {
+    const postedCount = rows.filter((row) => row.status === "已入账").length;
+    const reversedCount = rows.filter((row) => row.status === "已冲销").length;
+    const linkedCount = rows.filter((row) => Number(row.cells.linkedIncomeCount ?? 0) > 0).length;
+
+    return [
+      { label: "入站事件", value: `${rows.length} 条`, sub: resultSub, tone: "cyan", icon: WalletCards },
+      { label: "已入账", value: `${postedCount} 条`, sub: "已生成账户流水", tone: "emerald", icon: CheckCircle2 },
+      { label: "已冲销", value: `${reversedCount} 条`, sub: "入站已撤销", tone: "slate", icon: RotateCcw },
+      { label: "关联收入", value: `${linkedCount} 条`, sub: "联动收入状态", tone: "sky", icon: ReceiptText },
+    ];
+  }
+
+  if (page.key === "reimbursements") {
+    const completedCount = rows.filter((row) => row.status === "已完成").length;
+    const voidedCount = rows.filter((row) => row.status === "已作废").length;
+
+    return [
+      { label: "报销记录", value: `${rows.length} 条`, sub: resultSub, tone: "sky", icon: WalletCards },
+      { label: "已完成", value: `${completedCount} 条`, sub: "双边流水已生成", tone: "emerald", icon: CheckCircle2 },
+      { label: "已作废", value: `${voidedCount} 条`, sub: "双边流水已冲销", tone: "slate", icon: RotateCcw },
+      { label: "JPY 完成额", value: money.jpy(rows.reduce((total, row) => {
+        const amount = String(row.cells.amount ?? "");
+        const numeric = Number(amount.replace(/[^\d.-]/g, ""));
+        return amount.includes("¥") && Number.isFinite(numeric) && row.status === "已完成" ? total + numeric : total;
+      }, 0)), sub: "当前查询结果合计", tone: "cyan", icon: Landmark },
+    ];
+  }
+
   if (page.key === "income-records" || page.key === "expense-records") {
     const cashTodoCount = rows.filter((row) =>
       ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
@@ -4978,6 +5009,8 @@ function BusinessPage({
     "external-settlements",
     "cash-requests",
     "account-ledger",
+    "cash-inbound",
+    "reimbursements",
     "income-records",
     "expense-records",
   ].includes(page.key);
@@ -5004,6 +5037,8 @@ function BusinessPage({
     const selectedWorkplace = appliedFilters.values["授课机构"];
     const selectedDirection = appliedFilters.values["方向"];
     const selectedAccount = appliedFilters.values["账户"];
+    const selectedInboundType = appliedFilters.values["入站类型"];
+    const selectedAdvanceAccount = appliedFilters.values["垫付账户"];
     const selectedStatus = appliedFilters.values[commonFilters.status.label];
     const normalizedKeyword = appliedFilters.keyword.trim().toLocaleLowerCase();
 
@@ -5019,6 +5054,8 @@ function BusinessPage({
       if (selectedWorkplace && externalSettlement?.workplace.name !== selectedWorkplace) return false;
       if (selectedDirection && row.cells.direction !== selectedDirection) return false;
       if (selectedAccount && row.cells.account !== selectedAccount) return false;
+      if (selectedInboundType && row.cells.type !== selectedInboundType) return false;
+      if (selectedAdvanceAccount && row.cells.advanceAccount !== selectedAdvanceAccount) return false;
       if (selectedStatus && row.status !== selectedStatus) return false;
       if (!normalizedKeyword) return true;
 
@@ -5038,6 +5075,10 @@ function BusinessPage({
         row.cells.account,
         row.cells.date,
         row.cells.cashAccount,
+        row.cells.type,
+        row.cells.object,
+        row.cells.advanceAccount,
+        row.cells.fromAccount,
         finance?.sourceLabel,
         finance?.sourceType,
         finance?.yearMonth,
@@ -7123,6 +7164,10 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
   const postedCount = cashInboundApi.rows.filter((row) => row.status === "已入账").length;
   const reversedInboundCount = cashInboundApi.rows.filter((row) => row.status === "已冲销").length;
   const linkedCount = cashInboundApi.rows.filter((row) => Number(row.cells.linkedIncomeCount ?? 0) > 0).length;
+  const filters: Filter[] = [
+    { label: "入站类型", options: [...new Set(cashInboundApi.rows.map((row) => String(row.cells.type ?? "")).filter(Boolean))] },
+    { label: "状态", options: [...new Set(cashInboundApi.rows.map((row) => row.status))] },
+  ];
 
   return {
     ...basePage,
@@ -7130,6 +7175,7 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
+    filters,
     metrics: [
       { label: "入站事件", value: `${cashInboundApi.total} 条`, sub: "来自当前 API", tone: "cyan", icon: WalletCards },
       { label: "已入账", value: `${postedCount} 条`, sub: "已生成账户流水", tone: "emerald", icon: CheckCircle2 },
@@ -7638,12 +7684,17 @@ function buildReimbursementsPage(basePage: PageConfig, reimbursementApi: Finance
     const numeric = Number(amountText.replace(/[^\d.-]/g, ""));
     return amountText.includes("¥") && Number.isFinite(numeric) && row.status === "已完成" ? total + numeric : total;
   }, 0);
+  const filters: Filter[] = [
+    { label: "垫付账户", options: [...new Set(reimbursementApi.rows.map((row) => String(row.cells.advanceAccount ?? "")).filter(Boolean))] },
+    { label: "状态", options: [...new Set(reimbursementApi.rows.map((row) => row.status))] },
+  ];
 
   return {
     ...basePage,
     description: "真实 API 报销列表；从垫付支出生成法人出金和垫付入金，已完成报销可作废",
     batchAction: undefined,
     selectable: false,
+    filters,
     metrics: [
       { label: "报销记录", value: `${reimbursementApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: WalletCards },
       { label: "已完成", value: `${completedCount} 条`, sub: "双边流水已生成", tone: "emerald", icon: CheckCircle2 },
@@ -10999,7 +11050,7 @@ const pages: Record<string, PageConfig> = {
       { label: "需复核", value: "1 条", sub: "金额或引用不一致", tone: "rose", icon: ShieldCheck },
       { label: "本月归集", value: money.jpy(500000), sub: "CNY 购汇转入", tone: "cyan", icon: RefreshCw },
     ],
-    filters: [commonFilters.month, { label: "入站类型", options: ["资金归集", "购汇入账", "修正入账"] }, commonFilters.status],
+    filters: [{ label: "入站类型", options: [] }, { label: "状态", options: [] }],
     columns: [
       { key: "type", label: "类型" },
       { key: "object", label: "入账对象", wide: true },
@@ -11093,7 +11144,7 @@ const pages: Record<string, PageConfig> = {
       { label: "已完成", value: "3 笔", sub: "垫付账户归零", tone: "emerald", icon: CheckCircle2 },
       { label: "法人支出", value: money.jpy(12000), sub: "影响利润", tone: "cyan", icon: Landmark },
     ],
-    filters: [commonFilters.month, { label: "垫付账户", options: ["吴垫付账户", "包垫付账户"] }, commonFilters.status],
+    filters: [{ label: "垫付账户", options: [] }, { label: "状态", options: [] }],
     columns: [
       { key: "advanceAccount", label: "垫付账户" },
       { key: "expense", label: "关联支出", wide: true },
