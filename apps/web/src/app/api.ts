@@ -79,6 +79,12 @@ export interface BusinessEntityRecord {
   acceptsNewBusiness?: boolean;
 }
 
+export interface BusinessEntityWriteInput {
+  code: string;
+  name: string;
+  memo?: string | null;
+}
+
 export interface AccountRecord {
   id: string;
   code: string;
@@ -87,6 +93,14 @@ export interface AccountRecord {
   currency: string;
   status: "active" | "inactive" | "archived";
   memo: string | null;
+}
+
+export interface AccountWriteInput {
+  code: string;
+  name: string;
+  type: string;
+  currency: "JPY" | "CNY";
+  memo?: string | null;
 }
 
 export interface SubjectRecord {
@@ -99,12 +113,26 @@ export interface SubjectRecord {
   memo: string | null;
 }
 
+export interface SubjectWriteInput {
+  code: string;
+  name: string;
+  category?: string | null;
+  sortOrder: number;
+  memo?: string | null;
+}
+
 export interface ExternalWorkplaceRecord {
   id: string;
   code: string;
   name: string;
   status: "active" | "inactive" | "archived";
   memo: string | null;
+}
+
+export interface ExternalWorkplaceWriteInput {
+  code: string;
+  name: string;
+  memo?: string | null;
 }
 
 type ApiAmountValue = number | string | null;
@@ -1302,11 +1330,27 @@ export function listBusinessEntities(accessToken: string) {
   });
 }
 
+export function createBusinessEntity(accessToken: string, input: BusinessEntityWriteInput) {
+  return requestJson<{ businessEntity: BusinessEntityRecord }>("/business-entities", { method: "POST", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) });
+}
+
+export function updateBusinessEntity(accessToken: string, id: string, input: BusinessEntityWriteInput) {
+  return requestJson<{ businessEntity: BusinessEntityRecord }>(`/business-entities/${id}`, { method: "PATCH", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) });
+}
+
+export function archiveBusinessEntity(accessToken: string, id: string) { return requestJson<{ businessEntity: BusinessEntityRecord }>(`/business-entities/${id}/archive`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
+export function restoreBusinessEntity(accessToken: string, id: string) { return requestJson<{ businessEntity: BusinessEntityRecord }>(`/business-entities/${id}/restore`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
+
 export function listAccounts(accessToken: string) {
   return requestJson<ItemsResponse<AccountRecord>>("/settings/accounts", {
     headers: authorizedHeaders(accessToken),
   });
 }
+
+export function createAccount(accessToken: string, input: AccountWriteInput) { return requestJson<{ account: AccountRecord }>("/accounts", { method: "POST", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) }); }
+export function updateAccount(accessToken: string, id: string, input: AccountWriteInput) { return requestJson<{ account: AccountRecord }>(`/accounts/${id}`, { method: "PATCH", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) }); }
+export function archiveAccount(accessToken: string, id: string) { return requestJson<{ account: AccountRecord }>(`/accounts/${id}/archive`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
+export function restoreAccount(accessToken: string, id: string) { return requestJson<{ account: AccountRecord }>(`/accounts/${id}/restore`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
 
 export function listSubjects(accessToken: string) {
   return requestJson<ItemsResponse<SubjectRecord>>("/settings/subjects", {
@@ -1314,11 +1358,21 @@ export function listSubjects(accessToken: string) {
   });
 }
 
+export function createSubject(accessToken: string, input: SubjectWriteInput) { return requestJson<{ subject: SubjectRecord }>("/subjects", { method: "POST", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) }); }
+export function updateSubject(accessToken: string, id: string, input: SubjectWriteInput) { return requestJson<{ subject: SubjectRecord }>(`/subjects/${id}`, { method: "PATCH", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) }); }
+export function archiveSubject(accessToken: string, id: string) { return requestJson<{ subject: SubjectRecord }>(`/subjects/${id}/archive`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
+export function restoreSubject(accessToken: string, id: string) { return requestJson<{ subject: SubjectRecord }>(`/subjects/${id}/restore`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
+
 export function listExternalWorkplaces(accessToken: string) {
   return requestJson<ItemsResponse<ExternalWorkplaceRecord>>("/settings/external-workplaces", {
     headers: authorizedHeaders(accessToken),
   });
 }
+
+export function createExternalWorkplace(accessToken: string, input: ExternalWorkplaceWriteInput) { return requestJson<{ externalWorkplace: ExternalWorkplaceRecord }>("/external-workplaces", { method: "POST", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) }); }
+export function updateExternalWorkplace(accessToken: string, id: string, input: ExternalWorkplaceWriteInput) { return requestJson<{ externalWorkplace: ExternalWorkplaceRecord }>(`/external-workplaces/${id}`, { method: "PATCH", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) }); }
+export function archiveExternalWorkplace(accessToken: string, id: string) { return requestJson<{ externalWorkplace: ExternalWorkplaceRecord }>(`/external-workplaces/${id}/archive`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
+export function restoreExternalWorkplace(accessToken: string, id: string) { return requestJson<{ externalWorkplace: ExternalWorkplaceRecord }>(`/external-workplaces/${id}/restore`, { method: "POST", headers: authorizedHeaders(accessToken) }); }
 
 export function listPlannedLessons(accessToken: string, query: Record<string, string> = {}) {
   const search = new URLSearchParams({ limit: "500", ...query });

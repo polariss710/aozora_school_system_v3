@@ -44,6 +44,10 @@ import {
 import {
   archiveStudent,
   archiveTeacher,
+  archiveAccount,
+  archiveBusinessEntity,
+  archiveExternalWorkplace,
+  archiveSubject,
   apiBaseUrl,
   cancelPlannedLesson,
   confirmTeacherWageAdjustments,
@@ -56,6 +60,10 @@ import {
   createManualIncome,
   createStudent,
   createTeacher,
+  createAccount,
+  createBusinessEntity,
+  createExternalWorkplace,
+  createSubject,
   createExternalWorkPlannedLesson,
   deleteExternalWorkLesson,
   deleteFreshPlannedLesson,
@@ -112,12 +120,20 @@ import {
   revokeExternalWorkSettlement,
   revokeTeacherWage,
   restorePlannedLesson,
+  restoreAccount,
+  restoreBusinessEntity,
+  restoreExternalWorkplace,
   restoreStudent,
+  restoreSubject,
   restoreTeacher,
   submitExpenseCashRequest,
   submitIncomeCashRequest,
   updateStudent,
   updateTeacher,
+  updateAccount,
+  updateBusinessEntity,
+  updateExternalWorkplace,
+  updateSubject,
   updateTeacherWageAdjustments,
   updateTeacherWageRule,
   updatePlannedLesson,
@@ -132,10 +148,12 @@ import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "./week
 import type {
   ApiHealthSnapshot,
   AccountRecord,
+  AccountWriteInput,
   AccountTransactionRecord,
   AuditEventRecord,
   AuthSession,
   BusinessEntityRecord,
+  BusinessEntityWriteInput,
   CashInboundEventRecord,
   CashEligibleAccountRecord,
   CashRequestRecord,
@@ -149,6 +167,7 @@ import type {
   ExternalWorkSettlementInput,
   ExternalWorkSettlementPreview,
   ExternalWorkplaceRecord,
+  ExternalWorkplaceWriteInput,
   GenerateActualLessonInput,
   GenerateTuitionBillInput,
   IncomeRecord,
@@ -168,6 +187,7 @@ import type {
   StudentRecord,
   StudentWriteInput,
   SubjectRecord,
+  SubjectWriteInput,
   TeacherRecord,
   TeacherWageRuleRecord,
   TeacherWageRuleInput,
@@ -285,6 +305,9 @@ interface DataRow {
   teacherWageSnapshotRecord?: TeacherWageSnapshotRecord;
   teacherAttendanceGroup?: TeacherAttendanceGroup;
   teacherRecord?: TeacherRecord;
+  businessEntityRecord?: BusinessEntityRecord;
+  accountRecord?: AccountRecord;
+  subjectRecord?: SubjectRecord;
   externalWorkplaceRecord?: ExternalWorkplaceRecord;
   externalWorkSettlementRecord?: ExternalWorkSettlementRecord;
   settingCategory?: SettingCategory;
@@ -326,6 +349,9 @@ type DrawerActionKey =
   | "teacher.edit"
   | "teacher.archive"
   | "teacher.restore"
+  | "settings.edit"
+  | "settings.archive"
+  | "settings.restore"
   | "cash.submit"
   | "cash.withdraw"
   | "cashInbound.reject"
@@ -1420,6 +1446,23 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
 
   if (row.readOnlyActions) {
     return migrationAuditActionGroup;
+  }
+
+  if (row.settingCategory) {
+    const statusAction: DrawerAction = row.status === "归档"
+      ? { label: "恢复使用", icon: RotateCcw, variant: "secondary", key: "settings.restore" }
+      : { label: "归档设置", icon: X, variant: "warning", key: "settings.archive" };
+
+    return [
+      {
+        title: "基础设置操作",
+        actions: [
+          { label: "编辑基础信息", icon: PencilLine, variant: "primary", key: "settings.edit" },
+          statusAction,
+          { label: "查看操作记录", icon: History, variant: "quiet" },
+        ],
+      },
+    ];
   }
 
   if (row.apiRef?.resource === "cashRequest") {
@@ -3234,6 +3277,167 @@ function TeacherFormModal({
   );
 }
 
+type SettingsWriteInput = BusinessEntityWriteInput | AccountWriteInput | SubjectWriteInput | ExternalWorkplaceWriteInput;
+
+function SettingsFormModal({
+  state,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: SettingsDialogState;
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (category: SettingCategory, input: SettingsWriteInput) => void;
+}) {
+  const businessEntity = state.mode === "edit" ? state.row.businessEntityRecord : undefined;
+  const account = state.mode === "edit" ? state.row.accountRecord : undefined;
+  const subject = state.mode === "edit" ? state.row.subjectRecord : undefined;
+  const workplace = state.mode === "edit" ? state.row.externalWorkplaceRecord : undefined;
+  const record = businessEntity ?? account ?? subject ?? workplace;
+  const categoryLabel = settingTabs.find((item) => item.key === state.category)?.label ?? "基础设置";
+  const [code, setCode] = useState(record?.code ?? "");
+  const [name, setName] = useState(record?.name ?? "");
+  const [memo, setMemo] = useState(record?.memo ?? "");
+  const [accountType, setAccountType] = useState(account?.type === "advance" ? "advance" : "corporate");
+  const [currency, setCurrency] = useState<"JPY" | "CNY">(account?.currency === "CNY" ? "CNY" : "JPY");
+  const [subjectCategory, setSubjectCategory] = useState(subject?.category ?? "");
+  const [sortOrder, setSortOrder] = useState(String(subject?.sortOrder ?? 0));
+  const title = `${state.mode === "edit" ? "编辑" : "新增"}${categoryLabel}`;
+  const isSubject = state.category === "subjects";
+  const isAccount = state.category === "accounts";
+  const canSubmit = code.trim() && name.trim() && (!isSubject || /^\d+$/.test(sortOrder));
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+
+    const common = {
+      code: code.trim(),
+      name: name.trim(),
+      memo: normalizeOptionalFormValue(memo),
+    };
+
+    if (state.category === "accounts") {
+      onSubmit(state.category, { ...common, type: accountType, currency });
+      return;
+    }
+
+    if (state.category === "subjects") {
+      onSubmit(state.category, {
+        ...common,
+        category: normalizeOptionalFormValue(subjectCategory),
+        sortOrder: Number(sortOrder),
+      });
+      return;
+    }
+
+    onSubmit(state.category, common);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form
+        onSubmit={submit}
+        className="relative z-10 flex w-[min(600px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{title}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">保存通过既有 API 写入，并由后端生成操作审计。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">编码</span>
+              <input
+                required
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder="例如：aozora_jpy"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">名称</span>
+              <input
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"
+                placeholder={`请输入${categoryLabel}名称`}
+              />
+            </label>
+          </div>
+
+          {isAccount && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">账户类型</span>
+                <select value={accountType} onChange={(event) => setAccountType(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+                  <option value="corporate">法人账户</option>
+                  <option value="advance">垫付账户</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">币种</span>
+                <select value={currency} onChange={(event) => setCurrency(event.target.value as "JPY" | "CNY")} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">
+                  <option value="JPY">JPY（日元）</option>
+                  <option value="CNY">CNY（人民币）</option>
+                </select>
+              </label>
+            </div>
+          )}
+
+          {isSubject && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">科目分类</span>
+                <input value={subjectCategory} onChange={(event) => setSubjectCategory(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填，例如：EJU" />
+              </label>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">排序</span>
+                <input required inputMode="numeric" pattern="[0-9]+" value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" />
+              </label>
+            </div>
+          )}
+
+          {isAccount && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              编辑账户资料不会改写既有流水；归档前由后端校验该账户是否仍可被新业务使用。
+            </div>
+          )}
+
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">备注</span>
+            <textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[92px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" />
+          </label>
+
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="submit" disabled={isSubmitting || !canSubmit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">
+            {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {isSubmitting ? "保存中" : "保存"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function FinanceRecordFormModal({
   state,
   businessEntities,
@@ -4611,12 +4815,14 @@ function SettingsPage({
   activeTab,
   onTabChange,
   onOpenDetail,
+  onCreate,
 }: {
   page: PageConfig;
   settingsApi: SettingsApiState;
   activeTab: SettingCategory;
   onTabChange: (tab: SettingCategory) => void;
   onOpenDetail: (row: DataRow) => void;
+  onCreate: (category: SettingCategory) => void;
 }) {
   const tab = settingTabs.find((item) => item.key === activeTab) ?? settingTabs[0];
   const rows =
@@ -4632,7 +4838,10 @@ function SettingsPage({
 
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-28">
-      <PageHeader page={page} />
+      <PageHeader
+        page={{ ...page, primaryAction: `新增${tab.label}` }}
+        onPrimary={() => onCreate(tab.key)}
+      />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {page.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
@@ -4883,6 +5092,7 @@ function mapBusinessEntityToSettingRow(item: BusinessEntityRecord): DataRow {
     status: status.label,
     tone: status.tone,
     settingCategory: "businessEntities",
+    businessEntityRecord: item,
     cells: {
       code: item.code,
       type: "业务归属",
@@ -4904,6 +5114,7 @@ function mapAccountToSettingRow(item: AccountRecord): DataRow {
     status: status.label,
     tone: status.tone,
     settingCategory: "accounts",
+    accountRecord: item,
     cells: {
       code: item.code,
       type: "账户",
@@ -4937,6 +5148,7 @@ function mapSubjectToSettingRow(item: SubjectRecord): DataRow {
     status: status.label,
     tone: status.tone,
     settingCategory: "subjects",
+    subjectRecord: item,
     cells: {
       code: item.code,
       type: "科目",
@@ -4985,7 +5197,7 @@ function mapExternalWorkplaceToSettingRow(item: ExternalWorkplaceRecord): DataRo
 function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState): PageConfig {
   const baseSettingsPage: PageConfig = {
     ...basePage,
-    description: "基础设置按类型分区展示；新增和编辑入口后续按类型逐步接入",
+    description: "基础设置按类型分区维护；新增、编辑、归档和恢复均由既有权限与审计接口处理",
     primaryAction: undefined,
   };
 
@@ -5001,7 +5213,7 @@ function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState):
 
   return {
     ...baseSettingsPage,
-    description: "真实 API 只读设置列表；新增和编辑入口后续按类型逐步接入",
+    description: "真实 API 设置列表；修改通过既有权限与审计接口处理",
     metrics: [
       { label: "业务归属", value: `${settingsApi.counts.businessEntities} 个`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
       { label: "School 账户", value: `${settingsApi.counts.accounts} 个`, sub: "法人 + 垫付账户", tone: "emerald", icon: Landmark },
@@ -7443,6 +7655,8 @@ type ExternalWorkSettlementDialogState = {
   mode: "lock";
   settlement?: ExternalWorkSettlementRecord;
 };
+
+type SettingsDialogState = { mode: "create"; category: SettingCategory } | { mode: "edit"; category: SettingCategory; row: DataRow };
 
 const lessonManagementPage: PageConfig = {
   key: "lesson-management",
@@ -10731,6 +10945,10 @@ export default function App() {
     businessEntities: [],
     subjects: [],
   });
+  const [settingsReloadKey, setSettingsReloadKey] = useState(0);
+  const [settingsDialog, setSettingsDialog] = useState<SettingsDialogState | null>(null);
+  const [isSettingsSubmitting, setIsSettingsSubmitting] = useState(false);
+  const [settingsMutationError, setSettingsMutationError] = useState<string | null>(null);
   const [studentChainApi, setStudentChainApi] = useState<StudentChainApiState>(createEmptyStudentChainApiState);
   const [studentChainReloadKey, setStudentChainReloadKey] = useState(0);
   const [plannedLessonDialog, setPlannedLessonDialog] = useState<PlannedLessonDialogState | null>(null);
@@ -11105,7 +11323,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [authSession]);
+  }, [authSession, settingsReloadKey]);
 
   useEffect(() => {
     if (!authSession) {
@@ -11977,6 +12195,72 @@ export default function App() {
     }
   };
 
+  const openSettingsCreate = (category: SettingCategory) => {
+    setSettingsMutationError(null);
+    setSettingsDialog({ mode: "create", category });
+  };
+
+  const submitSettingsForm = async (category: SettingCategory, input: SettingsWriteInput) => {
+    if (!authSession) {
+      setSettingsMutationError("请先使用真实 API 登录后再保存。");
+      return;
+    }
+
+    const editRow = settingsDialog?.mode === "edit" ? settingsDialog.row : undefined;
+    const isEditing = Boolean(editRow);
+    const recordId = category === "businessEntities"
+      ? editRow?.businessEntityRecord?.id
+      : category === "accounts"
+        ? editRow?.accountRecord?.id
+        : category === "subjects"
+          ? editRow?.subjectRecord?.id
+          : editRow?.externalWorkplaceRecord?.id;
+
+    if (isEditing && !recordId) {
+      setSettingsMutationError("这条设置没有对应的后端记录，不能保存。");
+      return;
+    }
+
+    setIsSettingsSubmitting(true);
+    setSettingsMutationError(null);
+
+    try {
+      if (category === "businessEntities") {
+        if (recordId) {
+          await updateBusinessEntity(authSession.accessToken, recordId, input as BusinessEntityWriteInput);
+        } else {
+          await createBusinessEntity(authSession.accessToken, input as BusinessEntityWriteInput);
+        }
+      } else if (category === "accounts") {
+        if (recordId) {
+          await updateAccount(authSession.accessToken, recordId, input as AccountWriteInput);
+        } else {
+          await createAccount(authSession.accessToken, input as AccountWriteInput);
+        }
+      } else if (category === "subjects") {
+        if (recordId) {
+          await updateSubject(authSession.accessToken, recordId, input as SubjectWriteInput);
+        } else {
+          await createSubject(authSession.accessToken, input as SubjectWriteInput);
+        }
+      } else if (recordId) {
+        await updateExternalWorkplace(authSession.accessToken, recordId, input as ExternalWorkplaceWriteInput);
+      } else {
+        await createExternalWorkplace(authSession.accessToken, input as ExternalWorkplaceWriteInput);
+      }
+
+      const label = settingTabs.find((item) => item.key === category)?.label ?? "基础设置";
+      setSettingsDialog(null);
+      setDetailRow(null);
+      setSettingsReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: `${label}${isEditing ? "已保存" : "已创建"}。` });
+    } catch (error) {
+      setSettingsMutationError(formatApiError(error));
+    } finally {
+      setIsSettingsSubmitting(false);
+    }
+  };
+
   const handleDrawerAction = async (actionKey: DrawerActionKey, row: DataRow) => {
     if (actionKey === "migrationAudit.view") {
       if (!authSession || !row.migrationAuditTarget) {
@@ -11999,6 +12283,63 @@ export default function App() {
           records: [],
           error: formatApiError(error),
         });
+      }
+      return;
+    }
+
+    if (actionKey === "settings.edit" || actionKey === "settings.archive" || actionKey === "settings.restore") {
+      if (!authSession || !row.settingCategory) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 Staging API 的基础设置。" });
+        return;
+      }
+
+      if (actionKey === "settings.edit") {
+        setSettingsMutationError(null);
+        setSettingsDialog({ mode: "edit", category: row.settingCategory, row });
+        return;
+      }
+
+      const actionLabel = actionKey === "settings.archive" ? "归档" : "恢复";
+      const confirmed = window.confirm(`确认${actionLabel}「${row.title}」？${actionKey === "settings.archive" ? "\n\n归档后不会删除历史业务数据，并由后端检查是否仍可用于新业务。" : ""}`);
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        if (row.settingCategory === "businessEntities" && row.businessEntityRecord) {
+          if (actionKey === "settings.archive") {
+            await archiveBusinessEntity(authSession.accessToken, row.businessEntityRecord.id);
+          } else {
+            await restoreBusinessEntity(authSession.accessToken, row.businessEntityRecord.id);
+          }
+        } else if (row.settingCategory === "accounts" && row.accountRecord) {
+          if (actionKey === "settings.archive") {
+            await archiveAccount(authSession.accessToken, row.accountRecord.id);
+          } else {
+            await restoreAccount(authSession.accessToken, row.accountRecord.id);
+          }
+        } else if (row.settingCategory === "subjects" && row.subjectRecord) {
+          if (actionKey === "settings.archive") {
+            await archiveSubject(authSession.accessToken, row.subjectRecord.id);
+          } else {
+            await restoreSubject(authSession.accessToken, row.subjectRecord.id);
+          }
+        } else if (row.settingCategory === "externalWorkplaces" && row.externalWorkplaceRecord) {
+          if (actionKey === "settings.archive") {
+            await archiveExternalWorkplace(authSession.accessToken, row.externalWorkplaceRecord.id);
+          } else {
+            await restoreExternalWorkplace(authSession.accessToken, row.externalWorkplaceRecord.id);
+          }
+        } else {
+          setActionNotice({ tone: "amber", text: "这条设置没有对应的后端记录，不能执行该操作。" });
+          return;
+        }
+
+        setDetailRow(null);
+        setSettingsReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: `基础设置已${actionLabel}。` });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
       return;
     }
@@ -12775,6 +13116,7 @@ export default function App() {
             activeTab={settingsActiveTab}
             onTabChange={setSettingsActiveTab}
             onOpenDetail={setDetailRow}
+            onCreate={openSettingsCreate}
           />
         ) : activePage ? (
           <BusinessPage
@@ -12845,6 +13187,15 @@ export default function App() {
           error={teacherMutationError}
           onClose={() => setTeacherDialog(null)}
           onSubmit={submitTeacherForm}
+        />
+      )}
+      {settingsDialog && (
+        <SettingsFormModal
+          state={settingsDialog}
+          isSubmitting={isSettingsSubmitting}
+          error={settingsMutationError}
+          onClose={() => setSettingsDialog(null)}
+          onSubmit={submitSettingsForm}
         />
       )}
       {plannedLessonDialog && (
