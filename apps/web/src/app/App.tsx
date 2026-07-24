@@ -4897,6 +4897,23 @@ function getFilteredBusinessMetrics(page: PageConfig, rows: DataRow[]): Metric[]
     ];
   }
 
+  if (page.key === "cash-requests") {
+    const requestRows = rows.filter((row) => row.apiRef?.resource === "cashRequest");
+    const batchCount = rows.filter((row) => row.apiRef?.resource === "cashPaymentBatch").length;
+    const requestedCount = requestRows.filter((row) => row.status === "Cash 待确认").length;
+    const confirmedCount = requestRows.filter((row) => row.status === "Cash 已确认").length;
+    const blockedCount = requestRows.filter((row) =>
+      ["Cash 已拒绝", "需要复核", "Cash 已撤回"].includes(row.status),
+    ).length;
+
+    return [
+      { label: "Cash 请求", value: `${requestRows.length} 条`, sub: `当前结果另有 ${batchCount} 个聚合批次`, tone: "sky", icon: Send },
+      { label: "待确认", value: `${requestedCount} 条`, sub: "已提交 Cash", tone: "amber", icon: Clock },
+      { label: "已确认", value: `${confirmedCount} 条`, sub: "等待后续入账链路", tone: "emerald", icon: CheckCircle2 },
+      { label: "需处理", value: `${blockedCount} 条`, sub: "拒绝 / 撤回 / 复核", tone: "rose", icon: ShieldCheck },
+    ];
+  }
+
   if (page.key === "income-records" || page.key === "expense-records") {
     const cashTodoCount = rows.filter((row) =>
       ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
@@ -4944,6 +4961,7 @@ function BusinessPage({
     "tuition-bills",
     "student-settlements",
     "external-settlements",
+    "cash-requests",
     "income-records",
     "expense-records",
   ].includes(page.key);
@@ -4968,6 +4986,7 @@ function BusinessPage({
     const selectedStudent = appliedFilters.values[commonFilters.student.label];
     const selectedSource = appliedFilters.values[page.key === "income-records" ? "收入来源" : "支出分类"];
     const selectedWorkplace = appliedFilters.values["授课机构"];
+    const selectedDirection = appliedFilters.values["方向"];
     const selectedStatus = appliedFilters.values[commonFilters.status.label];
     const normalizedKeyword = appliedFilters.keyword.trim().toLocaleLowerCase();
 
@@ -4981,6 +5000,7 @@ function BusinessPage({
       if (selectedStudent && row.title !== selectedStudent) return false;
       if (selectedSource && finance?.sourceLabel !== selectedSource) return false;
       if (selectedWorkplace && externalSettlement?.workplace.name !== selectedWorkplace) return false;
+      if (selectedDirection && row.cells.direction !== selectedDirection) return false;
       if (selectedStatus && row.status !== selectedStatus) return false;
       if (!normalizedKeyword) return true;
 
@@ -4996,6 +5016,8 @@ function BusinessPage({
         externalSettlement?.workplace.code,
         externalSettlement?.yearMonth,
         externalSettlement?.memo,
+        row.cells.direction,
+        row.cells.cashAccount,
         finance?.sourceLabel,
         finance?.sourceType,
         finance?.yearMonth,
@@ -7043,6 +7065,18 @@ function buildCashRequestsPage(basePage: PageConfig, cashRequestApi: FinanceList
   const blockedCount = requestRows.filter((row) =>
     ["Cash 已拒绝", "需要复核", "Cash 已撤回"].includes(row.status),
   ).length;
+  const filters: Filter[] = [
+    {
+      label: "方向",
+      options: [...new Set(cashRequestApi.rows.map((row) => String(row.cells.direction ?? "")).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+    {
+      label: "状态",
+      options: [...new Set(cashRequestApi.rows.map((row) => row.status))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+  ];
 
   return {
     ...basePage,
@@ -7050,6 +7084,7 @@ function buildCashRequestsPage(basePage: PageConfig, cashRequestApi: FinanceList
     primaryAction: undefined,
     batchAction: undefined,
     selectable: false,
+    filters,
     metrics: [
       { label: "Cash 请求", value: `${cashRequestApi.total} 条`, sub: `另有 ${batchCount} 个聚合批次`, tone: "sky", icon: Send },
       { label: "待确认", value: `${requestedCount} 条`, sub: "已提交 Cash", tone: "amber", icon: Clock },
@@ -10883,7 +10918,10 @@ const pages: Record<string, PageConfig> = {
       { label: "已确认", value: "1 条", sub: "后续可入账", tone: "emerald", icon: CheckCircle2 },
       { label: "需处理", value: "1 条", sub: "拒绝 / 撤回 / 复核", tone: "rose", icon: ShieldCheck },
     ],
-    filters: [commonFilters.month, { label: "方向", options: ["收入", "支出"] }, commonFilters.status],
+    filters: [
+      { label: "方向", options: [] },
+      { label: "状态", options: [] },
+    ],
     columns: [
       { key: "direction", label: "方向" },
       { key: "source", label: "来源记录", wide: true },
