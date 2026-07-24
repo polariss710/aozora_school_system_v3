@@ -199,6 +199,8 @@ const appliedFilterPageKeys = [
   "expense-records",
 ];
 
+const FILTER_RESULT_PAGE_SIZE = 20;
+
 interface Metric {
   label: string;
   value: string;
@@ -1164,6 +1166,8 @@ function DataTable({
   onToggleAll,
   onOpenDetail,
   showSelection = true,
+  totalRows,
+  pagination,
 }: {
   page: PageConfig;
   selected: Set<string>;
@@ -1171,6 +1175,12 @@ function DataTable({
   onToggleAll: () => void;
   onOpenDetail: (row: DataRow) => void;
   showSelection?: boolean;
+  totalRows?: number;
+  pagination?: {
+    currentPage: number;
+    totalRows: number;
+    onPageChange: (page: number) => void;
+  };
 }) {
   const allChecked = page.rows.length > 0 && selected.size === page.rows.length;
 
@@ -1178,7 +1188,7 @@ function DataTable({
     <section className="overflow-hidden rounded-lg border border-border bg-white">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <span className="text-sm font-semibold text-foreground">{page.title}列表</span>
-        <span className="text-xs text-muted-foreground">共 {page.rows.length} 条</span>
+        <span className="text-xs text-muted-foreground">共 {totalRows ?? page.rows.length} 条</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px] border-collapse text-sm">
@@ -1289,7 +1299,53 @@ function DataTable({
           </tbody>
         </table>
       </div>
+      {pagination && (
+        <PaginationControls
+          currentPage={pagination.currentPage}
+          totalRows={pagination.totalRows}
+          onPageChange={pagination.onPageChange}
+        />
+      )}
     </section>
+  );
+}
+
+function PaginationControls({
+  currentPage,
+  totalRows,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalRows: number;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalRows / FILTER_RESULT_PAGE_SIZE));
+  const start = totalRows === 0 ? 0 : (currentPage - 1) * FILTER_RESULT_PAGE_SIZE + 1;
+  const end = Math.min(totalRows, currentPage * FILTER_RESULT_PAGE_SIZE);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+      <span className="text-xs text-muted-foreground">显示 {start}–{end} / 共 {totalRows} 条</span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={currentPage <= 1}
+          onClick={() => onPageChange(currentPage - 1)}
+          className="h-8 rounded-md border border-border bg-white px-3 text-xs font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          上一页
+        </button>
+        <span className="text-xs text-muted-foreground">第 {currentPage} / {totalPages} 页</span>
+        <button
+          type="button"
+          disabled={currentPage >= totalPages}
+          onClick={() => onPageChange(currentPage + 1)}
+          className="h-8 rounded-md border border-border bg-white px-3 text-xs font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          下一页
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -4335,6 +4391,66 @@ function Dashboard({
   );
 }
 
+function getFilteredBusinessMetrics(page: PageConfig, rows: DataRow[]): Metric[] {
+  const resultSub = "当前查询结果";
+
+  if (page.key === "tuition-bills") {
+    const generatedCount = rows.filter((row) => row.status === "已生成").length;
+    const incomeCreatedCount = rows.filter((row) => row.status === "收入已生成").length;
+    const activeJpyTotal = rows.reduce((total, row) => {
+      if (row.status === "已作废") return total;
+      return total + (parseApiAmount(row.tuitionBillRecord?.plannedAmountJpy) ?? 0);
+    }, 0);
+
+    return [
+      { label: "账单记录", value: `${rows.length} 条`, sub: resultSub, tone: "sky", icon: ReceiptText },
+      { label: "已生成", value: `${generatedCount} 条`, sub: "待生成收入", tone: "amber", icon: Clock },
+      { label: "收入已生成", value: `${incomeCreatedCount} 条`, sub: "已进入收入链路", tone: "emerald", icon: CheckCircle2 },
+      { label: "JPY 应收", value: money.jpy(activeJpyTotal), sub: "当前结果中未作废账单合计", tone: "cyan", icon: Banknote },
+    ];
+  }
+
+  if (page.key === "student-settlements") {
+    const lockedCount = rows.filter((row) => row.status === "已锁定").length;
+    const revokedCount = rows.filter((row) => row.status === "已撤销").length;
+    const carryoverTotal = rows.reduce((total, row) => {
+      if (row.status === "已撤销") return total;
+      return total + (parseApiAmount(row.studentSettlementRecord?.carryoverAmountCny) ?? 0);
+    }, 0);
+
+    return [
+      { label: "结算记录", value: `${rows.length} 条`, sub: resultSub, tone: "sky", icon: ClipboardCheck },
+      { label: "已锁定", value: `${lockedCount} 条`, sub: "可进入下月账单", tone: "emerald", icon: LockKeyhole },
+      { label: "已撤销", value: `${revokedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
+      { label: "CNY 结转", value: money.cny(carryoverTotal), sub: "当前结果中未撤销合计", tone: "cyan", icon: RefreshCw },
+    ];
+  }
+
+  if (page.key === "income-records" || page.key === "expense-records") {
+    const cashTodoCount = rows.filter((row) =>
+      ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
+    ).length;
+    const confirmedCount = rows.filter((row) => ["Cash 已确认", "已生成流水"].includes(row.status)).length;
+    const historicalConfirmedCount = rows.filter((row) => row.status === "历史已确认").length;
+    const isIncome = page.key === "income-records";
+
+    return [
+      {
+        label: isIncome ? "收入记录" : "支出记录",
+        value: `${rows.length} 条`,
+        sub: resultSub,
+        tone: isIncome ? "emerald" : "sky",
+        icon: isIncome ? ReceiptText : Banknote,
+      },
+      { label: "Cash 待处理", value: `${cashTodoCount} 条`, sub: "未提交 / 待确认 / 复核", tone: "amber", icon: isIncome ? Banknote : Clock },
+      { label: "Cash 已确认", value: `${confirmedCount} 条`, sub: "Cash 已确认或已入账", tone: isIncome ? "sky" : "emerald", icon: CheckCircle2 },
+      { label: "历史已确认", value: `${historicalConfirmedCount} 条`, sub: "只读，不创建 Cash", tone: "violet", icon: History },
+    ];
+  }
+
+  return page.metrics;
+}
+
 function BusinessPage({
   page,
   selected,
@@ -4363,10 +4479,12 @@ function BusinessPage({
     page.filters.map((filter) => filter.label),
   )?.scope ?? initialFilterScope();
   const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(queryScopeFromUrl()));
+  const [currentPage, setCurrentPage] = useState(1);
   const { draft: draftFilters, applied: appliedFilters } = queryFilters;
 
   useEffect(() => {
     setQueryFilters(createQueryFilterState(queryScopeFromUrl()));
+    setCurrentPage(1);
   }, [page.key]);
 
   const visibleRows = useMemo(() => {
@@ -4403,9 +4521,21 @@ function BusinessPage({
       ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
     });
   }, [appliedFilters, page.key, page.rows, supportsLocalFilters]);
-  const visiblePage = useMemo(
-    () => supportsLocalFilters ? { ...page, rows: visibleRows } : page,
+  const filteredMetrics = useMemo(
+    () => supportsLocalFilters ? getFilteredBusinessMetrics(page, visibleRows) : page.metrics,
     [page, supportsLocalFilters, visibleRows],
+  );
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / FILTER_RESULT_PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pagedRows = useMemo(
+    () => supportsLocalFilters
+      ? visibleRows.slice((safeCurrentPage - 1) * FILTER_RESULT_PAGE_SIZE, safeCurrentPage * FILTER_RESULT_PAGE_SIZE)
+      : page.rows,
+    [page.rows, safeCurrentPage, supportsLocalFilters, visibleRows],
+  );
+  const visiblePage = useMemo(
+    () => supportsLocalFilters ? { ...page, rows: pagedRows } : page,
+    [page, pagedRows, supportsLocalFilters],
   );
 
   const resetFilters = () => {
@@ -4415,6 +4545,7 @@ function BusinessPage({
   const applyFilters = () => {
     const next = applyQueryFilterDraft(queryFilters);
     setQueryFilters(next);
+    setCurrentPage(1);
     replaceAppliedFilterQueryUrl(page.key, next.applied.values, next.applied.keyword);
   };
 
@@ -4435,7 +4566,7 @@ function BusinessPage({
         onReset={supportsLocalFilters ? resetFilters : undefined}
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {page.metrics.map((metric) => (
+        {filteredMetrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -4446,6 +4577,12 @@ function BusinessPage({
         onToggleRow={onToggleRow}
         onOpenDetail={onOpenDetail}
         showSelection={page.selectable !== false}
+        totalRows={supportsLocalFilters ? visibleRows.length : undefined}
+        pagination={supportsLocalFilters ? {
+          currentPage: safeCurrentPage,
+          totalRows: visibleRows.length,
+          onPageChange: setCurrentPage,
+        } : undefined}
       />
     </main>
   );
@@ -7688,10 +7825,42 @@ function LessonManagementPage({
     page.filters.map((filter) => filter.label),
   )?.scope ?? initialFilterScope();
   const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(queryScopeFromUrl()));
+  const [currentPage, setCurrentPage] = useState(1);
   const { draft: draftFilters, applied: appliedFilters } = queryFilters;
   const visiblePairs = useMemo(
     () => filterLessonPairs(pairs, appliedFilters.values, appliedFilters.keyword),
     [pairs, appliedFilters],
+  );
+  const openMakeupBalances = useMemo(() => {
+    const selectedStudent = appliedFilters.values[commonFilters.student.label];
+
+    return makeupBalances.filter((balance) =>
+      balance.status === "open" && (!selectedStudent || balance.student.name === selectedStudent),
+    );
+  }, [appliedFilters.values, makeupBalances]);
+  const filteredMetrics = useMemo(() => {
+    const plannedCount = visiblePairs.filter((pair) => Boolean(pair.plannedRecord)).length;
+    const actualCount = visiblePairs.filter((pair) => Boolean(pair.actualRecord)).length;
+    const pendingActualCount = visiblePairs.filter((pair) =>
+      !pair.actualRecord && Boolean(pair.plannedRecord && ["scheduled", "makeup_pending"].includes(pair.plannedRecord.status)),
+    ).length;
+    const remainingMakeupHours = openMakeupBalances.reduce(
+      (total, balance) => total + (parseApiAmount(balance.remainingDurationHours) ?? 0),
+      0,
+    );
+
+    return [
+      { label: "预定课时", value: `${plannedCount}`, sub: "当前查询结果", tone: "sky" as Tone, icon: CalendarDays },
+      { label: "实际课时", value: `${actualCount}`, sub: "当前查询结果", tone: "emerald" as Tone, icon: ClipboardCheck },
+      { label: "待生成实际", value: `${pendingActualCount}`, sub: "当前查询结果", tone: "amber" as Tone, icon: Clock },
+      { label: "待补余额", value: `${remainingMakeupHours}H`, sub: `${openMakeupBalances.length} 个待补来源（仅按学生范围）`, tone: "cyan" as Tone, icon: RefreshCw },
+    ];
+  }, [openMakeupBalances, visiblePairs]);
+  const totalPages = Math.max(1, Math.ceil(visiblePairs.length / FILTER_RESULT_PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pagedPairs = useMemo(
+    () => visiblePairs.slice((safeCurrentPage - 1) * FILTER_RESULT_PAGE_SIZE, safeCurrentPage * FILTER_RESULT_PAGE_SIZE),
+    [safeCurrentPage, visiblePairs],
   );
   const resetFilters = () => {
     setQueryFilters((current) => resetQueryFilterDraft(current, initialFilterScope()));
@@ -7699,6 +7868,7 @@ function LessonManagementPage({
   const applyFilters = () => {
     const next = applyQueryFilterDraft(queryFilters);
     setQueryFilters(next);
+    setCurrentPage(1);
     replaceAppliedFilterQueryUrl(page.key, next.applied.values, next.applied.keyword);
   };
 
@@ -7717,7 +7887,7 @@ function LessonManagementPage({
         onReset={resetFilters}
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {page.metrics.map((metric) => (
+        {filteredMetrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -7728,11 +7898,11 @@ function LessonManagementPage({
             <h2 className="text-sm font-semibold text-foreground">待补课余额</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">按原学生与原业务归属累计；补课实际可更换老师和科目，不改变学生应收。</p>
           </div>
-          <span className="text-xs font-medium text-cyan-800">{makeupBalances.filter((balance) => balance.status === "open").length} 个开放来源</span>
+          <span className="text-xs font-medium text-cyan-800">{openMakeupBalances.length} 个开放来源</span>
         </div>
-        {makeupBalances.filter((balance) => balance.status === "open").length > 0 ? (
+        {openMakeupBalances.length > 0 ? (
           <div className="grid divide-y divide-cyan-100 bg-white">
-            {makeupBalances.filter((balance) => balance.status === "open").map((balance) => (
+            {openMakeupBalances.map((balance) => (
               <div key={balance.id} className="grid gap-2 px-4 py-3 text-xs md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
                 <span className="truncate font-medium text-foreground">{balance.student.name}</span>
                 <span className="truncate text-muted-foreground">{balance.businessEntity.name} · {balance.sourceReason === "partial_completion" ? "部分完成剩余" : "取消 / 待补来源"}</span>
@@ -7770,7 +7940,7 @@ function LessonManagementPage({
             <span>实际课时 / 生成实际课时区</span>
           </div>
           {visiblePairs.length > 0 ? (
-            visiblePairs.map((pair) => (
+            pagedPairs.map((pair) => (
               <div className="grid items-stretch gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
                 <LessonFactCard label="预定课时" lesson={pair.planned} />
                 <LessonActualColumn
@@ -7786,6 +7956,11 @@ function LessonManagementPage({
             </div>
           )}
         </div>
+        <PaginationControls
+          currentPage={safeCurrentPage}
+          totalRows={visiblePairs.length}
+          onPageChange={setCurrentPage}
+        />
       </section>
     </main>
   );
