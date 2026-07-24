@@ -990,6 +990,20 @@ export interface ExternalWorkLessonRecord {
   plannedLesson: { id: string; status: string } | null;
 }
 
+export interface ExternalWorkLessonInput {
+  workplaceId: string;
+  lessonDate: string;
+  startTime: string;
+  endTime: string;
+  durationHours: number;
+  instructorName: string;
+  lessonTitle: string;
+  hourlyRateJpy: number;
+  transportationFeeJpy: number;
+  content?: string | null;
+  memo?: string | null;
+}
+
 export interface ExternalWorkSettlementRecord {
   id: string;
   workplaceId: string;
@@ -1034,6 +1048,37 @@ export interface ExternalWorkSettlementRecord {
     transportationFeeJpy: ApiAmountValue;
     contentSnapshot: string | null;
   }>;
+}
+
+export interface ExternalWorkSettlementInput {
+  workplaceId: string;
+  yearMonth: string;
+  adjustmentAmountJpy: number;
+  memo?: string | null;
+}
+
+export interface ExternalWorkSettlementPreview {
+  workplace: { id: string; code: string; name: string };
+  workplaceId: string;
+  yearMonth: string;
+  lessonCount: number;
+  totalLessonHours: number;
+  lessonWageJpy: number;
+  transportationFeeJpy: number;
+  adjustmentAmountJpy: number;
+  totalAmountJpy: number;
+  details: Array<{
+    actualLessonId: string;
+    lessonDate: string;
+    startTime: string | null;
+    endTime: string | null;
+    durationHours: number;
+    instructorNameSnapshot: string;
+    lessonTitleSnapshot: string | null;
+    lessonWageJpy: number;
+    transportationFeeJpy: number;
+  }>;
+  blockingIssues: string[];
 }
 
 export interface AuditEventRecord {
@@ -1580,9 +1625,83 @@ export function listExternalWorkLessons(accessToken: string) {
   });
 }
 
+export function createExternalWorkPlannedLesson(accessToken: string, input: ExternalWorkLessonInput) {
+  return requestJson<{ lesson: ExternalWorkLessonRecord }>("/external-work/lessons/planned", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateExternalWorkLesson(accessToken: string, lessonId: string, input: ExternalWorkLessonInput) {
+  return requestJson<{ lesson: ExternalWorkLessonRecord }>(`/external-work/lessons/${lessonId}`, {
+    method: "PATCH",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteExternalWorkLesson(accessToken: string, lessonId: string) {
+  return requestJson<{ lesson: ExternalWorkLessonRecord }>(`/external-work/lessons/${lessonId}`, {
+    method: "DELETE",
+    headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function generateExternalWorkActualLesson(
+  accessToken: string,
+  plannedLessonId: string,
+  input: ExternalWorkLessonInput,
+) {
+  return requestJson<{ plannedLesson: ExternalWorkLessonRecord; actualLesson: ExternalWorkLessonRecord }>(
+    `/external-work/lessons/${plannedLessonId}/generate-actual`,
+    {
+      method: "POST",
+      headers: authorizedHeaders(accessToken),
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function listExternalWorkSettlements(accessToken: string) {
   return requestJson<ListResponse<ExternalWorkSettlementRecord>>("/external-work/settlements?limit=100", {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function previewExternalWorkSettlement(accessToken: string, input: ExternalWorkSettlementInput) {
+  return requestJson<{ preview: ExternalWorkSettlementPreview }>("/external-work/settlements/preview", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({
+      workplaceId: input.workplaceId,
+      yearMonth: input.yearMonth,
+      adjustmentAmountJpy: input.adjustmentAmountJpy,
+    }),
+  });
+}
+
+export function lockExternalWorkSettlement(accessToken: string, input: ExternalWorkSettlementInput) {
+  return requestJson<{ settlement: ExternalWorkSettlementRecord }>("/external-work/settlements/lock", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function revokeExternalWorkSettlement(accessToken: string, settlementId: string, reason?: string | null) {
+  return requestJson<{ settlement: ExternalWorkSettlementRecord }>(`/external-work/settlements/${settlementId}/revoke`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function generateExternalWorkSettlementIncome(accessToken: string, settlementId: string, memo?: string | null) {
+  return requestJson<{ settlement: ExternalWorkSettlementRecord; incomeRecord: IncomeRecord }>(`/external-work/settlements/${settlementId}/generate-income`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ memo }),
   });
 }
 

@@ -56,6 +56,8 @@ import {
   createManualIncome,
   createStudent,
   createTeacher,
+  createExternalWorkPlannedLesson,
+  deleteExternalWorkLesson,
   deleteFreshPlannedLesson,
   fetchApiHealthSnapshot,
   isApiRequestError,
@@ -87,11 +89,14 @@ import {
   exportTeacherAttendanceWorkbook,
   listTuitionBills,
   lockStudentSettlement,
+  lockExternalWorkSettlement,
   lockTeacherWage,
   loginWithPassword,
   generateTuitionBill,
   generateTuitionBillIncome,
   generateActualLesson,
+  generateExternalWorkActualLesson,
+  generateExternalWorkSettlementIncome,
   getTuitionReceipt,
   issueTuitionReceipt,
   getCurrentUser,
@@ -99,10 +104,12 @@ import {
   markPlannedLessonMakeupPending,
   previewTuitionBill,
   previewStudentSettlement,
+  previewExternalWorkSettlement,
   previewTeacherWage,
   previewTeacherAttendanceWorkbookImport,
   rejectCashInboundEvent,
   revokeStudentSettlement,
+  revokeExternalWorkSettlement,
   revokeTeacherWage,
   restorePlannedLesson,
   restoreStudent,
@@ -114,6 +121,7 @@ import {
   updateTeacherWageAdjustments,
   updateTeacherWageRule,
   updatePlannedLesson,
+  updateExternalWorkLesson,
   voidExpenseRecord,
   voidIncomeRecord,
   voidReimbursement,
@@ -136,7 +144,10 @@ import type {
   CreatePlannedLessonInput,
   ExpenseRecord,
   ExternalWorkLessonRecord,
+  ExternalWorkLessonInput,
   ExternalWorkSettlementRecord,
+  ExternalWorkSettlementInput,
+  ExternalWorkSettlementPreview,
   ExternalWorkplaceRecord,
   GenerateActualLessonInput,
   GenerateTuitionBillInput,
@@ -274,6 +285,8 @@ interface DataRow {
   teacherWageSnapshotRecord?: TeacherWageSnapshotRecord;
   teacherAttendanceGroup?: TeacherAttendanceGroup;
   teacherRecord?: TeacherRecord;
+  externalWorkplaceRecord?: ExternalWorkplaceRecord;
+  externalWorkSettlementRecord?: ExternalWorkSettlementRecord;
   settingCategory?: SettingCategory;
   readOnlyActions?: boolean;
   migrationAuditTarget?: {
@@ -330,6 +343,10 @@ type DrawerActionKey =
   | "teacherWageSnapshot.viewExpense"
   | "teacherAttendance.export"
   | "teacherAttendance.import"
+  | "externalSettlement.relock"
+  | "externalSettlement.revoke"
+  | "externalSettlement.generateIncome"
+  | "externalSettlement.viewIncome"
   | "income.receipt"
   | "income.void"
   | "expense.void"
@@ -1705,29 +1722,31 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
   }
 
   if (row.id.startsWith("external-settlement-")) {
-    if (row.status === "待锁定") {
+    const settlement = row.externalWorkSettlementRecord;
+    if (!settlement) {
+      return [];
+    }
+
+    if (settlement.status === "locked") {
       return [
         {
           title: "打工结算操作",
           actions: [
-            { label: "锁定结算快照", icon: LockKeyhole, variant: "primary" },
-            { label: "重新生成预览", icon: RefreshCw, variant: "secondary" },
-            { label: "查看外部课时明细", icon: CalendarDays, variant: "quiet" },
+            { label: "重新预览并锁定", icon: RefreshCw, variant: "secondary", key: "externalSettlement.relock" },
+            { label: "生成收入记录", icon: ReceiptText, variant: "primary", key: "externalSettlement.generateIncome" },
+            { label: "撤销锁定", icon: X, variant: "warning", key: "externalSettlement.revoke" },
             { label: "查看操作记录", icon: History, variant: "quiet" },
           ],
         },
       ];
     }
 
-    if (row.status === "已锁定") {
+    if (settlement.status === "revoked") {
       return [
         {
           title: "打工结算操作",
           actions: [
-            { label: "生成收入记录", icon: ReceiptText, variant: "primary" },
-            { label: "撤销锁定", icon: X, variant: "warning" },
-            { label: "导出结算明细", icon: Download, variant: "secondary" },
-            { label: "查看外部课时明细", icon: CalendarDays, variant: "quiet" },
+            { label: "重新预览并锁定", icon: LockKeyhole, variant: "primary", key: "externalSettlement.relock" },
             { label: "查看操作记录", icon: History, variant: "quiet" },
           ],
         },
@@ -1738,9 +1757,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       {
         title: "打工结算操作",
         actions: [
-          { label: "查看收入记录", icon: ReceiptText, variant: "secondary" },
-          { label: "撤销收入记录", icon: RotateCcw, variant: row.status.includes("Cash 已确认") ? "quiet" : "warning" },
-          { label: "导出结算明细", icon: Download, variant: "quiet" },
+          { label: "查看收入记录", icon: ReceiptText, variant: "secondary", key: "externalSettlement.viewIncome" },
           { label: "查看操作记录", icon: History, variant: "quiet" },
         ],
       },
@@ -4953,6 +4970,7 @@ function mapExternalWorkplaceToSettingRow(item: ExternalWorkplaceRecord): DataRo
     status: status.label,
     tone: status.tone,
     settingCategory: "externalWorkplaces",
+    externalWorkplaceRecord: item,
     cells: {
       code: item.code,
       type: "外部授课机构",
@@ -6026,7 +6044,7 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
       description:
         externalLessonApi.status === "error"
           ? `真实 API 打工课时读取失败：${externalLessonApi.message}`
-          : "正在读取真实 API 打工课时列表；第一层只读展示",
+          : "正在读取真实 API 打工课时列表",
       primaryAction: undefined,
       metrics: [
         {
@@ -6053,8 +6071,7 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
 
   return {
     ...basePage,
-    description: "真实 API 打工课时列表；第一层只读展示预定和实际课时对应关系",
-    primaryAction: undefined,
+    description: "真实 API 打工课时；锁定前可新增、编辑、删除和登记实际课时",
     metrics: [
       { label: "预定课时", value: `${plannedCount} 节`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
       { label: "实际课时", value: `${actualCount} 节`, sub: "用于打工结算", tone: "emerald", icon: CheckCircle2 },
@@ -6067,7 +6084,15 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
 
 function getExternalWorkPairsForPage(workflowApi: WorkflowApiState) {
   if (workflowApi.externalLessons.status === "ready") {
-    return buildExternalWorkPairsFromApi(workflowApi.externalLessons.items);
+    const lockedSettlementKeys = new Set(
+      workflowApi.externalSettlements.rows.flatMap((row) => {
+        const settlement = row.externalWorkSettlementRecord;
+        return settlement && ["locked", "income_created"].includes(settlement.status)
+          ? [`${settlement.workplaceId}:${settlement.yearMonth}`]
+          : [];
+      }),
+    );
+    return buildExternalWorkPairsFromApi(workflowApi.externalLessons.items, lockedSettlementKeys);
   }
 
   if (workflowApi.externalLessons.status === "error") {
@@ -6077,7 +6102,10 @@ function getExternalWorkPairsForPage(workflowApi: WorkflowApiState) {
   return externalWorkPairs;
 }
 
-function buildExternalWorkPairsFromApi(lessons: ExternalWorkLessonRecord[]): ExternalWorkPair[] {
+function buildExternalWorkPairsFromApi(
+  lessons: ExternalWorkLessonRecord[],
+  lockedSettlementKeys: Set<string>,
+): ExternalWorkPair[] {
   const plannedLessons = lessons.filter((lesson) => lesson.lessonType === "planned");
   const actualLessons = lessons.filter((lesson) => lesson.lessonType === "actual");
   const actualByPlannedId = new Map(
@@ -6091,9 +6119,11 @@ function buildExternalWorkPairsFromApi(lessons: ExternalWorkLessonRecord[]): Ext
     return {
       id: `external-pair-${planned.id}`,
       relation: actual ? "已对应实际课时" : getExternalLessonRelationLabel(planned.status),
-      locked: true,
+      locked: lockedSettlementKeys.has(`${planned.workplaceId}:${planned.yearMonth}`),
       planned: mapExternalWorkLessonToCard(planned),
       actual: actual ? mapExternalWorkLessonToCard(actual) : undefined,
+      plannedRecord: planned,
+      actualRecord: actual,
       detailRow: mapExternalWorkLessonToRow(actual ?? planned),
     };
   });
@@ -6103,9 +6133,10 @@ function buildExternalWorkPairsFromApi(lessons: ExternalWorkLessonRecord[]): Ext
     .map((actual) => ({
       id: `external-actual-only-${actual.id}`,
       relation: "无预定课时",
-      locked: true,
+      locked: lockedSettlementKeys.has(`${actual.workplaceId}:${actual.yearMonth}`),
       planned: mapExternalWorkActualToPlannedPlaceholder(actual),
       actual: mapExternalWorkLessonToCard(actual),
+      actualRecord: actual,
       detailRow: mapExternalWorkLessonToRow(actual),
     }));
 
@@ -6210,8 +6241,7 @@ function buildExternalWorkSettlementsPage(basePage: PageConfig, settlementApi: F
     description:
       settlementApi.status === "error"
         ? `真实 API 打工结算读取失败：${settlementApi.message}`
-        : "真实 API 打工结算列表；第一层只读展示，锁定、撤销和生成收入会在第二层接入",
-    primaryAction: undefined,
+          : "真实 API 打工结算列表；可预览、锁定、撤销，并从锁定快照生成收入",
     secondaryAction: undefined,
     batchAction: undefined,
     selectable: false,
@@ -6265,7 +6295,8 @@ function mapExternalWorkSettlementToRow(record: ExternalWorkSettlementRecord): D
     status: status.label,
     tone: status.tone,
     apiRef: { resource: "externalWorkSettlement", id: record.id },
-    readOnlyActions: true,
+    externalWorkSettlementRecord: record,
+    readOnlyActions: false,
     cells: {
       workplace: record.workplace.name,
       lessons: `${record.lessonCount} 节 / ${formatDurationHours(record.totalLessonHours)}`,
@@ -7396,6 +7427,22 @@ type LessonActionKey =
   | "viewMigrationAudit";
 
 type LessonActualDialogState = { pair: LessonPair };
+type ExternalWorkLessonDialogState =
+  | { mode: "create" }
+  | { mode: "edit"; lesson: ExternalWorkLessonRecord }
+  | { mode: "generateActual"; plannedLesson: ExternalWorkLessonRecord };
+
+type ExternalWorkLessonActionKey =
+  | "editPlanned"
+  | "editActual"
+  | "deletePlanned"
+  | "deleteActual"
+  | "generateActual";
+
+type ExternalWorkSettlementDialogState = {
+  mode: "lock";
+  settlement?: ExternalWorkSettlementRecord;
+};
 
 const lessonManagementPage: PageConfig = {
   key: "lesson-management",
@@ -8701,6 +8748,199 @@ function LessonActualFormModal({
   );
 }
 
+function ExternalWorkLessonFormModal({
+  state,
+  workplaces,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: ExternalWorkLessonDialogState;
+  workplaces: ExternalWorkplaceRecord[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: ExternalWorkLessonInput) => void;
+}) {
+  const existing = state.mode === "edit" ? state.lesson : state.mode === "generateActual" ? state.plannedLesson : null;
+  const activeWorkplaces = workplaces.filter((workplace) => workplace.status === "active");
+  const [workplaceId, setWorkplaceId] = useState(existing?.workplaceId ?? activeWorkplaces[0]?.id ?? "");
+  const [lessonDate, setLessonDate] = useState(existing ? formatApiDate(existing.lessonDate).replaceAll("/", "-") : new Date().toISOString().slice(0, 10));
+  const [startTime, setStartTime] = useState(normalizeTimeInputValue(existing?.startTime ?? null) || "10:00");
+  const [endTime, setEndTime] = useState(normalizeTimeInputValue(existing?.endTime ?? null) || "11:00");
+  const [durationHours, setDurationHours] = useState(String(parseApiAmount(existing?.durationHours) ?? 1));
+  const [instructorName, setInstructorName] = useState(existing?.instructorName ?? "");
+  const [lessonTitle, setLessonTitle] = useState(existing?.lessonTitle ?? "外部授课");
+  const [hourlyRateJpy, setHourlyRateJpy] = useState(String(parseApiAmount(existing?.hourlyRateJpy) ?? 0));
+  const [transportationFeeJpy, setTransportationFeeJpy] = useState(String(parseApiAmount(existing?.transportationFeeJpy) ?? 0));
+  const [content, setContent] = useState(existing?.content ?? "");
+  const [memo, setMemo] = useState(existing?.memo ?? "");
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const durationNumber = Number(durationHours);
+  const hourlyRateNumber = Number(hourlyRateJpy);
+  const transportationFeeNumber = Number(transportationFeeJpy);
+  const timeOrderValid = Boolean(startTime && endTime && endTime > startTime);
+  const canSubmit =
+    Boolean(workplaceId && lessonDate && startTime && endTime && instructorName.trim() && lessonTitle.trim()) &&
+    timeOrderValid &&
+    Number.isFinite(durationNumber) && durationNumber > 0 && durationNumber <= 24 &&
+    Number.isInteger(hourlyRateNumber) && hourlyRateNumber >= 0 &&
+    Number.isInteger(transportationFeeNumber) && transportationFeeNumber >= 0;
+  const heading = state.mode === "create" ? "新增外部预定课时" : state.mode === "generateActual" ? "登记外部实际课时" : `编辑${state.lesson.lessonType === "actual" ? "外部实际" : "外部预定"}课时`;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setValidationError(null);
+    if (!timeOrderValid) {
+      setValidationError("结束时间必须晚于开始时间。");
+      return;
+    }
+    if (!canSubmit) {
+      setValidationError("请完整填写机构、日期、时间、授课人、课题、时长和非负整数金额。");
+      return;
+    }
+    onSubmit({
+      workplaceId,
+      lessonDate,
+      startTime,
+      endTime,
+      durationHours: durationNumber,
+      instructorName: instructorName.trim(),
+      lessonTitle: lessonTitle.trim(),
+      hourlyRateJpy: hourlyRateNumber,
+      transportationFeeJpy: transportationFeeNumber,
+      content: normalizeOptionalFormValue(content),
+      memo: normalizeOptionalFormValue(memo),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭外部课时弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex max-h-[94vh] w-[min(760px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">{heading}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">外部授课是独立链路；实际课时只进入打工结算，不进入学生学费或老师工资。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="grid gap-4 overflow-y-auto px-6 py-5">
+          {state.mode === "generateActual" && (
+            <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+              原预定：{state.plannedLesson.workplace.name} / {formatApiDate(state.plannedLesson.lessonDate)} / {state.plannedLesson.instructorName}。保存后会生成一条关联的实际课时。
+            </div>
+          )}
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">授课机构</span><select required value={workplaceId} onChange={(event) => setWorkplaceId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"><option value="">请选择机构</option>{activeWorkplaces.map((workplace) => <option key={workplace.id} value={workplace.id}>{workplace.name}（{workplace.code}）</option>)}</select></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">日期</span><input required type="date" value={lessonDate} onChange={(event) => setLessonDate(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">时长（小时）</span><input required type="number" min="0.25" max="24" step="0.25" value={durationHours} onChange={(event) => setDurationHours(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">开始时间</span><input required type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">结束时间</span><input required type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">授课人</span><input required value={instructorName} onChange={(event) => setInstructorName(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">课题</span><input required value={lessonTitle} onChange={(event) => setLessonTitle(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">时薪（JPY）</span><input required type="number" min="0" step="1" value={hourlyRateJpy} onChange={(event) => setHourlyRateJpy(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">交通费（JPY）</span><input required type="number" min="0" step="1" value={transportationFeeJpy} onChange={(event) => setTransportationFeeJpy(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+          </div>
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">内容</span><input value={content} onChange={(event) => setContent(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" /></label>
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注</span><textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[76px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" /></label>
+          {activeWorkplaces.length === 0 && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">需要先在设置中启用至少一个外部授课机构。</div>}
+          {(validationError || error) && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{validationError ?? error}</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="submit" disabled={isSubmitting || !canSubmit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{isSubmitting ? "保存中" : state.mode === "generateActual" ? "保存实际课时" : "保存课时"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ExternalWorkSettlementFormModal({
+  state,
+  workplaces,
+  isSubmitting,
+  error,
+  onClose,
+  onPreview,
+  onLock,
+}: {
+  state: ExternalWorkSettlementDialogState;
+  workplaces: ExternalWorkplaceRecord[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onPreview: (input: ExternalWorkSettlementInput) => Promise<ExternalWorkSettlementPreview>;
+  onLock: (input: ExternalWorkSettlementInput) => void;
+}) {
+  const activeWorkplaces = workplaces.filter((workplace) => workplace.status === "active");
+  const [workplaceId, setWorkplaceId] = useState(state.settlement?.workplaceId ?? activeWorkplaces[0]?.id ?? "");
+  const [yearMonth, setYearMonth] = useState(state.settlement?.yearMonth ?? new Date().toISOString().slice(0, 7));
+  const [adjustmentAmountJpy, setAdjustmentAmountJpy] = useState(String(parseApiAmount(state.settlement?.adjustmentAmountJpy) ?? 0));
+  const [memo, setMemo] = useState(state.settlement?.memo ?? "");
+  const [preview, setPreview] = useState<ExternalWorkSettlementPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const adjustmentNumber = Number(adjustmentAmountJpy);
+  const canSubmit = Boolean(workplaceId && /^\d{4}-\d{2}$/.test(yearMonth) && Number.isInteger(adjustmentNumber));
+  const input = (): ExternalWorkSettlementInput => ({ workplaceId, yearMonth, adjustmentAmountJpy: adjustmentNumber, memo: normalizeOptionalFormValue(memo) });
+
+  const previewSettlement = async () => {
+    if (!canSubmit) {
+      setPreviewError("请选择机构、业务月份，并填写整数调整金额。\n");
+      return;
+    }
+    setIsPreviewing(true);
+    setPreviewError(null);
+    try {
+      setPreview(await onPreview(input()));
+    } catch (previewRequestError) {
+      setPreview(null);
+      setPreviewError(formatApiError(previewRequestError));
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit || preview?.blockingIssues.length) return;
+    onLock(input());
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭打工结算弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex max-h-[94vh] w-[min(820px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div><h2 className="text-base font-semibold text-foreground">{state.settlement ? "重新预览并锁定打工结算" : "预览并锁定打工结算"}</h2><p className="mt-1 text-xs text-muted-foreground">锁定会固化该机构该月已完成实际课时的快照；生成收入前可撤销，生成收入后不可撤销。</p></div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="grid gap-4 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">授课机构</span><select required value={workplaceId} onChange={(event) => { setWorkplaceId(event.target.value); setPreview(null); }} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15"><option value="">请选择机构</option>{activeWorkplaces.map((workplace) => <option key={workplace.id} value={workplace.id}>{workplace.name}（{workplace.code}）</option>)}</select></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">业务月份</span><input required type="month" value={yearMonth} onChange={(event) => { setYearMonth(event.target.value); setPreview(null); }} className="h-10 rounded-md border border-border bg-white px-3 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">调整金额（JPY）</span><input required type="number" step="1" value={adjustmentAmountJpy} onChange={(event) => { setAdjustmentAmountJpy(event.target.value); setPreview(null); }} className="h-10 rounded-md border border-border bg-white px-3 font-mono text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+          </div>
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">结算备注</span><textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[68px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填；会在锁定结算中保留" /></label>
+          <div className="flex items-center gap-3"><ActionButton icon={RefreshCw} variant="secondary" onClick={() => void previewSettlement()}>{isPreviewing ? "预览中…" : "生成预览"}</ActionButton><span className="text-xs text-muted-foreground">预览不会写入数据；必须先获得无阻断项的预览才可锁定。</span></div>
+          {preview && <section className="overflow-hidden rounded-lg border border-border"><div className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs font-semibold">后端结算预览</div><div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">{[["实际课时", `${preview.lessonCount} 节`], ["总时长", `${preview.totalLessonHours} 小时`], ["课时工资", formatApiJpyAmount(preview.lessonWageJpy)], ["结算合计", formatApiJpyAmount(preview.totalAmountJpy)]].map(([label, value]) => <div key={label} className="bg-white px-3 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 text-sm font-medium">{value}</div></div>)}</div><div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">交通费 {formatApiJpyAmount(preview.transportationFeeJpy)} · 调整 {formatApiJpyAmount(preview.adjustmentAmountJpy)}</div>{preview.blockingIssues.length > 0 && <div className="border-t border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">{preview.blockingIssues.join(" ")}</div>}</section>}
+          {activeWorkplaces.length === 0 && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">需要先在设置中启用至少一个外部授课机构。</div>}
+          {(previewError || error) && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 whitespace-pre-line text-xs text-rose-700">{previewError ?? error}</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4"><ActionButton variant="quiet" onClick={onClose}>取消</ActionButton><button type="submit" disabled={isSubmitting || !preview || preview.blockingIssues.length > 0} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <LockKeyhole className="h-3.5 w-3.5" />}{isSubmitting ? "锁定中" : "确认锁定结算"}</button></div>
+      </form>
+    </div>
+  );
+}
+
 interface ExternalWorkLessonData {
   date: string;
   dateSub: string;
@@ -8720,6 +8960,8 @@ interface ExternalWorkPair {
   locked: boolean;
   planned: ExternalWorkLessonData;
   actual?: ExternalWorkLessonData;
+  plannedRecord?: ExternalWorkLessonRecord;
+  actualRecord?: ExternalWorkLessonRecord;
   detailRow: DataRow;
 }
 
@@ -8923,10 +9165,14 @@ function ExternalWorkFactCard({
 function ExternalWorkInlineActions({
   pair,
   onOpenDetail,
+  onLessonAction,
+  isSubmitting,
   compact = false,
 }: {
   pair: ExternalWorkPair;
   onOpenDetail: (row: DataRow) => void;
+  onLessonAction: (actionKey: ExternalWorkLessonActionKey, pair: ExternalWorkPair) => void;
+  isSubmitting: boolean;
   compact?: boolean;
 }) {
   const buttonBase =
@@ -8941,20 +9187,35 @@ function ExternalWorkInlineActions({
         </span>
       ) : (
         <>
-          {!pair.actual && (
-            <button className={`${buttonBase} bg-[#1687D9] text-white hover:bg-[#0f74bd]`}>
+          {!pair.actual && pair.plannedRecord && (
+            <button type="button" disabled={isSubmitting} onClick={() => onLessonAction("generateActual", pair)} className={`${buttonBase} bg-[#1687D9] text-white hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]`}>
               <ClipboardCheck className="h-3.5 w-3.5" />
               生成实际
             </button>
           )}
-          <button className={`${buttonBase} border border-border bg-white text-foreground hover:bg-muted`}>
-            <PencilLine className="h-3.5 w-3.5" />
-            编辑
-          </button>
-          <button className={`${buttonBase} border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`}>
-            <X className="h-3.5 w-3.5" />
-            删除
-          </button>
+          {pair.actualRecord ? (
+            <>
+              <button type="button" disabled={isSubmitting} onClick={() => onLessonAction("editActual", pair)} className={`${buttonBase} border border-border bg-white text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60`}>
+                <PencilLine className="h-3.5 w-3.5" />
+                {compact ? "编辑实际" : "编辑实际课时"}
+              </button>
+              <button type="button" disabled={isSubmitting} onClick={() => onLessonAction("deleteActual", pair)} className={`${buttonBase} border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60`}>
+                <X className="h-3.5 w-3.5" />
+                {compact ? "删除实际" : "删除实际课时"}
+              </button>
+            </>
+          ) : pair.plannedRecord ? (
+            <>
+              <button type="button" disabled={isSubmitting} onClick={() => onLessonAction("editPlanned", pair)} className={`${buttonBase} border border-border bg-white text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60`}>
+                <PencilLine className="h-3.5 w-3.5" />
+                编辑预定
+              </button>
+              <button type="button" disabled={isSubmitting} onClick={() => onLessonAction("deletePlanned", pair)} className={`${buttonBase} border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60`}>
+                <X className="h-3.5 w-3.5" />
+                删除预定
+              </button>
+            </>
+          ) : null}
         </>
       )}
       <button
@@ -8971,16 +9232,20 @@ function ExternalWorkInlineActions({
 function ExternalWorkActualColumn({
   pair,
   onOpenDetail,
+  onLessonAction,
+  isSubmitting,
 }: {
   pair: ExternalWorkPair;
   onOpenDetail: (row: DataRow) => void;
+  onLessonAction: (actionKey: ExternalWorkLessonActionKey, pair: ExternalWorkPair) => void;
+  isSubmitting: boolean;
 }) {
   if (pair.actual) {
     return (
       <ExternalWorkFactCard
         label="实际课时"
         lesson={pair.actual}
-        actions={<ExternalWorkInlineActions pair={pair} onOpenDetail={onOpenDetail} compact />}
+        actions={<ExternalWorkInlineActions pair={pair} onOpenDetail={onOpenDetail} onLessonAction={onLessonAction} isSubmitting={isSubmitting} compact />}
       />
     );
   }
@@ -8989,7 +9254,7 @@ function ExternalWorkActualColumn({
     <ExternalWorkFactCard
       label="实际课时"
       emptyHint={`关联：${pair.relation}`}
-      actions={<ExternalWorkInlineActions pair={pair} onOpenDetail={onOpenDetail} />}
+      actions={<ExternalWorkInlineActions pair={pair} onOpenDetail={onOpenDetail} onLessonAction={onLessonAction} isSubmitting={isSubmitting} />}
     />
   );
 }
@@ -8998,14 +9263,20 @@ function ExternalWorkLessonsPage({
   page,
   pairs,
   onOpenDetail,
+  onPrimary,
+  onLessonAction,
+  submittingPairId,
 }: {
   page: PageConfig;
   pairs: ExternalWorkPair[];
   onOpenDetail: (row: DataRow) => void;
+  onPrimary: () => void;
+  onLessonAction: (actionKey: ExternalWorkLessonActionKey, pair: ExternalWorkPair) => void;
+  submittingPairId: string | null;
 }) {
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
-      <PageHeader page={page} />
+      <PageHeader page={page} onPrimary={onPrimary} />
       <FilterPanel filters={page.filters} />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {page.metrics.map((metric) => (
@@ -9034,7 +9305,7 @@ function ExternalWorkLessonsPage({
             pairs.map((pair) => (
               <div className="grid gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
                 <ExternalWorkFactCard label="预定课时" lesson={pair.planned} />
-                <ExternalWorkActualColumn pair={pair} onOpenDetail={onOpenDetail} />
+                <ExternalWorkActualColumn pair={pair} onOpenDetail={onOpenDetail} onLessonAction={onLessonAction} isSubmitting={submittingPairId === pair.id} />
               </div>
             ))
           ) : (
@@ -10475,6 +10746,13 @@ export default function App() {
   const [lessonActualError, setLessonActualError] = useState<string | null>(null);
   const [workflowApi, setWorkflowApi] = useState<WorkflowApiState>(createEmptyWorkflowApiState);
   const [workflowReloadKey, setWorkflowReloadKey] = useState(0);
+  const [externalWorkLessonDialog, setExternalWorkLessonDialog] = useState<ExternalWorkLessonDialogState | null>(null);
+  const [isExternalWorkLessonSubmitting, setIsExternalWorkLessonSubmitting] = useState(false);
+  const [externalWorkLessonError, setExternalWorkLessonError] = useState<string | null>(null);
+  const [externalWorkLessonSubmittingPairId, setExternalWorkLessonSubmittingPairId] = useState<string | null>(null);
+  const [externalWorkSettlementDialog, setExternalWorkSettlementDialog] = useState<ExternalWorkSettlementDialogState | null>(null);
+  const [isExternalWorkSettlementSubmitting, setIsExternalWorkSettlementSubmitting] = useState(false);
+  const [externalWorkSettlementError, setExternalWorkSettlementError] = useState<string | null>(null);
   const [teacherWageRuleDialog, setTeacherWageRuleDialog] = useState<TeacherWageRuleDialogState | null>(null);
   const [isTeacherWageRuleSubmitting, setIsTeacherWageRuleSubmitting] = useState(false);
   const [teacherWageRuleError, setTeacherWageRuleError] = useState<string | null>(null);
@@ -11194,6 +11472,132 @@ export default function App() {
     setPlannedLessonDialog({ mode: "edit", plannedLesson });
   };
 
+  const openExternalWorkLessonCreate = () => {
+    if (!authSession) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再新增外部预定课时。" });
+      return;
+    }
+    setExternalWorkLessonError(null);
+    setExternalWorkLessonDialog({ mode: "create" });
+  };
+
+  const handleExternalWorkLessonAction = async (actionKey: ExternalWorkLessonActionKey, pair: ExternalWorkPair) => {
+    if (!authSession) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再处理外部课时。" });
+      return;
+    }
+
+    if (actionKey === "generateActual") {
+      if (!pair.plannedRecord) {
+        setActionNotice({ tone: "amber", text: "未找到可生成实际课时的外部预定记录。" });
+        return;
+      }
+      setExternalWorkLessonError(null);
+      setExternalWorkLessonDialog({ mode: "generateActual", plannedLesson: pair.plannedRecord });
+      return;
+    }
+
+    if (actionKey === "editPlanned" && pair.plannedRecord) {
+      setExternalWorkLessonError(null);
+      setExternalWorkLessonDialog({ mode: "edit", lesson: pair.plannedRecord });
+      return;
+    }
+
+    if (actionKey === "editActual" && pair.actualRecord) {
+      setExternalWorkLessonError(null);
+      setExternalWorkLessonDialog({ mode: "edit", lesson: pair.actualRecord });
+      return;
+    }
+
+    const lesson = actionKey === "deleteActual" ? pair.actualRecord : pair.plannedRecord;
+    if (!lesson) {
+      setActionNotice({ tone: "amber", text: "未找到可删除的外部课时记录。" });
+      return;
+    }
+    const lessonTypeLabel = lesson.lessonType === "actual" ? "实际课时" : "预定课时";
+    const confirmed = window.confirm(
+      `确认删除 ${formatApiDate(lesson.lessonDate)} 的${lessonTypeLabel}「${lesson.workplace.name} / ${lesson.lessonTitle}」？\n\n结算锁定后的记录不可删除；删除实际课时会恢复对应预定课时。`,
+    );
+    if (!confirmed) return;
+
+    setExternalWorkLessonSubmittingPairId(pair.id);
+    try {
+      await deleteExternalWorkLesson(authSession.accessToken, lesson.id);
+      setDetailRow(null);
+      setWorkflowReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: `${lessonTypeLabel}已删除。` });
+    } catch (error) {
+      setActionNotice({ tone: "rose", text: formatApiError(error) });
+    } finally {
+      setExternalWorkLessonSubmittingPairId(null);
+    }
+  };
+
+  const submitExternalWorkLessonForm = async (input: ExternalWorkLessonInput) => {
+    if (!authSession || !externalWorkLessonDialog) {
+      setExternalWorkLessonError("请先使用真实 API 登录后再保存外部课时。");
+      return;
+    }
+
+    const dialog = externalWorkLessonDialog;
+    setIsExternalWorkLessonSubmitting(true);
+    setExternalWorkLessonError(null);
+    try {
+      if (dialog.mode === "create") {
+        await createExternalWorkPlannedLesson(authSession.accessToken, input);
+      } else if (dialog.mode === "generateActual") {
+        await generateExternalWorkActualLesson(authSession.accessToken, dialog.plannedLesson.id, input);
+      } else {
+        await updateExternalWorkLesson(authSession.accessToken, dialog.lesson.id, input);
+      }
+      setExternalWorkLessonDialog(null);
+      setDetailRow(null);
+      setWorkflowReloadKey((current) => current + 1);
+      setActionNotice({
+        tone: "emerald",
+        text: dialog.mode === "create" ? "外部预定课时已创建。" : dialog.mode === "generateActual" ? "外部实际课时已登记。" : "外部课时已更新。",
+      });
+    } catch (error) {
+      setExternalWorkLessonError(formatApiError(error));
+    } finally {
+      setIsExternalWorkLessonSubmitting(false);
+    }
+  };
+
+  const openExternalWorkSettlementLock = (settlement?: ExternalWorkSettlementRecord) => {
+    if (!authSession) {
+      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录后再锁定打工结算。" });
+      return;
+    }
+    setExternalWorkSettlementError(null);
+    setExternalWorkSettlementDialog({ mode: "lock", settlement });
+  };
+
+  const requestExternalWorkSettlementPreview = async (input: ExternalWorkSettlementInput) => {
+    if (!authSession) throw new Error("请先使用真实 API 登录后再生成结算预览。");
+    const result = await previewExternalWorkSettlement(authSession.accessToken, input);
+    return result.preview;
+  };
+
+  const submitExternalWorkSettlementLock = async (input: ExternalWorkSettlementInput) => {
+    if (!authSession) {
+      setExternalWorkSettlementError("请先使用真实 API 登录后再锁定打工结算。");
+      return;
+    }
+    setIsExternalWorkSettlementSubmitting(true);
+    setExternalWorkSettlementError(null);
+    try {
+      const result = await lockExternalWorkSettlement(authSession.accessToken, input);
+      setExternalWorkSettlementDialog(null);
+      setWorkflowReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: `已锁定 ${result.settlement.workplace.name} / ${result.settlement.yearMonth} 的打工结算快照。` });
+    } catch (error) {
+      setExternalWorkSettlementError(formatApiError(error));
+    } finally {
+      setIsExternalWorkSettlementSubmitting(false);
+    }
+  };
+
   const submitPlannedLessonForm = async (input: CreatePlannedLessonInput) => {
     if (!authSession) {
       setPlannedLessonMutationError("请先使用真实 API 登录后再新增预定课时。");
@@ -11595,6 +11999,61 @@ export default function App() {
           records: [],
           error: formatApiError(error),
         });
+      }
+      return;
+    }
+
+    if (
+      actionKey === "externalSettlement.relock" ||
+      actionKey === "externalSettlement.revoke" ||
+      actionKey === "externalSettlement.generateIncome" ||
+      actionKey === "externalSettlement.viewIncome"
+    ) {
+      const settlement = row.externalWorkSettlementRecord;
+      if (!authSession || !settlement) {
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 Staging API 的打工结算。" });
+        return;
+      }
+
+      if (actionKey === "externalSettlement.relock") {
+        setDetailRow(null);
+        openExternalWorkSettlementLock(settlement);
+        return;
+      }
+
+      if (actionKey === "externalSettlement.viewIncome") {
+        setDetailRow(null);
+        setActiveKey("income-records");
+        setActionNotice({ tone: "emerald", text: "已切换到收入记录，请按打工结算月份和机构名称核对对应收入。" });
+        return;
+      }
+
+      if (actionKey === "externalSettlement.revoke") {
+        const reason = window.prompt(`确认撤销「${settlement.workplace.name} / ${settlement.yearMonth}」的打工结算？请输入原因（可留空）：`, "测试撤销结算");
+        if (reason === null) return;
+        try {
+          await revokeExternalWorkSettlement(authSession.accessToken, settlement.id, normalizeOptionalFormValue(reason));
+          setDetailRow(null);
+          setWorkflowReloadKey((current) => current + 1);
+          setActionNotice({ tone: "emerald", text: "打工结算已撤销；该月外部课时恢复为可编辑状态。" });
+        } catch (error) {
+          setActionNotice({ tone: "rose", text: formatApiError(error) });
+        }
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `确认从「${settlement.workplace.name} / ${settlement.yearMonth}」锁定的打工结算生成收入记录？\n\n收入金额将使用后端锁定快照 ${formatApiJpyAmount(settlement.totalAmountJpy)}，生成后结算不可撤销。`,
+      );
+      if (!confirmed) return;
+      try {
+        await generateExternalWorkSettlementIncome(authSession.accessToken, settlement.id, settlement.memo);
+        setDetailRow(null);
+        setWorkflowReloadKey((current) => current + 1);
+        setFinanceReloadKey((current) => current + 1);
+        setActionNotice({ tone: "emerald", text: "打工收入记录已生成，可前往收入记录提交 Cash 请求。" });
+      } catch (error) {
+        setActionNotice({ tone: "rose", text: formatApiError(error) });
       }
       return;
     }
@@ -12301,7 +12760,14 @@ export default function App() {
             onEditPlannedLesson={openPlannedLessonEdit}
           />
         ) : activeKey === "external-lessons" && activePage ? (
-          <ExternalWorkLessonsPage page={activePage} pairs={activeExternalWorkPairs} onOpenDetail={setDetailRow} />
+          <ExternalWorkLessonsPage
+            page={activePage}
+            pairs={activeExternalWorkPairs}
+            onOpenDetail={setDetailRow}
+            onPrimary={openExternalWorkLessonCreate}
+            onLessonAction={handleExternalWorkLessonAction}
+            submittingPairId={externalWorkLessonSubmittingPairId}
+          />
         ) : activeKey === "settings" && activePage ? (
           <SettingsPage
             page={activePage}
@@ -12330,6 +12796,8 @@ export default function App() {
                       ? openTeacherWageRuleCreate
                     : activeKey === "teacher-wages"
                       ? openTeacherWageCreate
+                    : activeKey === "external-settlements"
+                      ? () => openExternalWorkSettlementLock()
                     : activeKey === "income-records"
                       ? () => openFinanceCreate("income")
                     : activeKey === "expense-records"
@@ -12502,6 +12970,33 @@ export default function App() {
             setLessonActualError(null);
           }}
           onSubmit={submitLessonActualForm}
+        />
+      )}
+      {externalWorkLessonDialog && (
+        <ExternalWorkLessonFormModal
+          state={externalWorkLessonDialog}
+          workplaces={settingsApi.rows.flatMap((row) => row.externalWorkplaceRecord ? [row.externalWorkplaceRecord] : [])}
+          isSubmitting={isExternalWorkLessonSubmitting}
+          error={externalWorkLessonError}
+          onClose={() => {
+            setExternalWorkLessonDialog(null);
+            setExternalWorkLessonError(null);
+          }}
+          onSubmit={submitExternalWorkLessonForm}
+        />
+      )}
+      {externalWorkSettlementDialog && (
+        <ExternalWorkSettlementFormModal
+          state={externalWorkSettlementDialog}
+          workplaces={settingsApi.rows.flatMap((row) => row.externalWorkplaceRecord ? [row.externalWorkplaceRecord] : [])}
+          isSubmitting={isExternalWorkSettlementSubmitting}
+          error={externalWorkSettlementError}
+          onClose={() => {
+            setExternalWorkSettlementDialog(null);
+            setExternalWorkSettlementError(null);
+          }}
+          onPreview={requestExternalWorkSettlementPreview}
+          onLock={submitExternalWorkSettlementLock}
         />
       )}
       <ActionNotice notice={actionNotice} onClose={() => setActionNotice(null)} />
