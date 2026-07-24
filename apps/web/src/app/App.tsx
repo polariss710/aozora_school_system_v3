@@ -233,6 +233,8 @@ type Tone = "sky" | "cyan" | "emerald" | "amber" | "rose" | "slate" | "violet";
 
 const appliedFilterPageKeys = [
   "lesson-management",
+  "external-lessons",
+  "external-settlements",
   "tuition-bills",
   "student-settlements",
   "income-records",
@@ -4882,6 +4884,19 @@ function getFilteredBusinessMetrics(page: PageConfig, rows: DataRow[]): Metric[]
     ];
   }
 
+  if (page.key === "external-settlements") {
+    const lockedCount = rows.filter((row) => row.status === "已锁定").length;
+    const incomeCreatedCount = rows.filter((row) => row.status === "收入已生成").length;
+    const revokedCount = rows.filter((row) => row.status === "已撤销").length;
+
+    return [
+      { label: "打工结算", value: `${rows.length} 组`, sub: resultSub, tone: "sky", icon: BriefcaseBusiness },
+      { label: "已锁定", value: `${lockedCount} 组`, sub: "可生成收入", tone: "emerald", icon: LockKeyhole },
+      { label: "收入已生成", value: `${incomeCreatedCount} 组`, sub: "进入收入链路", tone: "cyan", icon: ReceiptText },
+      { label: "已撤销", value: `${revokedCount} 组`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
+    ];
+  }
+
   if (page.key === "income-records" || page.key === "expense-records") {
     const cashTodoCount = rows.filter((row) =>
       ["待提交 Cash", "Cash 待确认", "需要复核", "Cash 已拒绝"].includes(row.status),
@@ -4928,6 +4943,7 @@ function BusinessPage({
   const supportsLocalFilters = [
     "tuition-bills",
     "student-settlements",
+    "external-settlements",
     "income-records",
     "expense-records",
   ].includes(page.key);
@@ -4951,17 +4967,20 @@ function BusinessPage({
     const selectedMonth = appliedFilters.values[commonFilters.month.label];
     const selectedStudent = appliedFilters.values[commonFilters.student.label];
     const selectedSource = appliedFilters.values[page.key === "income-records" ? "收入来源" : "支出分类"];
+    const selectedWorkplace = appliedFilters.values["授课机构"];
     const selectedStatus = appliedFilters.values[commonFilters.status.label];
     const normalizedKeyword = appliedFilters.keyword.trim().toLocaleLowerCase();
 
     return page.rows.filter((row) => {
       const tuitionBill = row.tuitionBillRecord;
       const settlement = row.studentSettlementRecord;
+      const externalSettlement = row.externalWorkSettlementRecord;
       const finance = row.financeRecord;
-      const yearMonth = tuitionBill?.yearMonth ?? settlement?.yearMonth ?? finance?.yearMonth;
+      const yearMonth = tuitionBill?.yearMonth ?? settlement?.yearMonth ?? externalSettlement?.yearMonth ?? finance?.yearMonth;
       if (selectedMonth && yearMonth !== selectedMonth) return false;
       if (selectedStudent && row.title !== selectedStudent) return false;
       if (selectedSource && finance?.sourceLabel !== selectedSource) return false;
+      if (selectedWorkplace && externalSettlement?.workplace.name !== selectedWorkplace) return false;
       if (selectedStatus && row.status !== selectedStatus) return false;
       if (!normalizedKeyword) return true;
 
@@ -4973,6 +4992,10 @@ function BusinessPage({
         tuitionBill?.id,
         settlement?.student.code,
         settlement?.id,
+        externalSettlement?.workplace.name,
+        externalSettlement?.workplace.code,
+        externalSettlement?.yearMonth,
+        externalSettlement?.memo,
         finance?.sourceLabel,
         finance?.sourceType,
         finance?.yearMonth,
@@ -6722,9 +6745,27 @@ function buildExternalWorkSettlementsPage(basePage: PageConfig, settlementApi: F
   const lockedCount = settlementApi.rows.filter((row) => row.status === "已锁定").length;
   const incomeCreatedCount = settlementApi.rows.filter((row) => row.status === "收入已生成").length;
   const revokedCount = settlementApi.rows.filter((row) => row.status === "已撤销").length;
+  const filters: Filter[] = [
+    {
+      label: "业务月份",
+      options: [...new Set(settlementApi.rows.flatMap((row) => row.externalWorkSettlementRecord ? [row.externalWorkSettlementRecord.yearMonth] : []))]
+        .sort((left, right) => right.localeCompare(left)),
+    },
+    {
+      label: "授课机构",
+      options: [...new Set(settlementApi.rows.flatMap((row) => row.externalWorkSettlementRecord ? [row.externalWorkSettlementRecord.workplace.name] : []))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+    {
+      label: "状态",
+      options: [...new Set(settlementApi.rows.map((row) => row.status))]
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    },
+  ];
 
   return {
     ...readonlyBasePage,
+    filters,
     metrics: [
       { label: "打工结算", value: `${settlementApi.total} 组`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
       { label: "已锁定", value: `${lockedCount} 组`, sub: "可生成收入", tone: "emerald", icon: LockKeyhole },
@@ -9466,7 +9507,7 @@ const externalWorkLessonsPage: PageConfig = {
     { label: "待生成实际", value: "2 节", sub: "锁定前可处理", tone: "amber", icon: Clock },
     { label: "已锁定月份", value: "1 个", sub: "只读保护", tone: "slate", icon: LockKeyhole },
   ],
-  filters: [commonFilters.month, { label: "授课机构", options: ["早稻田塾", "家庭教师", "夏期讲座"] }, commonFilters.status],
+  filters: [],
   columns: [],
   rows: [],
 };
@@ -9762,12 +9803,95 @@ function ExternalWorkLessonsPage({
   onLessonAction: (actionKey: ExternalWorkLessonActionKey, pair: ExternalWorkPair) => void;
   submittingPairId: string | null;
 }) {
+  const initialFilterScope = () => ({ values: {} as Record<string, string>, keyword: "" });
+  const filters = useMemo<Filter[]>(() => {
+    const yearMonths = new Set<string>();
+    const workplaces = new Set<string>();
+    const relations = new Set<string>();
+
+    for (const pair of pairs) {
+      const primary = pair.plannedRecord ?? pair.actualRecord;
+      if (primary?.yearMonth) yearMonths.add(primary.yearMonth);
+      if (primary?.workplace.name) workplaces.add(primary.workplace.name);
+      if (pair.relation) relations.add(pair.relation);
+    }
+
+    return [
+      { label: "业务月份", options: [...yearMonths].sort((left, right) => right.localeCompare(left)) },
+      { label: "授课机构", options: [...workplaces].sort((left, right) => left.localeCompare(right, "zh-CN")) },
+      { label: "对应状态", options: [...relations].sort((left, right) => left.localeCompare(right, "zh-CN")) },
+    ];
+  }, [pairs]);
+  const queryScopeFromUrl = () => readAppliedFilterQuery(
+    window.location.search,
+    [page.key],
+    filters.map((filter) => filter.label),
+  )?.scope ?? initialFilterScope();
+  const [queryFilters, setQueryFilters] = useState(() => createQueryFilterState(queryScopeFromUrl()));
+  const [currentPage, setCurrentPage] = useState(1);
+  const { draft: draftFilters, applied: appliedFilters } = queryFilters;
+  const visiblePairs = useMemo(
+    () => filterExternalWorkPairs(pairs, appliedFilters.values, appliedFilters.keyword),
+    [appliedFilters, pairs],
+  );
+  const metrics = useMemo(() => {
+    const plannedCount = visiblePairs.filter((pair) => Boolean(pair.plannedRecord)).length;
+    const actualCount = visiblePairs.filter((pair) => Boolean(pair.actualRecord)).length;
+    const pendingActualCount = visiblePairs.filter((pair) =>
+      pair.plannedRecord?.status === "scheduled" && !pair.actualRecord,
+    ).length;
+    const lockedMonths = new Set(
+      visiblePairs.flatMap((pair) => {
+        const primary = pair.plannedRecord ?? pair.actualRecord;
+        return pair.locked && primary ? [`${primary.workplaceId}:${primary.yearMonth}`] : [];
+      }),
+    ).size;
+
+    return [
+      { label: "预定课时", value: `${plannedCount} 节`, sub: "当前查询结果", tone: "sky" as Tone, icon: CalendarDays },
+      { label: "实际课时", value: `${actualCount} 节`, sub: "用于打工结算", tone: "emerald" as Tone, icon: CheckCircle2 },
+      { label: "待生成实际", value: `${pendingActualCount} 节`, sub: "当前查询结果", tone: "amber" as Tone, icon: Clock },
+      { label: "已锁定月份", value: `${lockedMonths} 个`, sub: "当前查询结果中只读", tone: "slate" as Tone, icon: LockKeyhole },
+    ];
+  }, [visiblePairs]);
+  const totalPages = Math.max(1, Math.ceil(visiblePairs.length / FILTER_RESULT_PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pagedPairs = useMemo(
+    () => visiblePairs.slice((safeCurrentPage - 1) * FILTER_RESULT_PAGE_SIZE, safeCurrentPage * FILTER_RESULT_PAGE_SIZE),
+    [safeCurrentPage, visiblePairs],
+  );
+
+  useEffect(() => {
+    setQueryFilters(createQueryFilterState(queryScopeFromUrl()));
+    setCurrentPage(1);
+  }, [page.key]);
+
+  const resetFilters = () => {
+    setQueryFilters((current) => resetQueryFilterDraft(current, initialFilterScope()));
+  };
+  const applyFilters = () => {
+    const next = applyQueryFilterDraft(queryFilters);
+    setQueryFilters(next);
+    setCurrentPage(1);
+    replaceAppliedFilterQueryUrl(page.key, next.applied.values, next.applied.keyword);
+  };
+
   return (
     <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
       <PageHeader page={page} onPrimary={onPrimary} />
-      <FilterPanel filters={page.filters} />
+      <FilterPanel
+        filters={filters}
+        values={draftFilters.values}
+        keyword={draftFilters.keyword}
+        onFilterChange={(label, value) => setQueryFilters((current) => updateQueryFilterDraft(current, {
+          values: { ...current.draft.values, [label]: value },
+        }))}
+        onKeywordChange={(keyword) => setQueryFilters((current) => updateQueryFilterDraft(current, { keyword }))}
+        onQuery={applyFilters}
+        onReset={resetFilters}
+      />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {page.metrics.map((metric) => (
+        {metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -9777,7 +9901,7 @@ function ExternalWorkLessonsPage({
           <div>
             <h2 className="text-sm font-semibold text-foreground">外部课时记录</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              外部授课也按预定 / 实际左右配对；结算锁定前允许编辑和删除，锁定后只读。
+              外部授课也按预定 / 实际左右配对；当前筛选匹配 {visiblePairs.length} / {pairs.length} 组，结算锁定后只读。
             </p>
           </div>
           <ActionButton icon={Layers3} variant="secondary">
@@ -9789,8 +9913,8 @@ function ExternalWorkLessonsPage({
             <span>外部预定课时</span>
             <span>外部实际课时 / 生成实际课时区</span>
           </div>
-          {pairs.length > 0 ? (
-            pairs.map((pair) => (
+          {visiblePairs.length > 0 ? (
+            pagedPairs.map((pair) => (
               <div className="grid gap-3 xl:grid-cols-[1fr_1fr]" key={pair.id}>
                 <ExternalWorkFactCard label="预定课时" lesson={pair.planned} />
                 <ExternalWorkActualColumn pair={pair} onOpenDetail={onOpenDetail} onLessonAction={onLessonAction} isSubmitting={submittingPairId === pair.id} />
@@ -9802,9 +9926,54 @@ function ExternalWorkLessonsPage({
             </div>
           )}
         </div>
+        <PaginationControls
+          currentPage={safeCurrentPage}
+          totalRows={visiblePairs.length}
+          onPageChange={setCurrentPage}
+        />
       </section>
     </main>
   );
+}
+
+function filterExternalWorkPairs(
+  pairs: ExternalWorkPair[],
+  filters: Record<string, string>,
+  keyword: string,
+) {
+  const selectedMonth = filters["业务月份"];
+  const selectedWorkplace = filters["授课机构"];
+  const selectedRelation = filters["对应状态"];
+  const normalizedKeyword = keyword.trim().toLocaleLowerCase();
+
+  return pairs.filter((pair) => {
+    const lessons = [pair.plannedRecord, pair.actualRecord].filter(
+      (lesson): lesson is ExternalWorkLessonRecord => Boolean(lesson),
+    );
+    const primary = pair.plannedRecord ?? pair.actualRecord;
+
+    if (selectedMonth && primary?.yearMonth !== selectedMonth) return false;
+    if (selectedWorkplace && primary?.workplace.name !== selectedWorkplace) return false;
+    if (selectedRelation && pair.relation !== selectedRelation) return false;
+    if (!normalizedKeyword) return true;
+
+    return [
+      pair.planned.workplace,
+      pair.planned.instructor,
+      pair.planned.content,
+      pair.actual?.instructor,
+      pair.actual?.content,
+      pair.relation,
+      ...lessons.flatMap((lesson) => [
+        lesson.workplace.name,
+        lesson.instructorName,
+        lesson.lessonTitle,
+        lesson.content,
+        lesson.memo,
+        lesson.sourceType,
+      ]),
+    ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
+  });
 }
 
 const pages: Record<string, PageConfig> = {
@@ -10515,7 +10684,7 @@ const pages: Record<string, PageConfig> = {
       { label: "待生成实际", value: "2 节", sub: "锁定前可处理", tone: "amber", icon: Clock },
       { label: "已锁定月份", value: "1 个", sub: "只读保护", tone: "slate", icon: LockKeyhole },
     ],
-    filters: [commonFilters.month, { label: "授课机构", options: ["早稻田塾", "家庭教师", "夏期讲座"] }, commonFilters.status],
+    filters: [],
     columns: [],
     rows: [],
   },
@@ -10534,7 +10703,11 @@ const pages: Record<string, PageConfig> = {
       { label: "已生成收入", value: "1 条", sub: "待提交 Cash", tone: "sky", icon: ReceiptText },
       { label: "Cash 已确认", value: "1 条", sub: "写回收入记录", tone: "cyan", icon: CheckCircle2 },
     ],
-    filters: [commonFilters.month, { label: "授课机构", options: ["早稻田塾", "家庭教师", "夏期讲座"] }, commonFilters.status],
+    filters: [
+      { label: "业务月份", options: [] },
+      { label: "授课机构", options: [] },
+      { label: "状态", options: [] },
+    ],
     columns: [
       { key: "workplace", label: "机构" },
       { key: "lessons", label: "课时" },

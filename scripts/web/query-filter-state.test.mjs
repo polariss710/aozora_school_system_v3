@@ -74,15 +74,15 @@ test("only an applied query scope is serialized into the URL", () => {
 
 test("only a supported page and its declared filter fields are restored from the URL", () => {
   const restored = readAppliedFilterQuery(
-    "?filter-page=lesson-management&filter.月份=2026-07&filter.学生=青空太郎&filter.隐藏字段=ignore&filter-keyword=%E5%BE%85%E7%99%BB%E8%AE%B0",
-    ["lesson-management", "income-records"],
-    ["月份", "学生"],
+    "?filter-page=external-lessons&filter.%E4%B8%9A%E5%8A%A1%E6%9C%88%E4%BB%BD=2026-07&filter.%E6%8E%88%E8%AF%BE%E6%9C%BA%E6%9E%84=%E6%97%A9%E7%A8%BB%E7%94%B0%E5%A1%BE&filter.%E9%9A%90%E8%97%8F%E5%AD%97%E6%AE%B5=ignore&filter-keyword=%E5%BE%85%E7%99%BB%E8%AE%B0",
+    ["lesson-management", "external-lessons", "income-records"],
+    ["业务月份", "授课机构", "对应状态"],
   );
 
   assert.deepEqual(restored, {
-    pageKey: "lesson-management",
+    pageKey: "external-lessons",
     scope: {
-      values: { 月份: "2026-07", 学生: "青空太郎" },
+      values: { 业务月份: "2026-07", 授课机构: "早稻田塾" },
       keyword: "待登记",
     },
   });
