@@ -5206,7 +5206,7 @@ function buildStudentsPage(basePage: PageConfig, studentApi: StudentApiState): P
     ...basePage,
     description: "学生基础资料、业务归属和运营状态入口",
     metrics: [
-      { label: "在读学生", value: `${activeCount} 人`, sub: "来自 dev API", tone: "sky", icon: Users },
+      { label: "在读学生", value: `${activeCount} 人`, sub: "来自当前 API", tone: "sky", icon: Users },
       { label: "学生总数", value: `${studentApi.total} 人`, sub: "当前接口返回总数", tone: "emerald", icon: BadgeCheck },
       { label: "待补资料", value: "-", sub: "等待字段级契约补充", tone: "amber", icon: FileText },
       { label: "归档学生", value: `${archivedCount} 人`, sub: "保留历史结算", tone: "slate", icon: LockKeyhole },
@@ -5271,7 +5271,7 @@ function buildTeachersPage(basePage: PageConfig, teacherApi: TeacherApiState): P
     ...basePage,
     description: "老师基础资料、启用状态和当前生效规则概览",
     metrics: [
-      { label: "合作老师", value: `${activeCount} 人`, sub: "来自 dev API", tone: "emerald", icon: GraduationCap },
+      { label: "合作老师", value: `${activeCount} 人`, sub: "来自当前 API", tone: "emerald", icon: GraduationCap },
       { label: "老师总数", value: `${teacherApi.total} 人`, sub: "当前接口返回总数", tone: "sky", icon: FileText },
       { label: "待补信息", value: "-", sub: "等待字段级契约补充", tone: "amber", icon: ShieldCheck },
       { label: "归档老师", value: `${archivedCount} 人`, sub: "保留历史工资", tone: "slate", icon: LockKeyhole },
@@ -5475,7 +5475,7 @@ function buildSettingsPage(basePage: PageConfig, settingsApi: SettingsApiState):
     ...baseSettingsPage,
     description: "真实 API 设置列表；修改通过既有权限与审计接口处理",
     metrics: [
-      { label: "业务归属", value: `${settingsApi.counts.businessEntities} 个`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
+      { label: "业务归属", value: `${settingsApi.counts.businessEntities} 个`, sub: "来自当前 API", tone: "sky", icon: BriefcaseBusiness },
       { label: "School 账户", value: `${settingsApi.counts.accounts} 个`, sub: "法人 + 垫付账户", tone: "emerald", icon: Landmark },
       { label: "科目", value: `${settingsApi.counts.subjects} 个`, sub: "课程和工资规则基础", tone: "violet", icon: BookOpen },
       { label: "外部授课机构", value: `${settingsApi.counts.externalWorkplaces} 个`, sub: `设置合计 ${total} 条`, tone: "amber", icon: Building2 },
@@ -5845,7 +5845,7 @@ function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListStat
         {
           label: "账单读取",
           value: tuitionApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: tuitionApi.status === "error" ? "rose" : "amber",
           icon: ReceiptText,
         },
@@ -5871,7 +5871,7 @@ function buildTuitionBillsPage(basePage: PageConfig, tuitionApi: FinanceListStat
   return {
     ...readonlyBasePage,
     metrics: [
-      { label: "账单记录", value: `${tuitionApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: ReceiptText },
+      { label: "账单记录", value: `${tuitionApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: ReceiptText },
       { label: "已生成", value: `${generatedCount} 条`, sub: "待生成收入", tone: "amber", icon: Clock },
       { label: "收入已生成", value: `${incomeCreatedCount} 条`, sub: "已进入收入链路", tone: "emerald", icon: CheckCircle2 },
       { label: "JPY 应收", value: money.jpy(activeJpyTotal), sub: "未作废账单合计", tone: "cyan", icon: Banknote },
@@ -6011,7 +6011,7 @@ function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: Financ
         {
           label: "结算读取",
           value: settlementApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: settlementApi.status === "error" ? "rose" : "amber",
           icon: ClipboardCheck,
         },
@@ -6037,7 +6037,7 @@ function buildStudentSettlementsPage(basePage: PageConfig, settlementApi: Financ
   return {
     ...readonlyBasePage,
     metrics: [
-      { label: "结算记录", value: `${settlementApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: ClipboardCheck },
+      { label: "结算记录", value: `${settlementApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: ClipboardCheck },
       { label: "已锁定", value: `${lockedCount} 条`, sub: "可进入下月账单", tone: "emerald", icon: LockKeyhole },
       { label: "已撤销", value: `${revokedCount} 条`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
       { label: "CNY 结转", value: money.cny(carryoverTotal), sub: "未撤销合计", tone: "cyan", icon: RefreshCw },
@@ -6155,7 +6155,7 @@ function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState)
         {
           label: "规则读取",
           value: wageRuleApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: wageRuleApi.status === "error" ? "rose" : "amber",
           icon: FileText,
         },
@@ -6173,7 +6173,7 @@ function buildWageRulesPage(basePage: PageConfig, wageRuleApi: FinanceListState)
   return {
     ...apiBasePage,
     metrics: [
-      { label: "工资规则", value: `${wageRuleApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: FileText },
+      { label: "工资规则", value: `${wageRuleApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: FileText },
       { label: "生效中", value: `${activeCount} 条`, sub: "参与工资快照", tone: "emerald", icon: CheckCircle2 },
       { label: "停用", value: `${inactiveCount} 条`, sub: "暂不参与计算", tone: "amber", icon: Clock },
       { label: "归档", value: `${archivedCount} 条`, sub: "保留历史追踪", tone: "slate", icon: LockKeyhole },
@@ -6247,7 +6247,7 @@ function buildTeacherWagesPage(basePage: PageConfig, wageSnapshotApi: FinanceLis
         {
           label: "快照读取",
           value: wageSnapshotApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: wageSnapshotApi.status === "error" ? "rose" : "amber",
           icon: GraduationCap,
         },
@@ -6370,7 +6370,7 @@ function buildWageImportPage(basePage: PageConfig, wageImportApi: FinanceListSta
         {
           label: "勤务表读取",
           value: wageImportApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: wageImportApi.status === "error" ? "rose" : "amber",
           icon: Download,
         },
@@ -6522,7 +6522,7 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
         {
           label: "打工课时",
           value: externalLessonApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: externalLessonApi.status === "error" ? "rose" : "amber",
           icon: BookOpen,
         },
@@ -6545,7 +6545,7 @@ function buildExternalWorkLessonsPage(basePage: PageConfig, externalLessonApi: A
     ...basePage,
     description: "真实 API 打工课时；锁定前可新增、编辑、删除和登记实际课时",
     metrics: [
-      { label: "预定课时", value: `${plannedCount} 节`, sub: "来自 dev API", tone: "sky", icon: CalendarDays },
+      { label: "预定课时", value: `${plannedCount} 节`, sub: "来自当前 API", tone: "sky", icon: CalendarDays },
       { label: "实际课时", value: `${actualCount} 节`, sub: "用于打工结算", tone: "emerald", icon: CheckCircle2 },
       { label: "待生成实际", value: `${pendingActualCount} 节`, sub: "第二层再接动作", tone: "amber", icon: Clock },
       { label: "已取消", value: `${cancelledCount} 节`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
@@ -6731,7 +6731,7 @@ function buildExternalWorkSettlementsPage(basePage: PageConfig, settlementApi: F
         {
           label: "结算读取",
           value: settlementApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: settlementApi.status === "error" ? "rose" : "amber",
           icon: BriefcaseBusiness,
         },
@@ -6767,7 +6767,7 @@ function buildExternalWorkSettlementsPage(basePage: PageConfig, settlementApi: F
     ...readonlyBasePage,
     filters,
     metrics: [
-      { label: "打工结算", value: `${settlementApi.total} 组`, sub: "来自 dev API", tone: "sky", icon: BriefcaseBusiness },
+      { label: "打工结算", value: `${settlementApi.total} 组`, sub: "来自当前 API", tone: "sky", icon: BriefcaseBusiness },
       { label: "已锁定", value: `${lockedCount} 组`, sub: "可生成收入", tone: "emerald", icon: LockKeyhole },
       { label: "收入已生成", value: `${incomeCreatedCount} 组`, sub: "进入收入链路", tone: "cyan", icon: ReceiptText },
       { label: "已撤销", value: `${revokedCount} 组`, sub: "保留审计追踪", tone: "slate", icon: RotateCcw },
@@ -6861,7 +6861,7 @@ function buildAuditPage(basePage: PageConfig, auditApi: FinanceListState): PageC
         {
           label: "审计读取",
           value: auditApi.status === "error" ? "失败" : "读取中",
-          sub: "来自 dev API",
+          sub: "来自当前 API",
           tone: auditApi.status === "error" ? "rose" : "amber",
           icon: History,
         },
@@ -6880,7 +6880,7 @@ function buildAuditPage(basePage: PageConfig, auditApi: FinanceListState): PageC
   return {
     ...readonlyBasePage,
     metrics: [
-      { label: "审计事件", value: `${auditApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: History },
+      { label: "审计事件", value: `${auditApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: History },
       { label: "高风险", value: `${highRiskCount} 条`, sub: "高 / 严重", tone: "rose", icon: ShieldCheck },
       { label: "锁定类动作", value: `${lockLikeCount} 条`, sub: "action 包含 lock", tone: "emerald", icon: LockKeyhole },
       { label: "今日操作", value: `${todayCount} 条`, sub: today, tone: "cyan", icon: Clock },
@@ -7076,7 +7076,7 @@ function buildCashInboundPage(basePage: PageConfig, cashInboundApi: FinanceListS
     batchAction: undefined,
     selectable: false,
     metrics: [
-      { label: "入站事件", value: `${cashInboundApi.total} 条`, sub: "来自 dev API", tone: "cyan", icon: WalletCards },
+      { label: "入站事件", value: `${cashInboundApi.total} 条`, sub: "来自当前 API", tone: "cyan", icon: WalletCards },
       { label: "已入账", value: `${postedCount} 条`, sub: "已生成账户流水", tone: "emerald", icon: CheckCircle2 },
       { label: "已冲销", value: `${reversedInboundCount} 条`, sub: "入站已撤销", tone: "slate", icon: RotateCcw },
       { label: "关联收入", value: `${linkedCount} 条`, sub: "联动收入状态", tone: "sky", icon: ReceiptText },
@@ -7102,7 +7102,7 @@ function buildAccountLedgerPage(basePage: PageConfig, accountLedgerApi: FinanceL
     batchAction: undefined,
     selectable: false,
     metrics: [
-      { label: "流水总数", value: `${accountLedgerApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: History },
+      { label: "流水总数", value: `${accountLedgerApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: History },
       { label: "入金", value: `${inCount} 条`, sub: "账户增加", tone: "emerald", icon: WalletCards },
       { label: "出金", value: `${outCount} 条`, sub: "账户减少", tone: "amber", icon: Banknote },
       { label: "已冲销", value: `${reversedCount} 条`, sub: "反向保留记录", tone: "slate", icon: RotateCcw },
@@ -7572,7 +7572,7 @@ function buildReimbursementsPage(basePage: PageConfig, reimbursementApi: Finance
     batchAction: undefined,
     selectable: false,
     metrics: [
-      { label: "报销记录", value: `${reimbursementApi.total} 条`, sub: "来自 dev API", tone: "sky", icon: WalletCards },
+      { label: "报销记录", value: `${reimbursementApi.total} 条`, sub: "来自当前 API", tone: "sky", icon: WalletCards },
       { label: "已完成", value: `${completedCount} 条`, sub: "双边流水已生成", tone: "emerald", icon: CheckCircle2 },
       { label: "已作废", value: `${voidedCount} 条`, sub: "双边流水已冲销", tone: "slate", icon: RotateCcw },
       { label: "JPY 完成额", value: money.jpy(jpyTotal), sub: "当前列表合计", tone: "cyan", icon: Landmark },
@@ -9105,7 +9105,7 @@ function LessonActualFormModal({
             <p className="mt-1 text-xs text-muted-foreground">
               {planned
                 ? `${planned.student.name} / ${planned.subject.name} / 原业务月 ${planned.yearMonth}`
-                : "请选择来自 dev API 的预定课时"}
+                : "请选择来自当前 API 的预定课时"}
             </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted">
@@ -12511,7 +12511,7 @@ export default function App() {
     }
 
     if (!authSession || !pair.plannedRecord) {
-      setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的预定课时。" });
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自当前 API 的预定课时。" });
       return;
     }
 
@@ -12589,7 +12589,7 @@ export default function App() {
 
   const submitLessonActualForm = async (input: GenerateActualLessonInput) => {
     if (!authSession || !lessonActualDialog?.pair.plannedRecord) {
-      setLessonActualError("请先使用真实 API 登录，并选择来自 dev API 的预定课时。");
+      setLessonActualError("请先使用真实 API 登录，并选择来自当前 API 的预定课时。");
       return;
     }
 
@@ -12979,7 +12979,7 @@ export default function App() {
       actionKey === "tuitionBill.void"
     ) {
       if (!authSession || row.apiRef?.resource !== "tuitionBill" || !row.tuitionBillRecord) {
-        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的学费账单。" });
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自当前 API 的学费账单。" });
         return;
       }
 
@@ -13041,7 +13041,7 @@ export default function App() {
 
     if (actionKey === "studentSettlement.relock" || actionKey === "studentSettlement.revoke") {
       if (!authSession || row.apiRef?.resource !== "studentSettlement" || !row.studentSettlementRecord) {
-        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的学生月度结算。" });
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自当前 API 的学生月度结算。" });
         return;
       }
 
@@ -13079,7 +13079,7 @@ export default function App() {
 
     if (actionKey === "teacherWageRule.edit") {
       if (!authSession || !row.teacherWageRuleRecord) {
-        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的工资规则。" });
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自当前 API 的工资规则。" });
         return;
       }
       setTeacherWageRuleError(null);
@@ -13097,7 +13097,7 @@ export default function App() {
       actionKey === "teacherWageSnapshot.viewExpense"
     ) {
       if (!authSession || !row.teacherWageSnapshotRecord) {
-        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自 dev API 的工资快照。" });
+        setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择来自当前 API 的工资快照。" });
         return;
       }
       const snapshot = row.teacherWageSnapshotRecord;
