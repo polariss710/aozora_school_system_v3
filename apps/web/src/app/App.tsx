@@ -64,6 +64,8 @@ import {
   createTeacher,
   createAccount,
   createBusinessEntity,
+  createAccountTransactionFromExpense,
+  createAccountTransactionFromIncome,
   createExternalWorkplace,
   createSubject,
   createExternalWorkPlannedLesson,
@@ -153,6 +155,7 @@ import type {
   ApiHealthSnapshot,
   AccountRecord,
   AccountTransferInput,
+  CreateAccountTransactionFromRecordInput,
   AccountWriteInput,
   AccountTransactionRecord,
   AuditEventRecord,
@@ -361,6 +364,7 @@ type DrawerActionKey =
   | "settings.restore"
   | "accountLedger.reverse"
   | "accountLedger.voidTransfer"
+  | "finance.createAccountTransaction"
   | "cash.submit"
   | "cash.withdraw"
   | "cashInbound.reject"
@@ -1556,6 +1560,10 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
 
     if (row.financeRecord && canSubmitCashRequest(row.financeRecord.recordStatus, row.financeRecord.cashStatus)) {
       actions.push({ label: "提交 Cash 请求", icon: Send, variant: "primary", key: "cash.submit" });
+    }
+
+    if (row.financeRecord && canCreateDirectAccountTransaction(row.financeRecord)) {
+      actions.push({ label: "直接记录到 School 账户", icon: Landmark, variant: "secondary", key: "finance.createAccountTransaction" });
     }
 
     if (
@@ -3592,6 +3600,73 @@ function AccountLedgerFormModal({
         <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
           <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
           <button type="submit" disabled={isSubmitting || !canSubmit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{isSubmitting ? "保存中" : "确认保存"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function FinanceAccountPostingModal({
+  state,
+  accounts,
+  isSubmitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  state: FinanceAccountPostingDialogState;
+  accounts: AccountRecord[];
+  isSubmitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (input: CreateAccountTransactionFromRecordInput) => void;
+}) {
+  const finance = state.row.financeRecord;
+  const matchingAccounts = accounts.filter((account) => account.status === "active" && account.currency === finance?.originalCurrency);
+  const [accountId, setAccountId] = useState(matchingAccounts[0]?.id ?? "");
+  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [memo, setMemo] = useState("");
+  const direction = finance?.kind === "income" ? "入金" : "出金";
+  const amount = finance ? formatApiCurrencyAmount(finance.originalCurrency, finance.amountJpy, finance.amountCny) : "-";
+  const canSubmit = Boolean(finance && accountId && transactionDate);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+    onSubmit({ accountId, transactionDate, memo: normalizeOptionalFormValue(memo) });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} aria-label="关闭弹窗" />
+      <form onSubmit={submit} className="relative z-10 flex w-[min(580px,94vw)] flex-col rounded-xl border border-border bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">直接记录到 School 账户</h2>
+            <p className="mt-1 text-xs text-muted-foreground">金额取自原手动{finance?.kind === "income" ? "收入" : "支出"}单据，不能在此修改。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label="关闭"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="grid gap-4 px-6 py-5">
+          <section className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm">
+            <div className="font-medium text-foreground">{state.row.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{direction} · {amount} · {finance?.originalCurrency}</div>
+          </section>
+          {matchingAccounts.length === 0 ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">没有同币种的 active School 账户，不能直接入账。请改走 Cash 或先在基础设置维护账户。</div>
+          ) : (
+            <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">入账账户</span><select value={accountId} onChange={(event) => setAccountId(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15">{matchingAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label>
+          )}
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">入账日期</span><input required type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" /></label>
+          <label className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">备注</span><textarea value={memo} onChange={(event) => setMemo(event.target.value)} className="min-h-[84px] resize-none rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition focus:border-[#1687D9] focus:ring-2 focus:ring-[#1687D9]/15" placeholder="选填" /></label>
+          <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-800">保存后原单据进入“已生成流水”状态，不能再提交 Cash；如需修正，请从对应业务单据与账户流水的专门动作处理。</div>
+          {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/10 px-6 py-4">
+          <ActionButton variant="quiet" onClick={onClose}>取消</ActionButton>
+          <button type="submit" disabled={isSubmitting || !canSubmit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#1687D9] px-3 text-xs font-medium text-white transition hover:bg-[#0f74bd] disabled:cursor-not-allowed disabled:bg-[#8cbfe3]">{isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{isSubmitting ? "入账中" : "确认入账"}</button>
         </div>
       </form>
     </div>
@@ -7185,6 +7260,17 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
   const cashStatus = getCashStatusLabel(record.cashStatus);
   const canVoid = canVoidIncomeRecord(record.sourceType, record.recordStatus, record.cashStatus);
   const canSubmitCash = canSubmitCashRequest(record.recordStatus, record.cashStatus);
+  const canCreateAccountTransaction = canCreateDirectAccountTransaction({
+    kind: "income",
+    sourceType: record.sourceType,
+    sourceLabel,
+    yearMonth: record.yearMonth,
+    recordStatus: record.recordStatus,
+    cashStatus: record.cashStatus,
+    originalCurrency: record.originalCurrency,
+    amountJpy: parseApiAmount(record.originalAmountJpy),
+    amountCny: parseApiAmount(record.originalAmountCny),
+  });
 
   return {
     id: `income-${record.id}`,
@@ -7200,7 +7286,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       record.recordStatus === "historical_confirmed"
         ? { targetTable: "income_records", targetId: record.id }
         : undefined,
-    readOnlyActions: !canVoid && !canSubmitCash && !record.receiptEligible && !record.receiptIssued,
+    readOnlyActions: !canVoid && !canSubmitCash && !canCreateAccountTransaction && !record.receiptEligible && !record.receiptIssued,
     financeRecord: {
       kind: "income",
       sourceType: record.sourceType,
@@ -7264,6 +7350,17 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
   const cashStatus = getCashStatusLabel(record.cashStatus);
   const canVoid = canVoidExpenseRecord(record.sourceType, record.recordStatus, record.cashStatus);
   const canSubmitCash = canSubmitCashRequest(record.recordStatus, record.cashStatus);
+  const canCreateAccountTransaction = canCreateDirectAccountTransaction({
+    kind: "expense",
+    sourceType: record.sourceType,
+    sourceLabel: category,
+    yearMonth: record.yearMonth,
+    recordStatus: record.recordStatus,
+    cashStatus: record.cashStatus,
+    originalCurrency: record.originalCurrency,
+    amountJpy: parseApiAmount(record.originalAmountJpy),
+    amountCny: parseApiAmount(record.originalAmountCny),
+  });
 
   return {
     id: `expense-${record.id}`,
@@ -7279,7 +7376,7 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
       record.recordStatus === "historical_confirmed"
         ? { targetTable: "expense_records", targetId: record.id }
         : undefined,
-    readOnlyActions: !canVoid && !canSubmitCash,
+    readOnlyActions: !canVoid && !canSubmitCash && !canCreateAccountTransaction,
     financeRecord: {
       kind: "expense",
       sourceType: record.sourceType,
@@ -7597,6 +7694,14 @@ function canSubmitCashRequest(recordStatus: string, cashStatus: string) {
   return recordStatus === "pending" && ["not_requested", "cash_rejected"].includes(cashStatus);
 }
 
+function canCreateDirectAccountTransaction(finance: NonNullable<DataRow["financeRecord"]>) {
+  return (
+    (finance.sourceType === "manual_income" || finance.sourceType === "manual_expense") &&
+    finance.recordStatus === "pending" &&
+    finance.cashStatus === "not_requested"
+  );
+}
+
 function getAccountTransactionStatusView(status: string): { label: string; tone: Tone } {
   if (status === "reversed") {
     return { label: "已冲销", tone: "slate" };
@@ -7825,6 +7930,7 @@ type AccountLedgerDialogState = { mode: "manual" } | { mode: "transfer" };
 type AccountLedgerFormInput =
   | { mode: "manual"; input: ManualAccountTransactionInput }
   | { mode: "transfer"; input: AccountTransferInput };
+type FinanceAccountPostingDialogState = { row: DataRow };
 
 const lessonManagementPage: PageConfig = {
   key: "lesson-management",
@@ -11153,6 +11259,9 @@ export default function App() {
   const [accountLedgerDialog, setAccountLedgerDialog] = useState<AccountLedgerDialogState | null>(null);
   const [isAccountLedgerSubmitting, setIsAccountLedgerSubmitting] = useState(false);
   const [accountLedgerMutationError, setAccountLedgerMutationError] = useState<string | null>(null);
+  const [financeAccountPostingDialog, setFinanceAccountPostingDialog] = useState<FinanceAccountPostingDialogState | null>(null);
+  const [isFinanceAccountPosting, setIsFinanceAccountPosting] = useState(false);
+  const [financeAccountPostingError, setFinanceAccountPostingError] = useState<string | null>(null);
   const [tuitionReceiptDialog, setTuitionReceiptDialog] = useState<TuitionReceiptDialogState | null>(null);
   const [isTuitionReceiptIssuing, setIsTuitionReceiptIssuing] = useState(false);
   const [cashRequestDialog, setCashRequestDialog] = useState<CashRequestDialogState | null>(null);
@@ -12464,6 +12573,35 @@ export default function App() {
     }
   };
 
+  const submitFinanceAccountPosting = async (input: CreateAccountTransactionFromRecordInput) => {
+    const row = financeAccountPostingDialog?.row;
+    if (!authSession || !row?.apiRef || !row.financeRecord) {
+      setFinanceAccountPostingError("请先使用真实 API 登录，并选择可直接入账的手动单据。");
+      return;
+    }
+
+    setIsFinanceAccountPosting(true);
+    setFinanceAccountPostingError(null);
+
+    try {
+      if (row.financeRecord.kind === "income") {
+        await createAccountTransactionFromIncome(authSession.accessToken, row.apiRef.id, input);
+      } else {
+        await createAccountTransactionFromExpense(authSession.accessToken, row.apiRef.id, input);
+      }
+
+      setFinanceAccountPostingDialog(null);
+      setDetailRow(null);
+      setFinanceReloadKey((current) => current + 1);
+      setWorkflowReloadKey((current) => current + 1);
+      setActionNotice({ tone: "emerald", text: "原单据已直接入账，账户流水和审计记录已生成。" });
+    } catch (error) {
+      setFinanceAccountPostingError(formatApiError(error));
+    } finally {
+      setIsFinanceAccountPosting(false);
+    }
+  };
+
   const handleDrawerAction = async (actionKey: DrawerActionKey, row: DataRow) => {
     if (actionKey === "migrationAudit.view") {
       if (!authSession || !row.migrationAuditTarget) {
@@ -12487,6 +12625,16 @@ export default function App() {
           error: formatApiError(error),
         });
       }
+      return;
+    }
+
+    if (actionKey === "finance.createAccountTransaction") {
+      if (!authSession || !row.financeRecord || !row.apiRef || !canCreateDirectAccountTransaction(row.financeRecord)) {
+        setActionNotice({ tone: "amber", text: "只有尚未提交 Cash 的 pending 手动收入或支出可以直接记录到 School 账户。" });
+        return;
+      }
+      setFinanceAccountPostingError(null);
+      setFinanceAccountPostingDialog({ row });
       return;
     }
 
@@ -13450,6 +13598,16 @@ export default function App() {
           error={accountLedgerMutationError}
           onClose={() => setAccountLedgerDialog(null)}
           onSubmit={submitAccountLedgerForm}
+        />
+      )}
+      {financeAccountPostingDialog && (
+        <FinanceAccountPostingModal
+          state={financeAccountPostingDialog}
+          accounts={settingsApi.rows.flatMap((row) => row.accountRecord ? [row.accountRecord] : [])}
+          isSubmitting={isFinanceAccountPosting}
+          error={financeAccountPostingError}
+          onClose={() => setFinanceAccountPostingDialog(null)}
+          onSubmit={submitFinanceAccountPosting}
         />
       )}
       {plannedLessonDialog && (

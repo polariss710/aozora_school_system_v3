@@ -494,6 +494,12 @@ export interface AccountTransferInput {
   memo?: string | null;
 }
 
+export interface CreateAccountTransactionFromRecordInput {
+  accountId: string;
+  transactionDate: string;
+  memo?: string | null;
+}
+
 export interface ReimbursementRecord {
   id: string;
   expenseRecordId: string;
@@ -2019,6 +2025,22 @@ export function createManualAccountTransaction(accessToken: string, input: Manua
 
 export function createAccountTransfer(accessToken: string, input: AccountTransferInput) {
   return requestJson<{ accountTransfer: { id: string }; idempotent: boolean }>("/accounts/transfers", {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function createAccountTransactionFromIncome(accessToken: string, incomeRecordId: string, input: CreateAccountTransactionFromRecordInput) {
+  return requestJson<{ accountTransaction: AccountTransactionRecord }>(`/accounts/transactions/from-income/${incomeRecordId}`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify(input),
+  });
+}
+
+export function createAccountTransactionFromExpense(accessToken: string, expenseRecordId: string, input: CreateAccountTransactionFromRecordInput) {
+  return requestJson<{ accountTransaction: AccountTransactionRecord }>(`/accounts/transactions/from-expense/${expenseRecordId}`, {
     method: "POST",
     headers: authorizedHeaders(accessToken),
     body: JSON.stringify(input),

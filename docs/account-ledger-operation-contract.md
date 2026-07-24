@@ -16,6 +16,7 @@
 | --- | --- | --- | --- |
 | 新增手工流水 | active 账户、入/出方向、日期、标题、与账户一致的币种和金额、备注 | `POST /accounts/transactions/manual` | 创建 active 流水；后端记录 `account_transaction.create_manual` 高风险审计 |
 | 新增内部调拨 | 不同的 active 出/入账户、日期、币种和金额、备注 | `POST /accounts/transfers` | 原子生成双边流水和 transfer；后端记录 `account_transfer.create` 高风险审计 |
+| 手动收入/支出直接入账 | 仅 `pending + not_requested` 的手动单据；同币种 active School 账户、日期、备注 | `POST /accounts/transactions/from-income/:id` 或 `from-expense/:id` | 后端按原单据金额生成一条流水并推进该单据为 `account_transaction_created`，记录高风险审计 |
 | 冲销手工流水 | 可选原因 | `POST /accounts/transactions/:id/reverse` | 原流水保留并标记 `reversed`；后端记录 `account_transaction.reverse` critical 审计 |
 | 作废内部调拨 | 可选原因 | `POST /accounts/transfers/:id/void` | 双边原流水均标记 `reversed`，transfer 保留并标记 `voided`；后端记录 `account_transfer.void` critical 审计 |
 
@@ -30,6 +31,5 @@
 
 ## 不包含
 
-- 从 pending 手动收入/支出生成账户流水的入口（仍属于收入/支出详情页后续动作）。
 - Cash 确认、Cash 入站创建、FX 回写、历史导入流水编辑或冲销。
 - 生产数据验证、生产环境配置与数据库 migration。
