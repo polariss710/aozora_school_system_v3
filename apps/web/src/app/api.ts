@@ -1704,7 +1704,7 @@ export function confirmTeacherAttendanceWorkbookImport(
 }
 
 export function listExternalWorkLessons(accessToken: string) {
-  return requestJson<ListResponse<ExternalWorkLessonRecord>>("/external-work/lessons?limit=100", {
+  return requestJson<ListResponse<ExternalWorkLessonRecord>>("/external-work/lessons?limit=500", {
     headers: authorizedHeaders(accessToken),
   });
 }
