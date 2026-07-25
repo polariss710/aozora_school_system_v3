@@ -319,6 +319,9 @@ interface DataRow {
   teacherWageRuleRecord?: TeacherWageRuleRecord;
   teacherWageSnapshotRecord?: TeacherWageSnapshotRecord;
   teacherAttendanceGroup?: TeacherAttendanceGroup;
+  externalWorkLessonRecord?: ExternalWorkLessonRecord;
+  externalWorkLessonPairId?: string;
+  externalWorkLessonLocked?: boolean;
   teacherRecord?: TeacherRecord;
   businessEntityRecord?: BusinessEntityRecord;
   accountRecord?: AccountRecord;
@@ -344,6 +347,7 @@ interface DataRow {
     amountCny: number | null;
     receiptEligible?: boolean;
     receiptIssued?: boolean;
+    sourceId?: string | null;
   };
   cashRequest?: {
     status: string;
@@ -362,9 +366,13 @@ type DrawerActionKey =
   | "student.edit"
   | "student.archive"
   | "student.restore"
+  | "student.viewLessons"
+  | "student.viewBills"
   | "teacher.edit"
   | "teacher.archive"
   | "teacher.restore"
+  | "teacher.viewWageRules"
+  | "teacher.viewWages"
   | "settings.edit"
   | "settings.archive"
   | "settings.restore"
@@ -377,8 +385,11 @@ type DrawerActionKey =
   | "tuitionBill.generate"
   | "tuitionBill.generateIncome"
   | "tuitionBill.void"
+  | "tuitionBill.viewLessons"
+  | "tuitionBill.viewIncome"
   | "studentSettlement.relock"
   | "studentSettlement.revoke"
+  | "studentSettlement.viewLessons"
   | "teacherWageRule.edit"
   | "teacherWageSnapshot.relock"
   | "teacherWageSnapshot.revoke"
@@ -388,6 +399,10 @@ type DrawerActionKey =
   | "teacherWageSnapshot.viewExpense"
   | "teacherAttendance.export"
   | "teacherAttendance.import"
+  | "teacherAttendance.viewSnapshots"
+  | "externalWorkLesson.generateActual"
+  | "externalWorkLesson.edit"
+  | "externalWorkLesson.delete"
   | "externalSettlement.relock"
   | "externalSettlement.revoke"
   | "externalSettlement.generateIncome"
@@ -396,7 +411,8 @@ type DrawerActionKey =
   | "income.void"
   | "expense.void"
   | "reimbursement.void"
-  | "migrationAudit.view";
+  | "migrationAudit.view"
+  | "audit.view";
 
 interface DrawerAction {
   label: string;
@@ -1479,12 +1495,39 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       actions.push({ label: "作废整笔内部调拨", icon: RotateCcw, variant: "warning", key: "accountLedger.voidTransfer" });
     }
 
-    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" });
     return [{ title: "账户流水操作", actions }];
   }
 
+  if (row.apiRef?.resource === "externalWorkLesson" && row.externalWorkLessonRecord) {
+    const lesson = row.externalWorkLessonRecord;
+    const isLocked = Boolean(row.externalWorkLessonLocked);
+    const actions: DrawerAction[] = [];
+
+    if (lesson.lessonType === "planned" && !isLocked) {
+      actions.push({ label: "生成实际课时", icon: ClipboardCheck, variant: "primary", key: "externalWorkLesson.generateActual" });
+    }
+
+    if (!isLocked) {
+      actions.push({ label: "编辑课时", icon: PencilLine, variant: "secondary", key: "externalWorkLesson.edit" });
+      actions.push({ label: "删除课时", icon: X, variant: "danger", key: "externalWorkLesson.delete" });
+    }
+
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" });
+    return [{ title: "外部课时操作", actions }];
+  }
+
   if (row.readOnlyActions) {
-    return migrationAuditActionGroup;
+    if (row.apiRef?.resource === "auditEvent") {
+      return migrationAuditActionGroup;
+    }
+    return [
+      {
+        title: "只读记录",
+        actions: [{ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" }],
+      },
+      ...migrationAuditActionGroup,
+    ];
   }
 
   if (row.settingCategory) {
@@ -1498,7 +1541,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         actions: [
           { label: "编辑基础信息", icon: PencilLine, variant: "primary", key: "settings.edit" },
           statusAction,
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
@@ -1509,9 +1552,9 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const actions: DrawerAction[] = canManageCashRequest
       ? [
           { label: "撤回请求", icon: RotateCcw, variant: "warning", key: "cash.withdraw" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ]
-      : [{ label: "查看操作记录", icon: History, variant: "quiet" }];
+      : [{ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" }];
 
     return [
       {
@@ -1526,9 +1569,9 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const actions: DrawerAction[] = canRejectInbound
       ? [
           { label: "冲销入站", icon: RotateCcw, variant: "danger", key: "cashInbound.reject" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ]
-      : [{ label: "查看操作记录", icon: History, variant: "quiet" }];
+      : [{ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" }];
 
     return [
       {
@@ -1543,9 +1586,9 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
     const actions: DrawerAction[] = canVoidReimbursement
       ? [
           { label: "作废报销", icon: X, variant: "danger", key: "reimbursement.void" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ]
-      : [{ label: "查看操作记录", icon: History, variant: "quiet" }];
+      : [{ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" }];
 
     return [
       {
@@ -1593,7 +1636,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       });
     }
 
-    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" });
 
     return [
       {
@@ -1615,10 +1658,10 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         title: "学生操作",
         actions: [
           { label: "编辑基础信息", icon: PencilLine, variant: "primary", key: "student.edit" },
-          { label: "查看该学生课时", icon: CalendarDays, variant: "secondary" },
-          { label: "查看该学生账单", icon: ReceiptText, variant: "secondary" },
+          { label: "查看该学生课时", icon: CalendarDays, variant: "secondary", key: "student.viewLessons" },
+          { label: "查看该学生账单", icon: ReceiptText, variant: "secondary", key: "student.viewBills" },
           statusAction,
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
@@ -1633,8 +1676,8 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
             { label: "生成收入记录", icon: ReceiptText, variant: "primary", key: "tuitionBill.generateIncome" },
             { label: "重新生成账单", icon: RefreshCw, variant: "secondary", key: "tuitionBill.generate" },
             { label: "作废账单", icon: X, variant: "danger", key: "tuitionBill.void" },
-            { label: "查看来源课时", icon: CalendarDays, variant: "quiet" },
-            { label: "查看操作记录", icon: History, variant: "quiet" },
+            { label: "查看来源课时", icon: CalendarDays, variant: "quiet", key: "tuitionBill.viewLessons" },
+            { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
           ],
         },
       ];
@@ -1646,8 +1689,8 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
           title: "学费账单操作",
           actions: [
             { label: "重新生成账单", icon: RefreshCw, variant: "primary", key: "tuitionBill.generate" },
-            { label: "查看来源课时", icon: CalendarDays, variant: "quiet" },
-            { label: "查看操作记录", icon: History, variant: "quiet" },
+            { label: "查看来源课时", icon: CalendarDays, variant: "quiet", key: "tuitionBill.viewLessons" },
+            { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
           ],
         },
       ];
@@ -1657,10 +1700,9 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       {
         title: "学费账单操作",
         actions: [
-          { label: "查看 Cash 回写", icon: Banknote, variant: "secondary" },
-          { label: "导出账单 PDF", icon: Download, variant: "quiet" },
-          { label: "查看来源课时", icon: CalendarDays, variant: "quiet" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看收入记录", icon: Banknote, variant: "secondary", key: "tuitionBill.viewIncome" },
+          { label: "查看来源课时", icon: CalendarDays, variant: "quiet", key: "tuitionBill.viewLessons" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
@@ -1673,8 +1715,8 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
           title: "月度结算操作",
           actions: [
             { label: "撤销结算", icon: RotateCcw, variant: "warning", key: "studentSettlement.revoke" },
-            { label: "查看课时明细", icon: CalendarDays, variant: "quiet" },
-            { label: "查看操作记录", icon: History, variant: "quiet" },
+            { label: "查看课时明细", icon: CalendarDays, variant: "quiet", key: "studentSettlement.viewLessons" },
+            { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
           ],
         },
       ];
@@ -1685,8 +1727,8 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         title: "月度结算操作",
         actions: [
           { label: "重新预览并锁定", icon: LockKeyhole, variant: "primary", key: "studentSettlement.relock" },
-          { label: "查看课时明细", icon: CalendarDays, variant: "quiet" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看课时明细", icon: CalendarDays, variant: "quiet", key: "studentSettlement.viewLessons" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
@@ -1703,10 +1745,10 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         title: "老师操作",
         actions: [
           { label: "编辑老师资料", icon: PencilLine, variant: "primary", key: "teacher.edit" },
-          { label: "查看工资规则", icon: FileText, variant: "secondary" },
-          { label: "查看工资结算", icon: GraduationCap, variant: "secondary" },
+          { label: "查看工资规则", icon: FileText, variant: "secondary", key: "teacher.viewWageRules" },
+          { label: "查看工资结算", icon: GraduationCap, variant: "secondary", key: "teacher.viewWages" },
           statusAction,
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
@@ -1718,7 +1760,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         title: "工资规则操作",
         actions: [
           { label: "编辑规则", icon: PencilLine, variant: "primary", key: "teacherWageRule.edit" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
@@ -1749,7 +1791,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
       actions.push({ label: "撤销工资快照", icon: RotateCcw, variant: "warning", key: "teacherWageSnapshot.revoke" });
     }
 
-    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" });
 
     return [
       {
@@ -1779,30 +1821,13 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         key: "teacherAttendance.import",
       });
     }
-    actions.push({ label: "查看工资快照", icon: Eye, variant: "secondary" });
-    actions.push({ label: "查看操作记录", icon: History, variant: "quiet" });
+    actions.push({ label: "查看工资快照", icon: Eye, variant: "secondary", key: "teacherAttendance.viewSnapshots" });
+    actions.push({ label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" });
 
     return [
       {
         title: "勤务表导入操作",
         actions,
-      },
-    ];
-  }
-
-  if (row.id.startsWith("external-lesson-")) {
-    const isLocked = row.status.includes("锁定") || row.status.includes("结算生成");
-
-    return [
-      {
-        title: "外部课时操作",
-        actions: [
-          { label: "查看外部课时详情", icon: Eye, variant: "secondary" },
-          { label: "生成实际课时", icon: ClipboardCheck, variant: isLocked ? "quiet" : "primary" },
-          { label: "编辑课时", icon: PencilLine, variant: isLocked ? "quiet" : "secondary" },
-          { label: "删除课时", icon: X, variant: isLocked ? "quiet" : "danger" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
-        ],
       },
     ];
   }
@@ -1821,7 +1846,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
             { label: "重新预览并锁定", icon: RefreshCw, variant: "secondary", key: "externalSettlement.relock" },
             { label: "生成收入记录", icon: ReceiptText, variant: "primary", key: "externalSettlement.generateIncome" },
             { label: "撤销锁定", icon: X, variant: "warning", key: "externalSettlement.revoke" },
-            { label: "查看操作记录", icon: History, variant: "quiet" },
+            { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
           ],
         },
       ];
@@ -1833,7 +1858,7 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
           title: "打工结算操作",
           actions: [
             { label: "重新预览并锁定", icon: LockKeyhole, variant: "primary", key: "externalSettlement.relock" },
-            { label: "查看操作记录", icon: History, variant: "quiet" },
+            { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
           ],
         },
       ];
@@ -1844,37 +1869,13 @@ function getDrawerActionGroups(row: DataRow): DrawerActionGroup[] {
         title: "打工结算操作",
         actions: [
           { label: "查看收入记录", icon: ReceiptText, variant: "secondary", key: "externalSettlement.viewIncome" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
+          { label: "查看操作记录", icon: History, variant: "quiet", key: "audit.view" },
         ],
       },
     ];
   }
 
-  if (row.id.startsWith("income-") || row.id.startsWith("expense-")) {
-    return [
-      {
-        title: "财务操作",
-        actions: [
-          { label: row.cashPreview ? "提交 Cash 请求" : "查看 Cash 状态", icon: Send, variant: row.cashPreview ? "primary" : "secondary" },
-          { label: "查看来源记录", icon: FileText, variant: "quiet" },
-          { label: "作废记录", icon: X, variant: "danger" },
-          { label: "查看操作记录", icon: History, variant: "quiet" },
-        ],
-      },
-      ...migrationAuditActionGroup,
-    ];
-  }
-
-  return [
-    {
-      title: "记录操作",
-      actions: [
-        { label: "编辑草稿", icon: PencilLine, variant: "primary" },
-        { label: "查看关联记录", icon: FileText, variant: "secondary" },
-        { label: "查看操作记录", icon: History, variant: "quiet" },
-      ],
-    },
-  ];
+  return migrationAuditActionGroup;
 }
 
 function DetailDrawer({
@@ -5081,6 +5082,8 @@ function BusinessPage({
         row.cells.fromAccount,
         finance?.sourceLabel,
         finance?.sourceType,
+        finance?.sourceId,
+        row.apiRef?.id,
         finance?.yearMonth,
       ].some((value) => String(value ?? "").toLocaleLowerCase().includes(normalizedKeyword));
     });
@@ -6679,7 +6682,10 @@ function buildExternalWorkPairsFromApi(
       actual: actual ? mapExternalWorkLessonToCard(actual) : undefined,
       plannedRecord: planned,
       actualRecord: actual,
-      detailRow: mapExternalWorkLessonToRow(actual ?? planned),
+      detailRow: mapExternalWorkLessonToRow(actual ?? planned, {
+        pairId: `external-pair-${planned.id}`,
+        locked: lockedSettlementKeys.has(`${planned.workplaceId}:${planned.yearMonth}`),
+      }),
     };
   });
 
@@ -6692,7 +6698,10 @@ function buildExternalWorkPairsFromApi(
       planned: mapExternalWorkActualToPlannedPlaceholder(actual),
       actual: mapExternalWorkLessonToCard(actual),
       actualRecord: actual,
-      detailRow: mapExternalWorkLessonToRow(actual),
+      detailRow: mapExternalWorkLessonToRow(actual, {
+        pairId: `external-actual-only-${actual.id}`,
+        locked: lockedSettlementKeys.has(`${actual.workplaceId}:${actual.yearMonth}`),
+      }),
     }));
 
   return [...plannedPairs, ...actualOnlyPairs];
@@ -6727,7 +6736,10 @@ function mapExternalWorkActualToPlannedPlaceholder(record: ExternalWorkLessonRec
   };
 }
 
-function mapExternalWorkLessonToRow(record: ExternalWorkLessonRecord): DataRow {
+function mapExternalWorkLessonToRow(
+  record: ExternalWorkLessonRecord,
+  pair?: { pairId: string; locked: boolean },
+): DataRow {
   const status = getExternalWorkLessonStatusView(record.status);
 
   return {
@@ -6738,6 +6750,9 @@ function mapExternalWorkLessonToRow(record: ExternalWorkLessonRecord): DataRow {
     tone: status.tone,
     apiRef: { resource: "externalWorkLesson", id: record.id },
     readOnlyActions: true,
+    externalWorkLessonRecord: record,
+    externalWorkLessonPairId: pair?.pairId,
+    externalWorkLessonLocked: pair?.locked ?? false,
     cells: {
       workplace: record.workplace.name,
       instructor: record.instructorName,
@@ -7459,6 +7474,7 @@ function mapIncomeRecordToRow(record: IncomeRecord): DataRow {
       amountCny: parseApiAmount(record.originalAmountCny),
       receiptEligible: record.receiptEligible,
       receiptIssued: record.receiptIssued,
+      sourceId: record.sourceId,
     },
     cells: {
       source: sourceLabel,
@@ -7547,6 +7563,7 @@ function mapExpenseRecordToRow(record: ExpenseRecord): DataRow {
       originalCurrency: record.originalCurrency,
       amountJpy: parseApiAmount(record.originalAmountJpy),
       amountCny: parseApiAmount(record.originalAmountCny),
+      sourceId: record.sourceId,
     },
     cells: {
       category,
@@ -12907,6 +12924,122 @@ export default function App() {
   };
 
   const handleDrawerAction = async (actionKey: DrawerActionKey, row: DataRow) => {
+    const openDrawerDrilldown = (
+      pageKey: string,
+      values: Record<string, string> = {},
+      keyword = "",
+      notice = "已打开关联记录。",
+    ) => {
+      setDetailRow(null);
+      replaceAppliedFilterQueryUrl(pageKey, values, keyword);
+      setActiveKey(pageKey);
+      setActionNotice({ tone: "emerald", text: notice });
+    };
+
+    if (actionKey === "audit.view") {
+      setDetailRow(null);
+      setActiveKey("audit");
+      setActionNotice({ tone: "emerald", text: "已打开审计中心；可查看当前环境的只读业务操作记录。" });
+      return;
+    }
+
+    if (actionKey === "student.viewLessons" && row.studentRecord) {
+      openDrawerDrilldown(
+        "lesson-management",
+        { [commonFilters.student.label]: row.studentRecord.name },
+        "",
+        `已按学生「${row.studentRecord.name}」打开关联课时。`,
+      );
+      return;
+    }
+
+    if (actionKey === "student.viewBills" && row.studentRecord) {
+      openDrawerDrilldown(
+        "tuition-bills",
+        { [commonFilters.student.label]: row.studentRecord.name },
+        "",
+        `已按学生「${row.studentRecord.name}」打开关联学费账单。`,
+      );
+      return;
+    }
+
+    if (actionKey === "tuitionBill.viewLessons" && row.tuitionBillRecord) {
+      openDrawerDrilldown(
+        "lesson-management",
+        {
+          [commonFilters.month.label]: row.tuitionBillRecord.yearMonth,
+          [commonFilters.student.label]: row.tuitionBillRecord.student.name,
+        },
+        "",
+        `已按「${row.tuitionBillRecord.student.name} / ${formatYearMonth(row.tuitionBillRecord.yearMonth)}」打开账单来源课时。`,
+      );
+      return;
+    }
+
+    if (actionKey === "tuitionBill.viewIncome" && row.tuitionBillRecord) {
+      const incomeRecordId = row.tuitionBillRecord.incomeRecordId;
+      if (!incomeRecordId) {
+        setActionNotice({ tone: "amber", text: "该学费账单尚未生成收入记录。" });
+        return;
+      }
+      openDrawerDrilldown(
+        "income-records",
+        { [commonFilters.month.label]: row.tuitionBillRecord.yearMonth },
+        incomeRecordId,
+        "已打开该账单生成的收入记录。",
+      );
+      return;
+    }
+
+    if (actionKey === "studentSettlement.viewLessons" && row.studentSettlementRecord) {
+      openDrawerDrilldown(
+        "lesson-management",
+        {
+          [commonFilters.month.label]: row.studentSettlementRecord.yearMonth,
+          [commonFilters.student.label]: row.studentSettlementRecord.student.name,
+        },
+        "",
+        `已按「${row.studentSettlementRecord.student.name} / ${formatYearMonth(row.studentSettlementRecord.yearMonth)}」打开结算课时。`,
+      );
+      return;
+    }
+
+    if (actionKey === "teacher.viewWageRules" || actionKey === "teacher.viewWages") {
+      const targetPage = actionKey === "teacher.viewWageRules" ? "teacher-rules" : "teacher-wages";
+      setDetailRow(null);
+      setActiveKey(targetPage);
+      setActionNotice({ tone: "emerald", text: `已打开${actionKey === "teacher.viewWageRules" ? "工资规则" : "工资结算"}页面，可按老师名称核对「${row.title}」。` });
+      return;
+    }
+
+    if (actionKey === "teacherAttendance.viewSnapshots") {
+      setDetailRow(null);
+      setActiveKey("teacher-wages");
+      setActionNotice({ tone: "emerald", text: `已打开工资结算页面，可按老师和月份核对「${row.title}」。` });
+      return;
+    }
+
+    if (
+      actionKey === "externalWorkLesson.generateActual" ||
+      actionKey === "externalWorkLesson.edit" ||
+      actionKey === "externalWorkLesson.delete"
+    ) {
+      const pair = activeExternalWorkPairs.find((item) => item.id === row.externalWorkLessonPairId);
+      if (!pair || !row.externalWorkLessonRecord) {
+        setActionNotice({ tone: "amber", text: "该外部课时未找到可操作的关联记录，请刷新列表后重试。" });
+        return;
+      }
+
+      const delegatedAction: ExternalWorkLessonActionKey = actionKey === "externalWorkLesson.generateActual"
+        ? "generateActual"
+        : actionKey === "externalWorkLesson.edit"
+          ? row.externalWorkLessonRecord.lessonType === "actual" ? "editActual" : "editPlanned"
+          : row.externalWorkLessonRecord.lessonType === "actual" ? "deleteActual" : "deletePlanned";
+      setDetailRow(null);
+      await handleExternalWorkLessonAction(delegatedAction, pair);
+      return;
+    }
+
     if (actionKey === "migrationAudit.view") {
       if (!authSession || !row.migrationAuditTarget) {
         setActionNotice({ tone: "amber", text: "请先使用真实 API 登录，并选择已迁移的历史记录。" });
