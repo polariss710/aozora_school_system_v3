@@ -5,6 +5,7 @@ export type ListExternalWorkLessonsQuery = {
   status?: unknown;
   keyword?: unknown;
   limit?: unknown;
+  offset?: unknown;
 };
 
 export type ExternalWorkLessonBody = {

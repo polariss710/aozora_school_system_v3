@@ -162,18 +162,20 @@ export class ExternalWorkService {
   async listLessons(query: ListExternalWorkLessonsQuery) {
     const where = this.buildLessonWhere(query);
     const limit = this.normalizeLimit(query.limit);
+    const offset = this.normalizeOffset(query.offset);
 
     const [items, total] = await Promise.all([
       this.prisma.externalWorkLesson.findMany({
         where,
         orderBy: [{ lessonDate: "asc" }, { startTime: "asc" }],
+        skip: offset,
         take: limit,
         select: lessonSelect,
       }),
       this.prisma.externalWorkLesson.count({ where }),
     ]);
 
-    return { items, total, limit };
+    return { items, total, limit, offset };
   }
 
   async getLesson(id: string) {
@@ -1015,6 +1017,16 @@ export class ExternalWorkService {
     }
 
     return Math.min(parsed, maxLimit);
+  }
+
+  private normalizeOffset(value: unknown) {
+    if (typeof value !== "string") {
+      return 0;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }
 
   private normalizeDate(value: unknown, field: string) {

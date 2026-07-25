@@ -1704,8 +1704,25 @@ export function confirmTeacherAttendanceWorkbookImport(
 }
 
 export function listExternalWorkLessons(accessToken: string) {
-  return requestJson<ListResponse<ExternalWorkLessonRecord>>("/external-work/lessons?limit=500", {
-    headers: authorizedHeaders(accessToken),
+  const pageSize = 500;
+  const requestPage = (offset: number) => requestJson<ListResponse<ExternalWorkLessonRecord>>(
+    `/external-work/lessons?limit=${pageSize}&offset=${offset}`,
+    { headers: authorizedHeaders(accessToken) },
+  );
+
+  return requestPage(0).then(async (firstPage) => {
+    const items = [...firstPage.items];
+    let total = firstPage.total;
+
+    while (items.length < total) {
+      const nextPage = await requestPage(items.length);
+      if (nextPage.items.length === 0) break;
+
+      items.push(...nextPage.items);
+      total = Math.max(total, nextPage.total);
+    }
+
+    return { items, total, limit: pageSize };
   });
 }
 
