@@ -131,7 +131,9 @@ export interface ExternalWorkplaceRecord {
 
 export interface QuoteCourseInput { name: string; content?: string; hoursPerSession: number; weeklyFrequency: number; unitPriceJpy: number; }
 export interface QuoteWriteInput { prospectiveStudentName: string; prospectiveStudentMemo?: string | null; title?: string; courseTrack: "science" | "humanities"; startDate: string; endDate: string; exchangeRate: number; note?: string | null; courses: QuoteCourseInput[]; }
-export interface QuoteRecord { id: string; title: string; courseTrack: string; startDate: string; endDate: string; exchangeRate: string | number; totalHours: string | number; totalJpy: number; totalCny: string | number; status: "draft" | "shared" | "accepted" | "declined" | "archived"; note: string | null; prospectiveStudent: { id: string; name: string; status: string; memo: string | null }; courses: Array<QuoteCourseInput & { id: string; sortOrder: number }>; createdAt: string; updatedAt: string; }
+export interface QuoteCalculationRow { courseIndex: number; occurrence: number; weekAnchorDate: string; hours: string | number; amountJpy: number; }
+export interface QuoteCalculationSnapshot { calculationVersion: string; weekAnchor: "monday"; rows: QuoteCalculationRow[]; totalHours: string | number; totalJpy: number; totalCny: string | number; exchangeRate: string | number; }
+export interface QuoteRecord { id: string; title: string; courseTrack: string; startDate: string; endDate: string; exchangeRate: string | number; totalHours: string | number; totalJpy: number; totalCny: string | number; status: "draft" | "shared" | "accepted" | "declined" | "archived"; note: string | null; calculationSnapshot: QuoteCalculationSnapshot; prospectiveStudent: { id: string; name: string; status: string; memo: string | null }; courses: Array<QuoteCourseInput & { id: string; sortOrder: number }>; createdAt: string; updatedAt: string; }
 
 export interface ExternalWorkplaceWriteInput {
   code: string;
