@@ -170,6 +170,19 @@ enum TeacherWageAdjustmentStatus {
   confirmed
 }
 
+enum ProspectiveStudentStatus {
+  active
+  archived
+}
+
+enum QuoteStatus {
+  draft
+  shared
+  accepted
+  declined
+  archived
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
@@ -451,6 +464,66 @@ model Student {
   @@index([status])
   @@index([primaryBusinessEntityId])
   @@map("students")
+}
+
+model ProspectiveStudent {
+  id        String                   @id @default(uuid()) @db.Uuid
+  name      String
+  status    ProspectiveStudentStatus @default(active)
+  memo      String?
+  createdAt DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  quotes Quote[]
+
+  @@index([status])
+  @@index([name])
+  @@map("prospective_students")
+}
+
+model Quote {
+  id                   String      @id @default(uuid()) @db.Uuid
+  prospectiveStudentId String      @map("prospective_student_id") @db.Uuid
+  title                String
+  courseTrack          String      @map("course_track") @db.VarChar(40)
+  startDate            DateTime    @map("start_date") @db.Date
+  endDate              DateTime    @map("end_date") @db.Date
+  exchangeRate         Decimal     @map("exchange_rate") @db.Decimal(18, 7)
+  totalHours           Decimal     @map("total_hours") @db.Decimal(10, 2)
+  totalJpy             Int         @map("total_jpy")
+  totalCny             Decimal     @map("total_cny") @db.Decimal(18, 2)
+  status               QuoteStatus @default(draft)
+  note                 String?
+  calculationSnapshot  Json        @map("calculation_snapshot")
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  prospectiveStudent ProspectiveStudent @relation(fields: [prospectiveStudentId], references: [id], onDelete: Restrict)
+  courses            QuoteCourse[]
+
+  @@index([prospectiveStudentId])
+  @@index([status])
+  @@index([startDate])
+  @@map("quotes")
+}
+
+model QuoteCourse {
+  id              String   @id @default(uuid()) @db.Uuid
+  quoteId         String   @map("quote_id") @db.Uuid
+  sortOrder       Int      @map("sort_order")
+  name            String
+  content         String
+  hoursPerSession Decimal  @map("hours_per_session") @db.Decimal(6, 2)
+  weeklyFrequency Int      @map("weekly_frequency")
+  unitPriceJpy    Int      @map("unit_price_jpy")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@unique([quoteId, sortOrder])
+  @@index([quoteId])
+  @@map("quote_courses")
 }
 
 model Teacher {
