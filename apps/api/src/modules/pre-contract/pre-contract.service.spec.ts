@@ -45,4 +45,25 @@ describe("PreContractService quote calculation", () => {
       courses: [{ name: "数学", hoursPerSession: 1, weeklyFrequency: 1.5, unitPriceJpy: 100 }],
     })).toThrow("course.weeklyFrequency must be a whole number.");
   });
+
+  it("persists a removed plan row in the quote snapshot and recalculates only the draft quote totals", () => {
+    const input = (service as any).normalize({
+      prospectiveStudentName: "请假测试",
+      courseTrack: "science",
+      startDate: "2026-07-01",
+      endDate: "2026-07-14",
+      exchangeRate: 0.05,
+      courses: [{ name: "日语", hoursPerSession: 2, weeklyFrequency: 2, unitPriceJpy: 10000 }],
+    });
+    const calculation = (service as any).calculate(input);
+    const adjusted = (service as any).applyRemovedRows(
+      calculation.snapshot,
+      input.exchangeRate,
+      ["course:0:date:2026-07-06:slot:1"],
+    );
+
+    expect(adjusted).toMatchObject({ totalHours: 6, totalJpy: 60000, totalCny: 3000 });
+    expect(adjusted.snapshot.removedRowKeys).toEqual(["course:0:date:2026-07-06:slot:1"]);
+    expect(adjusted.snapshot.rows).toHaveLength(4);
+  });
 });

@@ -132,7 +132,7 @@ export interface ExternalWorkplaceRecord {
 export interface QuoteCourseInput { name: string; content?: string; hoursPerSession: number; weeklyFrequency: number; unitPriceJpy: number; }
 export interface QuoteWriteInput { prospectiveStudentName: string; prospectiveStudentMemo?: string | null; title?: string; courseTrack: "science" | "humanities"; startDate: string; endDate: string; exchangeRate: number; note?: string | null; courses: QuoteCourseInput[]; }
 export interface QuoteCalculationRow { courseIndex: number; occurrence: number; weekAnchorDate: string; hours: string | number; amountJpy: number; }
-export interface QuoteCalculationSnapshot { calculationVersion: string; weekAnchor: "monday"; rows: QuoteCalculationRow[]; totalHours: string | number; totalJpy: number; totalCny: string | number; exchangeRate: string | number; }
+export interface QuoteCalculationSnapshot { calculationVersion: string; weekAnchor: "monday"; rows: QuoteCalculationRow[]; totalHours: string | number; totalJpy: number; totalCny: string | number; exchangeRate: string | number; removedRowKeys?: string[]; planSignature?: string; }
 export interface QuoteRecord { id: string; title: string; courseTrack: string; startDate: string; endDate: string; exchangeRate: string | number; totalHours: string | number; totalJpy: number; totalCny: string | number; status: "draft" | "shared" | "accepted" | "declined" | "archived"; note: string | null; calculationSnapshot: QuoteCalculationSnapshot; prospectiveStudent: { id: string; name: string; status: string; memo: string | null }; courses: Array<QuoteCourseInput & { id: string; sortOrder: number }>; createdAt: string; updatedAt: string; }
 
 export interface ExternalWorkplaceWriteInput {
@@ -1742,6 +1742,14 @@ export function createQuote(accessToken: string, input: QuoteWriteInput) {
 
 export function updateQuote(accessToken: string, id: string, input: QuoteWriteInput) {
   return requestJson<{ quote: QuoteRecord }>(`/pre-contract/quotes/${id}`, { method: "PATCH", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) });
+}
+
+export function removeQuotePlanRow(accessToken: string, id: string, rowKey: string) {
+  return requestJson<{ quote: QuoteRecord }>(`/pre-contract/quotes/${id}/plan-rows/remove`, {
+    method: "POST",
+    headers: authorizedHeaders(accessToken),
+    body: JSON.stringify({ rowKey }),
+  });
 }
 
 export function createExternalWorkPlannedLesson(accessToken: string, input: ExternalWorkLessonInput) {

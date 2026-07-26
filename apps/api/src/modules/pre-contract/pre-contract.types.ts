@@ -19,3 +19,7 @@ export type QuoteWriteBody = {
   note?: unknown;
   courses?: unknown;
 };
+
+export type QuotePlanRowRemovalBody = {
+  rowKey?: unknown;
+};

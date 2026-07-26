@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { CalendarDays, Download, FileText, PencilLine, Plus, Search, X } from "lucide-react";
-import { createQuote, listQuotes, updateQuote } from "./api";
+import { CalendarDays, Download, FileText, PencilLine, Plus, Search, Trash2, X } from "lucide-react";
+import { createQuote, listQuotes, removeQuotePlanRow, updateQuote } from "./api";
 import type { QuoteCalculationRow, QuoteRecord, QuoteWriteInput } from "./api";
 import {
   applyQueryFilterDraft,
@@ -34,7 +34,14 @@ function escapeQuoteHtml(value: string | number | null | undefined) {
 }
 
 function quotePlanRows(quote: QuoteRecord): QuoteCalculationRow[] {
-  return Array.isArray(quote.calculationSnapshot?.rows) ? quote.calculationSnapshot.rows : [];
+  const removed = new Set(quote.calculationSnapshot?.removedRowKeys ?? []);
+  return Array.isArray(quote.calculationSnapshot?.rows)
+    ? quote.calculationSnapshot.rows.filter((row) => !removed.has(quotePlanRowKey(row)))
+    : [];
+}
+
+function quotePlanRowKey(row: QuoteCalculationRow) {
+  return `course:${row.courseIndex}:date:${row.weekAnchorDate}:slot:${row.occurrence}`;
 }
 
 function courseForRow(quote: QuoteRecord, row: QuoteCalculationRow) {
@@ -178,6 +185,8 @@ export function QuotePage({ accessToken }: { accessToken: string }) {
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<QuoteRecord | null | undefined>(undefined);
   const [planning, setPlanning] = useState<QuoteRecord | null>(null);
+  const [removingPlanRowKey, setRemovingPlanRowKey] = useState<string | null>(null);
+  const [planRemovalError, setPlanRemovalError] = useState("");
 
   const reload = () => {
     setLoading(true);
@@ -209,6 +218,21 @@ export function QuotePage({ accessToken }: { accessToken: string }) {
       setNotice(reason instanceof Error ? reason.message : "打开 PDF 导出失败。");
     }
   };
+  const removePlanRow = async (quote: QuoteRecord, row: QuoteCalculationRow) => {
+    const rowKey = quotePlanRowKey(row);
+    setRemovingPlanRowKey(rowKey);
+    setPlanRemovalError("");
+    try {
+      const result = await removeQuotePlanRow(accessToken, quote.id, rowKey);
+      setItems((current) => current.map((item) => item.id === result.quote.id ? result.quote : item));
+      setPlanning(result.quote);
+      setNotice("已从报价草稿移除该计划行；汇总与 PDF 已同步更新。");
+    } catch (reason) {
+      setPlanRemovalError(reason instanceof Error ? reason.message : "删除计划行失败。");
+    } finally {
+      setRemovingPlanRowKey(null);
+    }
+  };
 
   return <main className="flex-1 space-y-4 overflow-auto px-6 py-5 pb-16">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -225,7 +249,7 @@ export function QuotePage({ accessToken }: { accessToken: string }) {
       {loading ? <p className="p-8 text-center text-sm text-muted-foreground">正在读取真实报价草稿…</p> : error ? <p className="p-8 text-center text-sm text-rose-600">{error}</p> : visible.length ? <div className="divide-y divide-border">{visible.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-4"><div><p className="font-medium">{item.prospectiveStudent.name} · {item.title}</p><p className="mt-1 text-xs text-muted-foreground">{item.startDate.slice(0, 10)} 至 {item.endDate.slice(0, 10)} · {item.courseTrack === "science" ? "理科" : "文科"} · {item.courses.map((course) => course.name).join(" / ")}</p></div><div className="flex flex-wrap items-center justify-end gap-2"><div className="mr-1 text-right text-sm"><p className="font-medium">JPY {format(item.totalJpy)}</p><p className="text-xs text-muted-foreground">CNY 参考 {format(item.totalCny)}</p></div><button type="button" className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-sm" onClick={() => setPlanning(item)}><CalendarDays size={15} />课程计划</button><button type="button" className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-sm" onClick={() => exportPlan(item)}><Download size={15} />导出 PDF</button><button type="button" className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-sm" onClick={() => setEditing(item)}><PencilLine size={15} />编辑</button></div></div>)}</div> : <p className="p-8 text-center text-sm text-muted-foreground">暂无符合条件的报价草稿</p>}
     </section>
     {editing !== undefined && <QuoteModal quote={editing} accessToken={accessToken} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); reload(); setNotice("报价草稿已保存。"); }} />}
-    {planning && <QuotePlanModal quote={planning} onClose={() => setPlanning(null)} onExport={() => exportPlan(planning)} />}
+    {planning && <QuotePlanModal quote={planning} onClose={() => { setPlanning(null); setPlanRemovalError(""); }} onExport={() => exportPlan(planning)} onRemove={(row) => removePlanRow(planning, row)} removingPlanRowKey={removingPlanRowKey} removalError={planRemovalError} />}
   </main>;
 }
 
@@ -233,9 +257,9 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-lg border border-border bg-white p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold">{value}</p></div>;
 }
 
-function QuotePlanModal({ quote, onClose, onExport }: { quote: QuoteRecord; onClose: () => void; onExport: () => void }) {
+function QuotePlanModal({ quote, onClose, onExport, onRemove, removingPlanRowKey, removalError }: { quote: QuoteRecord; onClose: () => void; onExport: () => void; onRemove: (row: QuoteCalculationRow) => void; removingPlanRowKey: string | null; removalError: string }) {
   const months = quotePlanMonths(quote);
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4"><section className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-lg bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 font-semibold"><CalendarDays size={18} />课程计划预览</h2><p className="mt-1 text-xs text-muted-foreground">按月阅读；每科“第 N 回”在整份报价内连续计数。计划仅来自已保存的报价快照。</p></div><button type="button" className="rounded-md p-1 text-muted-foreground hover:bg-muted" onClick={onClose} aria-label="关闭课程计划预览"><X size={18} /></button></div><div className="mt-5 space-y-5">{months.length ? months.map((month, index) => <article key={month.key} className="overflow-hidden rounded-lg border border-border"><header className="flex items-start justify-between gap-4 border-b-2 border-[#1687D9] px-4 py-4"><div><p className="text-xs font-semibold text-[#0f74bd]">{quote.prospectiveStudent.name}</p><h3 className="mt-1 text-lg font-semibold">{month.label} {quote.title}</h3><p className="mt-1 text-xs font-medium text-muted-foreground">{formatDate(quote.startDate)} - {formatDate(quote.endDate)}</p></div><span className="rounded-full border border-border px-2 py-1 text-xs font-semibold text-muted-foreground">{index + 1} / {months.length}</span></header><div className="grid gap-2 border-b border-border bg-slate-50 p-3 md:grid-cols-4"><Metric label="报价月份" value={`${months.length} 个月`} /><Metric label="总课时" value={`${format(quote.totalHours)} H`} /><Metric label="报价合计" value={`${format(quote.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(quote.totalCny)} CNY`} /></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-sm"><thead className="bg-slate-100 text-left text-xs"><tr><th className="border border-border px-3 py-2 text-center">科目</th><th className="border border-border px-3 py-2 text-center">日期</th><th className="border border-border px-3 py-2 text-center">回数</th><th className="border border-border px-3 py-2">内容</th><th className="border border-border px-3 py-2 text-center">时长(H)</th></tr></thead><tbody>{groupRowsByCourse(month.rows).map((group) => <Fragment key={group.courseName}><tr className="bg-[#eaf5fd] text-[#0f74bd]"><td colSpan={5} className="border border-border px-3 py-2 font-semibold">{group.courseName}</td></tr>{group.rows.map((row) => <tr key={`${row.weekAnchorDate}-${row.courseIndex}-${row.occurrence}`}><td className="border border-border px-3 py-2 text-center">{row.courseName}</td><td className="border border-border px-3 py-2 text-center">{row.weekLabel}</td><td className="border border-border px-3 py-2 text-center">第{row.lessonNumber}回</td><td className="border border-border px-3 py-2">{row.content}</td><td className="border border-border px-3 py-2 text-center">{format(row.hours)}</td></tr>)}</Fragment>)}</tbody></table></div><footer className="grid gap-2 p-3 md:grid-cols-3"><Metric label="月度课时" value={`${format(month.totalHours)} H`} /><Metric label="月度合计" value={`${format(month.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(month.totalCny)} CNY`} /></footer></article>) : <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">此报价缺少已保存的计划快照。</p>}</div><div className="mt-5 flex justify-end gap-2"><button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={onClose}>关闭</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={onExport}><Download size={15} />打印 / 保存 PDF</button></div></section></div>;
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4"><section className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-lg bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 font-semibold"><CalendarDays size={18} />课程计划预览</h2><p className="mt-1 text-xs text-muted-foreground">按月阅读；每科“第 N 回”在整份报价内连续计数。计划仅来自已保存的报价快照。</p></div><button type="button" className="rounded-md p-1 text-muted-foreground hover:bg-muted" onClick={onClose} aria-label="关闭课程计划预览"><X size={18} /></button></div><div className="mt-5 space-y-5">{months.length ? months.map((month, index) => <article key={month.key} className="overflow-hidden rounded-lg border border-border"><header className="flex items-start justify-between gap-4 border-b-2 border-[#1687D9] px-4 py-4"><div><p className="text-xs font-semibold text-[#0f74bd]">{quote.prospectiveStudent.name}</p><h3 className="mt-1 text-lg font-semibold">{month.label} {quote.title}</h3><p className="mt-1 text-xs font-medium text-muted-foreground">{formatDate(quote.startDate)} - {formatDate(quote.endDate)}</p></div><span className="rounded-full border border-border px-2 py-1 text-xs font-semibold text-muted-foreground">{index + 1} / {months.length}</span></header><div className="grid gap-2 border-b border-border bg-slate-50 p-3 md:grid-cols-4"><Metric label="报价月份" value={`${months.length} 个月`} /><Metric label="总课时" value={`${format(quote.totalHours)} H`} /><Metric label="报价合计" value={`${format(quote.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(quote.totalCny)} CNY`} /></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-sm"><thead className="bg-slate-100 text-left text-xs"><tr><th className="border border-border px-3 py-2 text-center">科目</th><th className="border border-border px-3 py-2 text-center">日期</th><th className="border border-border px-3 py-2 text-center">回数</th><th className="border border-border px-3 py-2">内容</th><th className="border border-border px-3 py-2 text-center">时长(H)</th></tr></thead><tbody>{groupRowsByCourse(month.rows).map((group) => <Fragment key={group.courseName}><tr className="bg-[#eaf5fd] text-[#0f74bd]"><td colSpan={5} className="border border-border px-3 py-2 font-semibold">{group.courseName}</td></tr>{group.rows.map((row) => <tr key={`${row.weekAnchorDate}-${row.courseIndex}-${row.occurrence}`}><td className="border border-border px-3 py-2 text-center">{row.courseName}</td><td className="border border-border px-3 py-2 text-center">{row.weekLabel}</td><td className="border border-border px-3 py-2 text-center">第{row.lessonNumber}回</td><td className="border border-border px-3 py-2">{row.content}</td><td className="border border-border px-3 py-2 text-center"><span>{format(row.hours)}</span>{quote.status === "draft" && <button type="button" disabled={removingPlanRowKey !== null} onClick={() => onRemove(row)} className="ml-2 inline-flex items-center gap-1 rounded border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"><Trash2 size={12} />{removingPlanRowKey === quotePlanRowKey(row) ? "删除中…" : "删除"}</button>}</td></tr>)}</Fragment>)}</tbody></table></div><footer className="grid gap-2 p-3 md:grid-cols-3"><Metric label="月度课时" value={`${format(month.totalHours)} H`} /><Metric label="月度合计" value={`${format(month.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(month.totalCny)} CNY`} /></footer></article>) : <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">此报价缺少已保存的计划快照。</p>}</div>{removalError && <p className="mt-3 text-sm text-rose-600">{removalError}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={onClose}>关闭</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={onExport}><Download size={15} />打印 / 保存 PDF</button></div></section></div>;
 }
 
 function QuoteModal({ quote, accessToken, onClose, onSaved }: { quote: QuoteRecord | null; accessToken: string; onClose: () => void; onSaved: () => void }) {

@@ -5,7 +5,7 @@ import { PermissionGuard } from "../auth/permission.guard";
 import { RequirePermissions } from "../auth/permissions.decorator";
 import { AuthenticatedUser } from "../users/users.types";
 import { PreContractService } from "./pre-contract.service";
-import { ListQuotesQuery, QuoteWriteBody } from "./pre-contract.types";
+import { ListQuotesQuery, QuotePlanRowRemovalBody, QuoteWriteBody } from "./pre-contract.types";
 
 @Controller("pre-contract/quotes")
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -27,6 +27,10 @@ export class PreContractController {
   @Patch(":id")
   @RequirePermissions("pre_contract.manage")
   update(@Param("id") id: string, @Body() body: QuoteWriteBody, @CurrentUser() user: AuthenticatedUser) { return this.service.updateQuote(id, body, user.id); }
+
+  @Post(":id/plan-rows/remove")
+  @RequirePermissions("pre_contract.manage")
+  removePlanRow(@Param("id") id: string, @Body() body: QuotePlanRowRemovalBody, @CurrentUser() user: AuthenticatedUser) { return this.service.removePlanRow(id, body, user.id); }
 
   @Post(":id/archive")
   @RequirePermissions("pre_contract.manage")
