@@ -129,6 +129,10 @@ export interface ExternalWorkplaceRecord {
   memo: string | null;
 }
 
+export interface QuoteCourseInput { name: string; content?: string; hoursPerSession: number; weeklyFrequency: number; unitPriceJpy: number; }
+export interface QuoteWriteInput { prospectiveStudentName: string; prospectiveStudentMemo?: string | null; title?: string; courseTrack: "science" | "humanities"; startDate: string; endDate: string; exchangeRate: number; note?: string | null; courses: QuoteCourseInput[]; }
+export interface QuoteRecord { id: string; title: string; courseTrack: string; startDate: string; endDate: string; exchangeRate: string | number; totalHours: string | number; totalJpy: number; totalCny: string | number; status: "draft" | "shared" | "accepted" | "declined" | "archived"; note: string | null; prospectiveStudent: { id: string; name: string; status: string; memo: string | null }; courses: Array<QuoteCourseInput & { id: string; sortOrder: number }>; createdAt: string; updatedAt: string; }
+
 export interface ExternalWorkplaceWriteInput {
   code: string;
   name: string;
@@ -1724,6 +1728,18 @@ export function listExternalWorkLessons(accessToken: string) {
 
     return { items, total, limit: pageSize };
   });
+}
+
+export function listQuotes(accessToken: string) {
+  return requestJson<ListResponse<QuoteRecord>>("/pre-contract/quotes?limit=100", { headers: authorizedHeaders(accessToken) });
+}
+
+export function createQuote(accessToken: string, input: QuoteWriteInput) {
+  return requestJson<{ quote: QuoteRecord }>("/pre-contract/quotes", { method: "POST", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) });
+}
+
+export function updateQuote(accessToken: string, id: string, input: QuoteWriteInput) {
+  return requestJson<{ quote: QuoteRecord }>(`/pre-contract/quotes/${id}`, { method: "PATCH", headers: authorizedHeaders(accessToken), body: JSON.stringify(input) });
 }
 
 export function createExternalWorkPlannedLesson(accessToken: string, input: ExternalWorkLessonInput) {
