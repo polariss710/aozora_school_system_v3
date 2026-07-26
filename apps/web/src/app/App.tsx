@@ -151,6 +151,7 @@ import {
   withdrawCashRequest,
 } from "./api";
 import { plannedLessonScheduleDate, plannedLessonsForScheduleWeek } from "./weekly-schedule";
+import { QuotePage } from "./quote-page";
 import type {
   ApiHealthSnapshot,
   AccountRecord,
@@ -243,6 +244,7 @@ const appliedFilterPageKeys = [
   "student-settlements",
   "income-records",
   "expense-records",
+  "quote",
 ];
 
 const FILTER_RESULT_PAGE_SIZE = 20;
@@ -13911,6 +13913,8 @@ export default function App() {
             students={studentApi.rows.flatMap((row) => row.studentRecord ? [row.studentRecord] : [])}
             businessEntities={settingsApi.businessEntities}
           />
+        ) : activeKey === "quote" && authSession ? (
+          <QuotePage accessToken={authSession.accessToken} />
         ) : activeKey === "lesson-management" && activePage ? (
           <LessonManagementPage
             page={activePage}
