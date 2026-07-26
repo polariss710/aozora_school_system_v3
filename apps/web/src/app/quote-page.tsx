@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CalendarDays, Download, FileText, PencilLine, Plus, Search, X } from "lucide-react";
 import { createQuote, listQuotes, updateQuote } from "./api";
 import type { QuoteCalculationRow, QuoteRecord, QuoteWriteInput } from "./api";
@@ -37,20 +37,93 @@ function quotePlanRows(quote: QuoteRecord): QuoteCalculationRow[] {
   return Array.isArray(quote.calculationSnapshot?.rows) ? quote.calculationSnapshot.rows : [];
 }
 
-function groupedPlanRows(quote: QuoteRecord) {
-  return quotePlanRows(quote).reduce<Array<{ weekAnchorDate: string; rows: QuoteCalculationRow[] }>>((weeks, row) => {
-    const current = weeks.at(-1);
-    if (current?.weekAnchorDate === row.weekAnchorDate) {
-      current.rows.push(row);
-      return weeks;
-    }
-    weeks.push({ weekAnchorDate: row.weekAnchorDate, rows: [row] });
-    return weeks;
-  }, []);
-}
-
 function courseForRow(quote: QuoteRecord, row: QuoteCalculationRow) {
   return quote.courses.find((course) => course.sortOrder === row.courseIndex) ?? quote.courses[row.courseIndex];
+}
+
+type QuotePlanEntry = QuoteCalculationRow & {
+  courseName: string;
+  content: string;
+  lessonNumber: number;
+  monthKey: string;
+  monthLabel: string;
+  weekLabel: string;
+};
+
+type QuotePlanMonth = {
+  key: string;
+  label: string;
+  rows: QuotePlanEntry[];
+  totalHours: number;
+  totalJpy: number;
+  totalCny: number;
+};
+
+function formatMonthLabel(value: string) {
+  const [year, month] = value.split("-");
+  return `${year}年${Number(month)}月`;
+}
+
+function formatWeekLabel(value: string) {
+  const [, month, day] = value.slice(0, 10).split("-");
+  return `${Number(month)}.${Number(day)}周`;
+}
+
+function quotePlanMonths(quote: QuoteRecord): QuotePlanMonth[] {
+  const counters = new Map<number, number>();
+  const months = new Map<string, QuotePlanMonth>();
+  const exchangeRate = Number(quote.exchangeRate);
+
+  for (const row of quotePlanRows(quote)) {
+    const course = courseForRow(quote, row);
+    const lessonNumber = (counters.get(row.courseIndex) ?? 0) + 1;
+    counters.set(row.courseIndex, lessonNumber);
+    const monthKey = row.weekAnchorDate.slice(0, 7);
+    const entry: QuotePlanEntry = {
+      ...row,
+      courseName: course?.name ?? "课程",
+      content: course?.content ?? "",
+      lessonNumber,
+      monthKey,
+      monthLabel: formatMonthLabel(monthKey),
+      weekLabel: formatWeekLabel(row.weekAnchorDate),
+    };
+    const month = months.get(monthKey) ?? {
+      key: monthKey,
+      label: entry.monthLabel,
+      rows: [],
+      totalHours: 0,
+      totalJpy: 0,
+      totalCny: 0,
+    };
+    month.rows.push(entry);
+    month.totalHours += Number(row.hours);
+    month.totalJpy += Number(row.amountJpy);
+    month.totalCny = Number((month.totalJpy * exchangeRate).toFixed(2));
+    months.set(monthKey, month);
+  }
+
+  return [...months.values()];
+}
+
+function groupRowsByCourse(rows: QuotePlanEntry[]) {
+  const groups = new Map<string, QuotePlanEntry[]>();
+  for (const row of rows) groups.set(row.courseName, [...(groups.get(row.courseName) ?? []), row]);
+  return [...groups.entries()].map(([courseName, courseRows]) => ({ courseName, rows: courseRows }));
+}
+
+function quoteDocumentTitle(quote: QuoteRecord) {
+  const studentName = quote.prospectiveStudent.name.trim().replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, "");
+  const title = quote.title.trim().replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, "") || "课程计划";
+  return studentName ? `${studentName.endsWith("同学") ? studentName : `${studentName}同学`}${title}` : title;
+}
+
+function renderQuotePrintSummary(quote: QuoteRecord, monthCount: number) {
+  return `<section class="quote-print-summary"><div><span>报价月份</span><strong>${monthCount} 个月</strong></div><div><span>总课时</span><strong>${escapeQuoteHtml(format(quote.totalHours))} H</strong></div><div><span>报价合计</span><strong>${escapeQuoteHtml(format(quote.totalJpy))} JPY</strong></div><div><span>人民币参考</span><strong>${escapeQuoteHtml(format(quote.totalCny))} CNY</strong></div></section>`;
+}
+
+function renderQuotePrintRows(rows: QuotePlanEntry[]) {
+  return groupRowsByCourse(rows).map((group) => `<tr class="quote-course-group"><td colspan="5">${escapeQuoteHtml(group.courseName)}</td></tr>${group.rows.map((row) => `<tr><td>${escapeQuoteHtml(row.courseName)}</td><td>${escapeQuoteHtml(row.weekLabel)}</td><td>第${row.lessonNumber}回</td><td>${escapeQuoteHtml(row.content)}</td><td>${escapeQuoteHtml(format(row.hours))}</td></tr>`).join("")}`).join("");
 }
 
 function printQuotePlan(quote: QuoteRecord) {
@@ -60,37 +133,33 @@ function printQuotePlan(quote: QuoteRecord) {
   }
 
   printWindow.opener = null;
-  const rows = quotePlanRows(quote);
-  const scheduleRows = rows.map((row, index) => {
-    const course = courseForRow(quote, row);
-    return `<tr><td>${index + 1}</td><td>${escapeQuoteHtml(formatDate(row.weekAnchorDate))}</td><td>${escapeQuoteHtml(course?.name ?? "课程")}</td><td>${escapeQuoteHtml(course?.content ?? "")}</td><td>${escapeQuoteHtml(format(row.hours))} H</td><td>第 ${row.occurrence + 1} 节</td><td>JPY ${escapeQuoteHtml(format(row.amountJpy))}</td></tr>`;
-  }).join("");
+  const months = quotePlanMonths(quote);
+  const period = `${formatDate(quote.startDate)} - ${formatDate(quote.endDate)}`;
+  const pages = months.map((month, index) => `<article class="quote-print-page">
+    <header class="quote-print-header"><div><p class="quote-print-kicker">${escapeQuoteHtml(quote.prospectiveStudent.name)}</p><h1>${escapeQuoteHtml(month.label)} ${escapeQuoteHtml(quote.title)}</h1><p class="quote-print-period">${escapeQuoteHtml(period)}</p></div><span class="quote-print-page-number">${index + 1} / ${months.length}</span></header>
+    ${renderQuotePrintSummary(quote, months.length)}
+    <table><thead><tr><th>科目</th><th>日期</th><th>回数</th><th>内容</th><th>时长(H)</th></tr></thead><tbody>${renderQuotePrintRows(month.rows)}</tbody></table>
+    <footer class="quote-print-footer"><div><span>月度课时</span><strong>${escapeQuoteHtml(format(month.totalHours))} H</strong></div><div><span>月度合计</span><strong>${escapeQuoteHtml(format(month.totalJpy))} JPY</strong></div><div><span>人民币参考</span><strong>${escapeQuoteHtml(format(month.totalCny))} CNY</strong></div></footer>
+  </article>`).join("");
   const quoteHtml = `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeQuoteHtml(quote.title)} - ${escapeQuoteHtml(quote.prospectiveStudent.name)}</title>
+  <title>${escapeQuoteHtml(quoteDocumentTitle(quote))}</title>
   <style>
-    @page { size: A4 portrait; margin: 14mm; }
+    @page { size: A4 portrait; margin: 12mm; }
     * { box-sizing: border-box; }
     body { margin: 0; color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Noto Sans CJK SC", sans-serif; }
-    h1 { margin: 0; font-size: 27px; } h2 { margin: 26px 0 10px; font-size: 16px; }
-    .sub { margin-top: 7px; color: #596579; font-size: 12px; }
-    .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 22px; }
-    .summary div { border: 1px solid #cfd8e6; padding: 11px; } .summary span { display: block; color: #596579; font-size: 11px; } .summary strong { display: block; margin-top: 4px; font-size: 17px; }
-    table { width: 100%; border-collapse: collapse; font-size: 11px; } th, td { border: 1px solid #cfd8e6; padding: 7px; text-align: left; vertical-align: top; } th { background: #eef6fd; font-weight: 600; }
-    .note { margin-top: 24px; border-top: 1px solid #e2e7ef; padding-top: 10px; color: #596579; font-size: 10px; line-height: 1.6; }
+    .quote-print-page { min-height: 260mm; break-after: page; page-break-after: always; } .quote-print-page:last-child { break-after: auto; page-break-after: auto; }
+    .quote-print-header { display: flex; justify-content: space-between; gap: 16px; border-bottom: 2px solid #00877d; padding: 0 0 9px; } .quote-print-kicker { margin: 0; color: #00877d; font-size: 12px; font-weight: 700; } h1 { margin: 3px 0 4px; font-size: 25px; line-height: 1.2; } .quote-print-period { margin: 0; color: #596579; font-size: 13px; font-weight: 600; } .quote-print-page-number { align-self: start; border: 1px solid #cfd8e6; border-radius: 999px; padding: 4px 9px; color: #596579; font-size: 11px; font-weight: 700; }
+    .quote-print-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; } .quote-print-summary div, .quote-print-footer div { border: 1px solid #b7d8ed; border-radius: 7px; background: #f4f8fd; padding: 8px; } .quote-print-summary span, .quote-print-footer span { display: block; color: #596579; font-size: 10px; } .quote-print-summary strong, .quote-print-footer strong { display: block; margin-top: 3px; font-size: 15px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; } th, td { border: 1px solid #172033; padding: 6px 8px; text-align: left; vertical-align: middle; } th { background: #eaf1f8; text-align: center; font-weight: 700; } .quote-course-group td { background: #e8f8f5; color: #08776f; font-weight: 700; }
+    .quote-print-footer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+    @media print { .quote-print-page { min-height: 0; } }
   </style>
 </head>
 <body>
-  <main>
-    <h1>${escapeQuoteHtml(quote.title)}</h1>
-    <div class="sub">${escapeQuoteHtml(quote.prospectiveStudent.name)} · ${escapeQuoteHtml(formatDate(quote.startDate))} 至 ${escapeQuoteHtml(formatDate(quote.endDate))} · ${quote.courseTrack === "science" ? "理科" : "文科"}</div>
-    <section class="summary"><div><span>计划课时</span><strong>${escapeQuoteHtml(format(quote.totalHours))} H</strong></div><div><span>参考合计</span><strong>JPY ${escapeQuoteHtml(format(quote.totalJpy))}</strong></div><div><span>CNY 参考</span><strong>${escapeQuoteHtml(format(quote.totalCny))}</strong></div></section>
-    <h2>每周课程计划</h2>
-    <table><thead><tr><th>#</th><th>计划周</th><th>课程</th><th>内容</th><th>时长</th><th>周内序号</th><th>参考金额</th></tr></thead><tbody>${scheduleRows || "<tr><td colspan=\"7\">暂无已保存的计划行。</td></tr>"}</tbody></table>
-    <div class="note">本文件为签约前报价草稿的已保存计划快照。它不会创建正式学生、正式预定课时、账单、收入、支出或 Cash 记录；计划周不代表实际授课日期和时间。</div>
-  </main>
+  <main>${pages || "<p>暂无已保存的计划行。</p>"}</main>
   <script>window.addEventListener("load", () => { window.focus(); window.print(); });<\/script>
 </body>
 </html>`;
@@ -165,8 +234,8 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 }
 
 function QuotePlanModal({ quote, onClose, onExport }: { quote: QuoteRecord; onClose: () => void; onExport: () => void }) {
-  const weeks = groupedPlanRows(quote);
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4"><section className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 font-semibold"><CalendarDays size={18} />每周课程计划</h2><p className="mt-1 text-xs text-muted-foreground">{quote.prospectiveStudent.name} · 已保存的报价草稿快照；不代表正式课时或实际授课时间。</p></div><button type="button" className="rounded-md p-1 text-muted-foreground hover:bg-muted" onClick={onClose} aria-label="关闭每周课程计划"><X size={18} /></button></div><div className="mt-4 grid gap-3 md:grid-cols-3"><Metric label="计划课时" value={`${format(quote.totalHours)} H`} /><Metric label="计划行数" value={quotePlanRows(quote).length} /><Metric label="参考合计" value={`JPY ${format(quote.totalJpy)}`} /></div><div className="mt-5 space-y-3">{weeks.length ? weeks.map((week) => <section key={week.weekAnchorDate} className="overflow-hidden rounded-md border border-border"><div className="border-b border-border bg-slate-50 px-4 py-2 text-sm font-medium">计划周：{formatDate(week.weekAnchorDate)}</div><div className="divide-y divide-border">{week.rows.map((row, index) => { const course = courseForRow(quote, row); return <div key={`${row.weekAnchorDate}-${row.courseIndex}-${row.occurrence}-${index}`} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]"><span className="font-medium">{course?.name ?? "课程"}</span><span className="text-muted-foreground">{course?.content ?? ""}</span><span>{format(row.hours)} H · 第 {row.occurrence + 1} 节</span><span className="text-right font-medium">JPY {format(row.amountJpy)}</span></div>; })}</div></section>) : <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">此报价缺少已保存的计划快照。</p>}</div><div className="mt-5 flex justify-end gap-2"><button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={onClose}>关闭</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={onExport}><Download size={15} />打印 / 保存 PDF</button></div></section></div>;
+  const months = quotePlanMonths(quote);
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4"><section className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-lg bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-4"><div><h2 className="flex items-center gap-2 font-semibold"><CalendarDays size={18} />课程计划预览</h2><p className="mt-1 text-xs text-muted-foreground">按月阅读；每科“第 N 回”在整份报价内连续计数。计划仅来自已保存的报价快照。</p></div><button type="button" className="rounded-md p-1 text-muted-foreground hover:bg-muted" onClick={onClose} aria-label="关闭课程计划预览"><X size={18} /></button></div><div className="mt-4 grid gap-3 md:grid-cols-4"><Metric label="报价月份" value={`${months.length} 个月`} /><Metric label="总课时" value={`${format(quote.totalHours)} H`} /><Metric label="报价合计" value={`${format(quote.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(quote.totalCny)} CNY`} /></div><div className="mt-5 space-y-5">{months.length ? months.map((month, index) => <article key={month.key} className="overflow-hidden rounded-lg border border-border"><header className="flex items-start justify-between gap-4 border-b-2 border-emerald-600 px-4 py-4"><div><p className="text-xs font-semibold text-emerald-700">{quote.prospectiveStudent.name}</p><h3 className="mt-1 text-lg font-semibold">{month.label} {quote.title}</h3><p className="mt-1 text-xs font-medium text-muted-foreground">{formatDate(quote.startDate)} - {formatDate(quote.endDate)}</p></div><span className="rounded-full border border-border px-2 py-1 text-xs font-semibold text-muted-foreground">{index + 1} / {months.length}</span></header><div className="grid gap-2 border-b border-border bg-slate-50 p-3 md:grid-cols-4"><Metric label="报价月份" value={`${months.length} 个月`} /><Metric label="总课时" value={`${format(quote.totalHours)} H`} /><Metric label="报价合计" value={`${format(quote.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(quote.totalCny)} CNY`} /></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-sm"><thead className="bg-slate-100 text-left text-xs"><tr><th className="border border-border px-3 py-2 text-center">科目</th><th className="border border-border px-3 py-2 text-center">日期</th><th className="border border-border px-3 py-2 text-center">回数</th><th className="border border-border px-3 py-2">内容</th><th className="border border-border px-3 py-2 text-center">时长(H)</th></tr></thead><tbody>{groupRowsByCourse(month.rows).map((group) => <Fragment key={group.courseName}><tr className="bg-emerald-50 text-emerald-800"><td colSpan={5} className="border border-border px-3 py-2 font-semibold">{group.courseName}</td></tr>{group.rows.map((row) => <tr key={`${row.weekAnchorDate}-${row.courseIndex}-${row.occurrence}`}><td className="border border-border px-3 py-2 text-center">{row.courseName}</td><td className="border border-border px-3 py-2 text-center">{row.weekLabel}</td><td className="border border-border px-3 py-2 text-center">第{row.lessonNumber}回</td><td className="border border-border px-3 py-2">{row.content}</td><td className="border border-border px-3 py-2 text-center">{format(row.hours)}</td></tr>)}</Fragment>)}</tbody></table></div><footer className="grid gap-2 p-3 md:grid-cols-3"><Metric label="月度课时" value={`${format(month.totalHours)} H`} /><Metric label="月度合计" value={`${format(month.totalJpy)} JPY`} /><Metric label="人民币参考" value={`${format(month.totalCny)} CNY`} /></footer></article>) : <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">此报价缺少已保存的计划快照。</p>}</div><div className="mt-5 flex justify-end gap-2"><button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={onClose}>关闭</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={onExport}><Download size={15} />打印 / 保存 PDF</button></div></section></div>;
 }
 
 function QuoteModal({ quote, accessToken, onClose, onSaved }: { quote: QuoteRecord | null; accessToken: string; onClose: () => void; onSaved: () => void }) {
