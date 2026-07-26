@@ -46,6 +46,19 @@ describe("PreContractService quote calculation", () => {
     })).toThrow("course.weeklyFrequency must be a whole number.");
   });
 
+  it("normalizes a decimal exchange-rate text at the API boundary", () => {
+    const input = (service as any).normalize({
+      prospectiveStudentName: "汇率文本测试",
+      courseTrack: "science",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      exchangeRate: "0.05123",
+      courses: [{ name: "日语", hoursPerSession: 1, weeklyFrequency: 1, unitPriceJpy: 10000 }],
+    });
+
+    expect(input.exchangeRate).toBe(0.05123);
+  });
+
   it("persists a removed plan row in the quote snapshot and recalculates only the draft quote totals", () => {
     const input = (service as any).normalize({
       prospectiveStudentName: "请假测试",
